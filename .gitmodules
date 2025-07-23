@@ -1,0 +1,9 @@
+[submodule "YAKL"]
+	path = YAKL
+	url = https://github.com/Goobley/YAKL.git
+[submodule "fmt"]
+	path = fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "yaml-cpp"]
+	path = yaml-cpp
+	url = https://github.com/jbeder/yaml-cpp.git
