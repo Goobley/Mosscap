@@ -3,4 +3,4 @@ rm -rf CMakeCache.txt \
        CMakeFiles     \
        Makefile       \
        YAKL           \
-       scatter
+       mosscap

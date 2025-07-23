@@ -12,10 +12,10 @@ GCC_INCLUDE_PATH=$(g++ --print-file-name=include)
       # related to JasUse, which is in turn necessary to avoid the error related
       # to "first variable use in constexpr-if environment".
 cmake  \
-      -DHYDRO_ARCH="CUDA"              \
+      -DMOSSCAP_ARCH="CUDA"              \
       -DYAKL_AUTO_PROFILE="On"         \
-      -DHYDRO_CXX_FLAGS="-O3 --generate-line-info -ftz=true -diag-suppress=174" \
-      -DHYDRO_SINGLE_PRECISION="On" \
+      -DMOSSCAP_CXX_FLAGS="-O3 --generate-line-info -ftz=true -diag-suppress=174" \
+      -DMOSSCAP_SINGLE_PRECISION="On" \
       -DGCC_INCLUDE_PATH="${GCC_INCLUDE_PATH}" \
       -DNETCDF_INCLUDE_PATH="$(nc-config --includedir)" \
       -DLDLIBS="$(nc-config --libs)" \

@@ -11,11 +11,11 @@ GCC_INCLUDE_PATH=$(g++ --print-file-name=include)
       # We disable warning 174 (Expression has no effect) to avoid warnings
       # related to JasUse, which is in turn necessary to avoid the error related
       # to "first variable use in constexpr-if environment".
-      # -DHYDRO_SINGLE_PRECISION="On" \
+      # -DMOSSCAP_SINGLE_PRECISION="On" \
 cmake  \
-      -DHYDRO_ARCH="OPENMP"          \
+      -DMOSSCAP_ARCH="OPENMP"          \
       -DYAKL_AUTO_PROFILE="On"         \
-      -DHYDRO_CXX_FLAGS="-O3 -fopenmp" \
+      -DMOSSCAP_CXX_FLAGS="-O3 -fopenmp" \
       -DGCC_INCLUDE_PATH="${GCC_INCLUDE_PATH}" \
       -DNETCDF_INCLUDE_PATH="$(nc-config --includedir)" \
       -DLDLIBS="$(nc-config --libs) -lz" \
