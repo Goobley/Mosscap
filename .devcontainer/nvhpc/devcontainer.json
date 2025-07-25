@@ -25,7 +25,8 @@
                 "ms-vscode.cmake-tools",
                 "ms-vscode.cpptools",
 				"ms-vscode.cpptools-extension-pack",
-				"streetsidesoftware.code-spell-checker"
+				"streetsidesoftware.code-spell-checker",
+				"fortran-lang.linter-gfortran"
 			]
 		}
 	},
