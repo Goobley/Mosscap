@@ -1,4 +1,3 @@
-#include "YAKL.h"
 #include "Config.hpp"
 #include "Hydro.hpp"
 #include <fmt/core.h>
@@ -65,7 +64,7 @@ int main(int argc, const char** argv) {
             .xc = N,
             .yc = N,
             .zc = 1,
-            .ng = 1
+            .ng = 3
         };
         state.Q = Fp4d("Q", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
         state.Q_old = Fp4d("Q_old", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
@@ -87,7 +86,7 @@ int main(int argc, const char** argv) {
         set_intial_conditions(sim);
         fill_bcs(sim.state);
 
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < 100; ++i) {
             write_output(sim, i);
             const fp_t dt = compute_dt(sim);
             fmt::println("dt: {}", dt);

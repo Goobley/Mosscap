@@ -1,5 +1,7 @@
 #if !defined(MOSSCAP_TYPES_HPP)
 #define MOSSCAP_TYPES_HPP
+#define KOKKOS_ENABLE_DEBUG
+#include "YAKL.h"
 #include "Config.hpp"
 #include "LoopUtils.hpp"
 

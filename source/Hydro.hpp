@@ -8,16 +8,16 @@
 
 
 void calc_hydro_fluxes(const Simulation& sim) {
-    constexpr Reconstruction recon = Reconstruction::Fog;
+    constexpr Reconstruction recon = Reconstruction::Ppm;
     constexpr SlopeLimiter slope_limiter = SlopeLimiter::MonotonizedCentral;
-    constexpr RiemannSolver rsolver = RiemannSolver::Llf;
+    constexpr RiemannSolver rsolver = RiemannSolver::Hllc;
 
     const auto& state = sim.state;
     const auto& scratch = sim.scratch;
     const auto& sz = sim.state.sz;
-    int nx = sz.xc - 2 * sz.ng;
-    int ny = std::max(sz.yc - 2 * sz.ng, 1);
-    int nz = std::max(sz.zc - 2 * sz.ng, 1);
+    const int nx = sz.xc - 2 * sz.ng;
+    const int ny = std::max(sz.yc - 2 * sz.ng, 1);
+    const int nz = std::max(sz.zc - 2 * sz.ng, 1);
 
     dex_parallel_for(
         "Q -> W",
@@ -41,8 +41,8 @@ void calc_hydro_fluxes(const Simulation& sim) {
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
             CellIndex idx {
                 .i = ii + (sz.ng - 1),
-                .j = ji + sz.ng,
-                .k = ki + sz.ng
+                .j = ny == 1 ? ji : ji + sz.ng,
+                .k = nz == 1 ? ki : ki + sz.ng
             };
             constexpr int Axis = 0;
             for (int var = 0; var < state.W.extent(0); ++var) {
@@ -57,19 +57,19 @@ void calc_hydro_fluxes(const Simulation& sim) {
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
             CellIndex idx {
                 .i = ii + sz.ng,
-                .j = ji + sz.ng,
-                .k = ki + sz.ng
+                .j = ny == 1 ? ji : ji + sz.ng,
+                .k = nz == 1 ? ki : ki + sz.ng
             };
             CellIndex idxm {
                 .i = ii + sz.ng - 1,
-                .j = ji + sz.ng,
-                .k = ki + sz.ng
+                .j = ny == 1 ? ji : ji + sz.ng,
+                .k = nz == 1 ? ki : ki + sz.ng
             };
-            constexpr int Axis = 0;
             // NOTE(cmo): Left and right relative to the interface, taking the reconstructions from the left/right edges of the cells
             QtyView rL_view(scratch.RR, idxm);
             QtyView rR_view(scratch.RL, idx);
             QtyView flux_view(scratch.Fx, idx);
+            constexpr int Axis = 0;
             RiemannFlux<rsolver, Axis>(rL_view, rR_view, flux_view);
         }
     );
@@ -83,7 +83,7 @@ void calc_hydro_fluxes(const Simulation& sim) {
                 CellIndex idx {
                     .i = ii + sz.ng,
                     .j = ji + (sz.ng - 1),
-                    .k = ki + sz.ng
+                    .k = nz == 1 ? ki : ki + sz.ng
                 };
                 constexpr int Axis = 1;
                 for (int var = 0; var < state.W.extent(0); ++var) {
@@ -99,12 +99,12 @@ void calc_hydro_fluxes(const Simulation& sim) {
                 CellIndex idx {
                     .i = ii + sz.ng,
                     .j = ji + sz.ng,
-                    .k = ki + sz.ng
+                    .k = nz == 1 ? ki : ki + sz.ng
                 };
                 CellIndex idxm {
                     .i = ii + sz.ng,
                     .j = ji + sz.ng - 1,
-                    .k = ki + sz.ng
+                    .k = nz == 1 ? ki : ki + sz.ng
                 };
                 constexpr int Axis = 1;
                 // NOTE(cmo): Left and right relative to the interface, taking the reconstructions from the left/right edges of the cells
@@ -128,16 +128,16 @@ void step_Q(const Simulation& sim, int rk_step, fp_t dt) {
     const auto& scratch = sim.scratch;
     const auto& sz = sim.state.sz;
     int nx = sz.xc - 2 * sz.ng;
-    int ny = sz.yc - 2 * sz.ng;
-    int nz = sz.zc - 2 * sz.ng;
+    int ny = std::max(sz.yc - 2 * sz.ng, 1);
+    int nz = std::max(sz.zc - 2 * sz.ng, 1);
 
     if (rk_step == 0) {
         dex_parallel_for(
             "RK2 step 0",
             FlatLoop<3>(nz, ny, nx),
             KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                const int k = ki + sz.ng;
-                const int j = ji + sz.ng;
+                const int k = nz == 1 ? ki : ki + sz.ng;
+                const int j = ny == 1 ? ji : ji + sz.ng;
                 const int i = ii + sz.ng;
                 for (int var = 0; var < state.Q.extent(0); ++var) {
                     fp_t q_update = FP(0.0);
@@ -158,8 +158,8 @@ void step_Q(const Simulation& sim, int rk_step, fp_t dt) {
             "RK2 step 1",
             FlatLoop<3>(nz, ny, nx),
             KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                const int k = ki + sz.ng;
-                const int j = ji + sz.ng;
+                const int k = nz == 1 ? ki : ki + sz.ng;
+                const int j = ny == 1 ? ji : ji + sz.ng;
                 const int i = ii + sz.ng;
                 for (int var = 0; var < state.Q.extent(0); ++var) {
                     fp_t q_update = FP(0.0);
@@ -187,6 +187,7 @@ fp_t compute_dt(const Simulation& sim) {
 
     const auto& state = sim.state;
     dex_parallel_for(
+        "Terrible CFL Loop",
         FlatLoop<3>(state.sz.zc, state.sz.yc, state.sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
             yakl::SArray<fp_t, 1, N_HYDRO_VARS> w;

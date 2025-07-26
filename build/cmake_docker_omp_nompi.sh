@@ -15,11 +15,11 @@ GCC_INCLUDE_PATH=$(g++ --print-file-name=include)
 cmake  \
       -DMOSSCAP_ARCH="OPENMP"          \
       -DYAKL_AUTO_PROFILE="On"         \
-      -DMOSSCAP_CXX_FLAGS="-O3 -fopenmp" \
+      -DMOSSCAP_CXX_FLAGS="-O0 -g -fopenmp" \
       -DGCC_INCLUDE_PATH="${GCC_INCLUDE_PATH}" \
       -DNETCDF_INCLUDE_PATH="$(nc-config --includedir)" \
       -DLDLIBS="$(nc-config --libs) -lz" \
       -DKokkos_ROOT="$(pwd)/../kokkos/" \
       -DCMAKE_PREFIX_PATH="$(pwd)/../kokkos/lib/cmake" \
-      -DCMAKE_BUILD_TYPE="Release" \
+      -DCMAKE_BUILD_TYPE="Debug" \
       ..

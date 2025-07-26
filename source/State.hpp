@@ -28,7 +28,7 @@ enum class Prim : i32 {
     Rho = 0,
     Vx = 1,
     Vy = 2,
-    Vz = (NUM_DIM > 2) ? -200 : 3,
+    Vz = (NUM_DIM > 2) ? 3 : -200,
     Pres = 3 + int(NUM_DIM > 2)
 };
 
@@ -36,7 +36,7 @@ enum class Cons : i32 {
     Rho = 0,
     MomX = 1,
     MomY = 2,
-    MomZ = (NUM_DIM > 2) ? -200 : 3,
+    MomZ = (NUM_DIM > 2) ? 3 : -200,
     Ene = 3 + int(NUM_DIM > 2)
 };
 constexpr int N_HYDRO_VARS = 2 + NUM_DIM;
