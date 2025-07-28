@@ -6,13 +6,13 @@
 #include "Eos.hpp"
 
 enum class RiemannSolver {
-    Llf,
+    Rusanov,
     Hll,
     Hllc
 };
 
-template <RiemannSolver rs, int Axis, std::enable_if_t<rs == RiemannSolver::Llf, int> = 0>
-KOKKOS_INLINE_FUNCTION void RiemannFlux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+template <RiemannSolver rs, int Axis, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>
+KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     constexpr int IV = Velocity<Axis>();
     const fp_t vL = wL(IV);
     const fp_t vR = wR(IV);
@@ -35,7 +35,7 @@ KOKKOS_INLINE_FUNCTION void RiemannFlux(const QtyView& wL, const QtyView& wR, co
 }
 
 template <RiemannSolver rs, int Axis, std::enable_if_t<rs == RiemannSolver::Hll, int> = 0>
-KOKKOS_INLINE_FUNCTION void RiemannFlux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     constexpr int IV = Velocity<Axis>();
 
     const fp_t csL = std::sqrt(Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
@@ -59,7 +59,7 @@ KOKKOS_INLINE_FUNCTION void RiemannFlux(const QtyView& wL, const QtyView& wR, co
 }
 
 template <RiemannSolver rs, int Axis, std::enable_if_t<rs == RiemannSolver::Hllc, int> = 0>
-KOKKOS_INLINE_FUNCTION void RiemannFlux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     constexpr int IV = Velocity<Axis>();
     constexpr int IM = Momentum<Axis>();
 

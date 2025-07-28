@@ -16,6 +16,8 @@ struct ScratchSpace {
 struct Simulation {
     i64 current_step;
     fp_t max_cfl;
+    fp_t time;
+    fp_t max_time;
     State state;
     ScratchSpace scratch;
     std::function<fp_t(const State&)> compute_timestep;

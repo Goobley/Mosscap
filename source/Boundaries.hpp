@@ -3,8 +3,9 @@
 
 #include "Types.hpp"
 #include "State.hpp"
+#include <fmt/core.h>
 
-void fill_bcs(const State& state) {
+inline void fill_bcs(const State& state) {
     const auto& sz = state.sz;
     const auto& bdry = state.boundaries;
     const int ng = state.sz.ng;
@@ -61,8 +62,8 @@ void fill_bcs(const State& state) {
                 int j = jg;
                 int jflip = (2 * ng - 1) - j;
                 if (jg >= ng) {
-                    j = (sz.xc - 1) - (jg - ng);
-                    jflip = (sz.xc - 1) - (2 * ng - 1) -  (jg - ng);
+                    j = (sz.yc - 1) - (jg - ng);
+                    jflip = (sz.yc - 1) - (2 * ng - 1) -  (jg - ng);
                 }
 
                 if (jg < ng) {
@@ -70,7 +71,7 @@ void fill_bcs(const State& state) {
                         for (int var = 0; var < state.Q.extent(0); ++var) {
                             state.Q(var, k, j, i) = state.Q(var, k, jflip, i);
                         }
-                        state.Q(I(Cons::MomX), k, j, i) = -state.Q(I(Cons::MomX), k, j, i);
+                        state.Q(I(Cons::MomY), k, j, i) = -state.Q(I(Cons::MomY), k, j, i);
                     } else if (bdry.ys == BoundaryType::Periodic) {
                         for (int var = 0; var < state.Q.extent(0); ++var) {
                             state.Q(var, k, j, i) = state.Q(var, k, sz.yc - ng - j, i);
@@ -85,7 +86,7 @@ void fill_bcs(const State& state) {
                         for (int var = 0; var < state.Q.extent(0); ++var) {
                             state.Q(var, k, j, i) = state.Q(var, k, jflip, i);
                         }
-                        state.Q(I(Cons::MomX), k, j, i) = -state.Q(I(Cons::MomX), k, j, i);
+                        state.Q(I(Cons::MomY), k, j, i) = -state.Q(I(Cons::MomY), k, j, i);
                     } else if (bdry.ye == BoundaryType::Periodic) {
                         for (int var = 0; var < state.Q.extent(0); ++var) {
                             state.Q(var, k, j, i) = state.Q(var, k, ng + (jg - ng), i);
