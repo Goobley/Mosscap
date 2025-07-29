@@ -8,8 +8,7 @@
 
 void global_cons_to_prim(const Simulation& sim);
 
-void calc_hydro_fluxes(const Simulation& sim);
-void step_Q(const Simulation& sim, int rk_step, fp_t dt);
+void compute_hydro_fluxes(const Simulation& sim);
 
 fp_t compute_dt(const Simulation& sim);
 

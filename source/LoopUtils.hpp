@@ -226,6 +226,9 @@ inline void dex_parallel_reduce(
     const Lambda& closure,
     const Reducer<Args...>& reducer
 ) {
+#ifdef YAKL_AUTO_PROFILE
+    yakl::timer_start(name);
+#endif
 #ifdef DEX_BALACE_TEAM_WORK
     typedef Reducer<Args...> ReducerT;
     typedef typename ReducerT::value_type ReductionVar;
@@ -274,6 +277,9 @@ inline void dex_parallel_reduce(
         },
         reducer
     );
+#endif
+#ifdef YAKL_AUTO_PROFILE
+    yakl::timer_stop(name);
 #endif
 }
 

@@ -4,9 +4,9 @@
 #include "YAKL_netcdf.h"
 
 // static constexpr int problem = 0; // Explosion (10x density gradient in Sod)
-// static constexpr int problem = 1; // Sod 2d
+static constexpr int problem = 1; // Sod 2d
 // cases from liska + wendroff
-static constexpr int problem = 1; // quadrants (case 3)
+// static constexpr int problem = 2; // quadrants (case 3)
 
 fp_t set_intial_conditions(State& state) {
     fp_t max_time = FP(0.1);
@@ -25,7 +25,6 @@ fp_t set_intial_conditions(State& state) {
             .ng = 3
         };
         state.Q = Fp4d("Q", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
-        state.Q_old = Fp4d("Q_old", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
         state.W = Fp4d("W", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
 
         dex_parallel_for(
@@ -60,8 +59,8 @@ fp_t set_intial_conditions(State& state) {
         state.boundaries.ys = BoundaryType::Wall;
         state.boundaries.ye = BoundaryType::Wall;
 
-        const int Nx = 512;
-        const int Ny = 128;
+        const int Nx = 1024;
+        const int Ny = 1024;
         const int Ng = 3;
         state.dx = FP(1.0) / (Nx - 2 * Ng);
         state.sz = GridSize{
@@ -71,7 +70,6 @@ fp_t set_intial_conditions(State& state) {
             .ng = Ng
         };
         state.Q = Fp4d("Q", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
-        state.Q_old = Fp4d("Q_old", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
         state.W = Fp4d("W", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
         dex_parallel_for(
             FlatLoop<3>(state.sz.zc, state.sz.yc, state.sz.xc),
@@ -104,8 +102,8 @@ fp_t set_intial_conditions(State& state) {
         state.boundaries.ys = BoundaryType::Symmetric;
         state.boundaries.ye = BoundaryType::Symmetric;
 
-        const int Nx = 2048;
-        const int Ny = 2048;
+        const int Nx = 1024;
+        const int Ny = 1024;
         const int Ng = 3;
         state.dx = FP(1.0) / (Nx - 2 * Ng);
         state.sz = GridSize{
@@ -115,7 +113,6 @@ fp_t set_intial_conditions(State& state) {
             .ng = Ng
         };
         state.Q = Fp4d("Q", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
-        state.Q_old = Fp4d("Q_old", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
         state.W = Fp4d("W", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc);
         dex_parallel_for(
             FlatLoop<3>(state.sz.zc, state.sz.yc, state.sz.xc),
@@ -178,18 +175,22 @@ int main(int argc, const char** argv) {
 
         Simulation sim {
             .current_step = 0,
-            .max_cfl = FP(0.5),
+            .max_cfl = FP(0.99),
             .time = FP(0.0),
             .max_time = max_time,
             .state = state,
-            .scratch = ScratchSpace {
+            .recon_scratch = ReconScratch {
                 .RR = Fp4d("RR", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc),
-                .RL = Fp4d("RL", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc),
+                .RL = Fp4d("RL", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc)
+            },
+            .fluxes = Fluxes {
                 .Fx = Fp4d("Fx", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc),
                 .Fy = Fp4d("Fy", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc),
                 .Fz = Fp4d("Fz", N_HYDRO_VARS, state.sz.zc, state.sz.yc, state.sz.xc)
             }
         };
+        constexpr TimeStepScheme time_step_scheme = TimeStepScheme::SspRk3;
+        TimeStepper<time_step_scheme>::init(sim);
 
         fill_bcs(sim.state);
 
@@ -197,17 +198,11 @@ int main(int argc, const char** argv) {
 
         while (sim.time < sim.max_time) {
             if (i % 10 == 0) {
-                write_output(sim, i, sim.time);
+                // write_output(sim, i, sim.time);
             }
             const fp_t dt = compute_dt(sim);
             fmt::println("dt: {}", dt);
-            sim.state.Q_old = sim.state.Q.createDeviceCopy();
-            for (int rk = 0; rk < 2; ++rk) {
-                calc_hydro_fluxes(sim);
-                step_Q(sim, rk, dt);
-                fill_bcs(sim.state);
-            }
-            sim.time += dt;
+            TimeStepper<time_step_scheme>::time_step(sim, dt);
             i += 1;
         }
         write_output(sim, i, sim.time);

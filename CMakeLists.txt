@@ -38,6 +38,7 @@ endif()
 list(APPEND MOSSCAP_SOURCE_FILES
     "source/main.cpp"
     "source/Hydro.cpp"
+    "source/TimeStepping.cpp"
 )
 
 add_executable(mosscap

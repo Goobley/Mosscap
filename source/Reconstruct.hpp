@@ -16,6 +16,11 @@ enum class SlopeLimiter {
     Minmod
 };
 
+struct ReconScratch {
+    Fp4d RR; /// Left-hand reconstruction [w, k, j, i]
+    Fp4d RL; /// Right-hand reconstruction [w, k, j, i]
+};
+
 template <int Order>
 struct Stencil {
     constexpr static int order = Order;

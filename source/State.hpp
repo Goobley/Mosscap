@@ -81,7 +81,18 @@ struct State {
     Boundaries boundaries; /// Boundary handling specifications
     Fp4d Q; // Conserved State
     Fp4d W; /// Primitive State
-    Fp4d Q_old; // TODO(cmo): Have a vector for different schemes - or move burden to time-integrator
+};
+
+struct Fluxes {
+    Fp4d Fx; /// x flux
+    Fp4d Fy; /// y flux
+    Fp4d Fz; /// z flux
+};
+
+struct Sources {
+    Fp4d Sx; /// x source
+    Fp4d Sy; /// y source
+    Fp4d Sz; /// z source
 };
 
 #else
