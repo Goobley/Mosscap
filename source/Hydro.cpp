@@ -184,7 +184,7 @@ fp_t compute_dt_impl(const Simulation& sim) {
         "CFL reduction",
         FlatLoop<3>(state.sz.zc, state.sz.yc, state.sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i, fp_t& running_dt) {
-            yakl::SArray<fp_t, 1, N_HYDRO_VARS> w;
+            yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
             CellIndex idx {
                 .i = i,
                 .j = j,

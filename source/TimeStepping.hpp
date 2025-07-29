@@ -18,11 +18,9 @@ struct TimeStepperStorage {
 template <TimeStepScheme scheme>
 struct TimeStepper {
     static bool init(Simulation& sim);
+    template <int NumDim>
     static void time_step(Simulation& sim, fp_t dt);
 };
-
-// extern template struct TimeStepper<TimeStepScheme::Rk2>;
-// extern template struct TimeStepper<TimeStepScheme::SspRk3>;
 
 #else
 #endif

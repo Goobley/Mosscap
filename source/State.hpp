@@ -5,7 +5,6 @@
 
 #include "Types.hpp"
 
-constexpr i32 NUM_DIM = 2;
 constexpr fp_t Gamma = FP(1.4); // Ratio of specific heats -- monatomic
 constexpr fp_t GammaM1 = Gamma - FP(1.0);
 
@@ -57,8 +56,8 @@ struct Cons {
 //     MomZ = (NUM_DIM > 2) ? 3 : -200,
 //     Ene = 3 + int(NUM_DIM > 2)
 // };
-constexpr int N_HYDRO_VARS = 2 + NUM_DIM;
-
+template <int NumDim>
+constexpr int N_HYDRO_VARS = 2 + NumDim;
 
 template <typename E>
 constexpr int I(E e) {

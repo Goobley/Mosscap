@@ -35,7 +35,7 @@ struct Simulation {
     Sources sources;
     TimeStepperStorage ts_storage;
     std::function<fp_t(const Simulation&)> compute_dt;
-    // std::function<void(const Simulation&)> compute_hydro_fluxes;
+    std::function<void(Simulation&, fp_t)> time_step;
     FluxFns flux_fns;
     void step();
     void write();

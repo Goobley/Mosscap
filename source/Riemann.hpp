@@ -15,11 +15,12 @@ template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == Riemann
 KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
+    constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
     constexpr int IV = Velocity<Axis, NumDim>();
     const fp_t vL = wL(IV);
     const fp_t vR = wR(IV);
 
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS> qL, qR, fL, fR;
+    yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
     prim_to_cons<NumDim>(wL, qL);
     prim_to_cons<NumDim>(wR, qR);
 
@@ -31,7 +32,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     const fp_t max_c = FP(0.5) * (csL + std::abs(vL) + csR + std::abs(vR));
 
     #pragma unroll
-    for (int i = 0; i < N_HYDRO_VARS; ++i) {
+    for (int i = 0; i < n_hydro; ++i) {
         flux(i) = FP(0.5) * (fL(i) + fR(i) - max_c * (qR(i) - qL(i)));
     }
 }
@@ -40,6 +41,7 @@ template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == Riemann
 KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
+    constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
     constexpr int IV = Velocity<Axis, NumDim>();
 
     const fp_t csL = std::sqrt(Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
@@ -50,14 +52,14 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     const fp_t sR = std::max(-tiny, std::max(wL(IV) + csL, wL(IV) + csR));
     const fp_t sM = FP(1.0) / (sR - sL);
 
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS> qL, qR, fL, fR;
+    yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
     prim_to_cons<NumDim>(wL, qL);
     prim_to_cons<NumDim>(wR, qR);
     prim_to_flux<Axis, NumDim>(wL, fL);
     prim_to_flux<Axis, NumDim>(wR, fR);
 
     #pragma unroll
-    for (int i = 0; i < N_HYDRO_VARS; ++i) {
+    for (int i = 0; i < n_hydro; ++i) {
         flux(i) = sM * (sR * fL(i) - sL * fR(i) + sR * sL * (qR(i) - qL(i)));
     }
 }
@@ -66,6 +68,7 @@ template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == Riemann
 KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
+    constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
     constexpr int IV = Velocity<Axis, NumDim>();
     constexpr int IM = Momentum<Axis, NumDim>();
 
@@ -77,7 +80,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     // const fp_t sR = std::max(-tiny, std::max(wL(IV) + csL, wL(IV) + csR));
     // const fp_t sM = FP(1.0) / (sR - sL);
 
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS> qL, qR, fL, fR;
+    yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
     prim_to_cons<NumDim>(wL, qL);
     prim_to_cons<NumDim>(wR, qR);
 
@@ -130,11 +133,11 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     fL(I(Cons::MomX)) = mass_flux_L * wL(I(Prim::Vx));
     fR(I(Cons::MomX)) = mass_flux_R * wR(I(Prim::Vx));
 
-    if (NUM_DIM > 1) {
+    if (NumDim > 1) {
         fL(I(Cons::MomY)) = mass_flux_L * wL(I(Prim::Vy));
         fR(I(Cons::MomY)) = mass_flux_R * wR(I(Prim::Vy));
     }
-    if (NUM_DIM > 2) {
+    if (NumDim > 2) {
         fL(I(Cons::MomZ)) = mass_flux_L * wL(I(Prim::Vz));
         fR(I(Cons::MomZ)) = mass_flux_R * wR(I(Prim::Vz));
     }
@@ -157,7 +160,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     }
 
     #pragma unroll
-    for (int var = 0; var < N_HYDRO_VARS; ++var) {
+    for (int var = 0; var < n_hydro; ++var) {
         flux(var) = sL * fL(var) + sR * fR(var);
     }
     flux(IM) += sM * cp;
