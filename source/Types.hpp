@@ -63,7 +63,25 @@ struct CellIndex {
     i32 i; // x index
     i32 j; // y index
     i32 k; // z index
+
+    template <int Axis>
+    KOKKOS_INLINE_FUNCTION i32& along() {
+        static_assert(Axis <= 3);
+        return i;
+    }
 };
+template <>
+KOKKOS_INLINE_FUNCTION i32& CellIndex::along<0>() {
+    return i;
+}
+template <>
+KOKKOS_INLINE_FUNCTION i32& CellIndex::along<1>() {
+    return j;
+}
+template <>
+KOKKOS_INLINE_FUNCTION i32& CellIndex::along<2>() {
+    return k;
+}
 
 /// Access the fields at a location given by idx
 struct QtyView {

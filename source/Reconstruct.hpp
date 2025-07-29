@@ -16,6 +16,46 @@ enum class SlopeLimiter {
     Minmod
 };
 
+constexpr bool is_limiter_agnostic(Reconstruction recon) {
+    switch (recon) {
+        case Reconstruction::Fog: {
+            return true;
+        } break;
+        case Reconstruction::Weno5Z: {
+            return true;
+        } break;
+        default:
+            return false;
+    }
+}
+
+struct ReconstructionScheme {
+    Reconstruction reconstruction;
+    SlopeLimiter slope_limiter;
+
+    inline friend bool operator<(const ReconstructionScheme& self, const ReconstructionScheme& other) {
+        if (self.reconstruction != other.reconstruction) {
+            return self.reconstruction < other.reconstruction;
+        }
+        if (is_limiter_agnostic(self.reconstruction)) {
+            return false;
+        } else {
+            return self.slope_limiter < other.slope_limiter;
+        }
+    }
+
+    inline friend bool operator==(const ReconstructionScheme& self, const ReconstructionScheme& other) {
+        if (self.reconstruction != other.reconstruction) {
+            return false;
+        }
+        if (is_limiter_agnostic(self.reconstruction)) {
+            return true;
+        } else {
+            return self.slope_limiter == other.slope_limiter;
+        }
+    }
+};
+
 struct ReconScratch {
     Fp4d RR; /// Left-hand reconstruction [w, k, j, i]
     Fp4d RL; /// Right-hand reconstruction [w, k, j, i]

@@ -11,18 +11,20 @@ enum class RiemannSolver {
     Hllc
 };
 
-template <RiemannSolver rs, int Axis, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>
+template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>
 KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
-    constexpr int IV = Velocity<Axis>();
+    using Prim = Prim<NumDim>;
+    using Cons = Cons<NumDim>;
+    constexpr int IV = Velocity<Axis, NumDim>();
     const fp_t vL = wL(IV);
     const fp_t vR = wR(IV);
 
     yakl::SArray<fp_t, 1, N_HYDRO_VARS> qL, qR, fL, fR;
-    prim_to_cons(wL, qL);
-    prim_to_cons(wR, qR);
+    prim_to_cons<NumDim>(wL, qL);
+    prim_to_cons<NumDim>(wR, qR);
 
-    prim_to_flux<Axis>(wL, fL);
-    prim_to_flux<Axis>(wR, fR);
+    prim_to_flux<Axis, NumDim>(wL, fL);
+    prim_to_flux<Axis, NumDim>(wR, fR);
 
     const fp_t csL = std::sqrt(Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
     const fp_t csR = std::sqrt(Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
@@ -34,9 +36,11 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     }
 }
 
-template <RiemannSolver rs, int Axis, std::enable_if_t<rs == RiemannSolver::Hll, int> = 0>
+template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == RiemannSolver::Hll, int> = 0>
 KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
-    constexpr int IV = Velocity<Axis>();
+    using Prim = Prim<NumDim>;
+    using Cons = Cons<NumDim>;
+    constexpr int IV = Velocity<Axis, NumDim>();
 
     const fp_t csL = std::sqrt(Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
     const fp_t csR = std::sqrt(Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
@@ -47,10 +51,10 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     const fp_t sM = FP(1.0) / (sR - sL);
 
     yakl::SArray<fp_t, 1, N_HYDRO_VARS> qL, qR, fL, fR;
-    prim_to_cons(wL, qL);
-    prim_to_cons(wR, qR);
-    prim_to_flux<Axis>(wL, fL);
-    prim_to_flux<Axis>(wR, fR);
+    prim_to_cons<NumDim>(wL, qL);
+    prim_to_cons<NumDim>(wR, qR);
+    prim_to_flux<Axis, NumDim>(wL, fL);
+    prim_to_flux<Axis, NumDim>(wR, fR);
 
     #pragma unroll
     for (int i = 0; i < N_HYDRO_VARS; ++i) {
@@ -58,10 +62,12 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     }
 }
 
-template <RiemannSolver rs, int Axis, std::enable_if_t<rs == RiemannSolver::Hllc, int> = 0>
+template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == RiemannSolver::Hllc, int> = 0>
 KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
-    constexpr int IV = Velocity<Axis>();
-    constexpr int IM = Momentum<Axis>();
+    using Prim = Prim<NumDim>;
+    using Cons = Cons<NumDim>;
+    constexpr int IV = Velocity<Axis, NumDim>();
+    constexpr int IM = Momentum<Axis, NumDim>();
 
     const fp_t csL = std::sqrt(Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
     const fp_t csR = std::sqrt(Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
@@ -72,8 +78,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     // const fp_t sM = FP(1.0) / (sR - sL);
 
     yakl::SArray<fp_t, 1, N_HYDRO_VARS> qL, qR, fL, fR;
-    prim_to_cons(wL, qL);
-    prim_to_cons(wR, qR);
+    prim_to_cons<NumDim>(wL, qL);
+    prim_to_cons<NumDim>(wR, qR);
 
     // following athena impl
     // TODO(cmo): Go back to the original paper and try to refactor in terms of hll flux

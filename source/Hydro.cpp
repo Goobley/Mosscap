@@ -3,12 +3,10 @@
 #include <map>
 #include <tuple>
 
-void global_cons_to_prim(const Simulation& sim) {
+template <int NumDim>
+void global_cons_to_prim_impl(const Simulation& sim) {
     const auto& state = sim.state;
     const auto& sz = sim.state.sz;
-    const int nx = sz.xc - 2 * sz.ng;
-    const int ny = std::max(sz.yc - 2 * sz.ng, 1);
-    const int nz = std::max(sz.zc - 2 * sz.ng, 1);
 
     dex_parallel_for(
         "Q -> W",
@@ -21,290 +19,149 @@ void global_cons_to_prim(const Simulation& sim) {
             };
             auto WView = QtyView(state.W, idx);
             auto QView = QtyView(state.Q, idx);
-            cons_to_prim(QView, WView);
+            cons_to_prim<NumDim>(QView, WView);
         }
     );
     Kokkos::fence();
 }
 
-template <int NumDim, Reconstruction reconstruction, SlopeLimiter slope_limiter, RiemannSolver rsolver>
-void compute_hydro_fluxes_impl(const Simulation& sim) {
+void global_cons_to_prim(const Simulation& sim) {
+    switch (sim.num_dim) {
+        case 1: {
+            global_cons_to_prim_impl<1>(sim);
+        } break;
+        case 2: {
+            global_cons_to_prim_impl<2>(sim);
+        } break;
+        case 3: {
+            global_cons_to_prim_impl<3>(sim);
+        } break;
+        default:
+            KOKKOS_ASSERT(false && ("Weird num dim"));
+    }
+}
+
+template<Reconstruction reconstruction, SlopeLimiter slope_limiter, int Axis>
+void compute_recon_impl(const Simulation& sim) {
+    static_assert(Axis < 3, "What are you doing?");
     const auto& state = sim.state;
     const auto& recon = sim.recon_scratch;
-    const auto& flux = sim.fluxes;
     const auto& sz = sim.state.sz;
-    const int nx = sz.xc - 2 * sz.ng;
-    const int ny = std::max(sz.yc - 2 * sz.ng, 1);
-    const int nz = std::max(sz.zc - 2 * sz.ng, 1);
+    int nx = sz.xc - 2 * sz.ng;
+    int ny = std::max(sz.yc - 2 * sz.ng, 1);
+    int nz = std::max(sz.zc - 2 * sz.ng, 1);
+    int xs = sz.ng;
+    int ys = ny == 1 ? 0 : sz.ng;
+    int zs = nz == 1 ? 0 : sz.ng;
 
-    global_cons_to_prim(sim);
+    if constexpr (Axis == 0) {
+        nx += 2;
+        xs -= 1;
+    } else if constexpr (Axis == 1) {
+        ny += 2;
+        ys -= 1;
+    } else {
+        nz += 2;
+        zs -= 1;
+    }
 
+    static constexpr const char* kernel_name[3] = {"Reconstruct x", "Reconstruct y", "Reconstruct z"};
     dex_parallel_for(
-        "recon x",
-        FlatLoop<3>(nz, ny, nx + 2),
+        kernel_name[Axis],
+        FlatLoop<3>(nz, ny, nx),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
             CellIndex idx {
-                .i = ii + (sz.ng - 1),
-                .j = ny == 1 ? ji : ji + sz.ng,
-                .k = nz == 1 ? ki : ki + sz.ng
+                .i = ii + xs,
+                .j = ji + ys,
+                .k = ki + zs
             };
-            constexpr int Axis = 0;
             for (int var = 0; var < state.W.extent(0); ++var) {
-                reconstruct<reconstruction, slope_limiter, Axis>(state.W, var, idx, recon.RL(var, idx.k, idx.j, idx.i), recon.RR(var, idx.k, idx.j, idx.i));
+                reconstruct<reconstruction, slope_limiter, Axis>(
+                    state.W,
+                    var,
+                    idx,
+                    recon.RL(var, idx.k, idx.j, idx.i),
+                    recon.RR(var, idx.k, idx.j, idx.i)
+                );
             }
         }
     );
     Kokkos::fence();
+}
+
+template <RiemannSolver rsolver, int Axis, int NumDim>
+void compute_flux_impl(const Simulation& sim) {
+    static_assert(Axis < 3, "What are you doing?");
+    const auto& recon = sim.recon_scratch;
+    const auto& fluxes = sim.fluxes;
+    const auto& sz = sim.state.sz;
+    int nx = sz.xc - 2 * sz.ng;
+    int ny = std::max(sz.yc - 2 * sz.ng, 1);
+    int nz = std::max(sz.zc - 2 * sz.ng, 1);
+    int xs = sz.ng;
+    int ys = ny == 1 ? 0 : sz.ng;
+    int zs = nz == 1 ? 0 : sz.ng;
+
+    Fp4d flux;
+    if constexpr (Axis == 0) {
+        nx += 1;
+        flux = fluxes.Fx;
+    } else if constexpr (Axis == 1) {
+        ny += 1;
+        flux = fluxes.Fy;
+    } else {
+        nz += 1;
+        flux = fluxes.Fz;
+    }
+    static constexpr const char* kernel_name[3] = {"Flux x", "Flux y", "Flux z"};
     dex_parallel_for(
-        "flux x",
-        FlatLoop<3>(nz, ny, nx + 1),
+        kernel_name[Axis],
+        FlatLoop<3>(nz, ny, nx),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
             CellIndex idx {
-                .i = ii + sz.ng,
-                .j = ny == 1 ? ji : ji + sz.ng,
-                .k = nz == 1 ? ki : ki + sz.ng
+                .i = ii + xs,
+                .j = ji + ys,
+                .k = ki + zs
             };
-            CellIndex idxm {
-                .i = ii + sz.ng - 1,
-                .j = ny == 1 ? ji : ji + sz.ng,
-                .k = nz == 1 ? ki : ki + sz.ng
-            };
+            CellIndex idxm(idx);
+            idxm.along<Axis>() -= 1;
             // NOTE(cmo): Left and right relative to the interface, taking the reconstructions from the left/right edges of the cells
             QtyView rL_view(recon.RR, idxm);
             QtyView rR_view(recon.RL, idx);
-            QtyView flux_view(flux.Fx, idx);
-            constexpr int Axis = 0;
-            riemann_flux<rsolver, Axis>(rL_view, rR_view, flux_view);
+            QtyView flux_view(flux, idx);
+            riemann_flux<rsolver, Axis, NumDim>(rL_view, rR_view, flux_view);
         }
     );
     Kokkos::fence();
-
-    if constexpr (NumDim > 1) {
-        dex_parallel_for(
-            "recon y",
-            FlatLoop<3>(nz, ny + 2, nx),
-            KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                CellIndex idx {
-                    .i = ii + sz.ng,
-                    .j = ji + (sz.ng - 1),
-                    .k = nz == 1 ? ki : ki + sz.ng
-                };
-                constexpr int Axis = 1;
-                for (int var = 0; var < state.W.extent(0); ++var) {
-                    reconstruct<reconstruction, slope_limiter, Axis>(state.W, var, idx, recon.RL(var, idx.k, idx.j, idx.i), recon.RR(var, idx.k, idx.j, idx.i));
-                }
-            }
-        );
-        Kokkos::fence();
-        dex_parallel_for(
-            "flux y",
-            FlatLoop<3>(nz, ny + 1, nx),
-            KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                CellIndex idx {
-                    .i = ii + sz.ng,
-                    .j = ji + sz.ng,
-                    .k = nz == 1 ? ki : ki + sz.ng
-                };
-                CellIndex idxm {
-                    .i = ii + sz.ng,
-                    .j = ji + sz.ng - 1,
-                    .k = nz == 1 ? ki : ki + sz.ng
-                };
-                constexpr int Axis = 1;
-                // NOTE(cmo): Left and right relative to the interface, taking the reconstructions from the left/right edges of the cells
-                QtyView rL_view(recon.RR, idxm);
-                QtyView rR_view(recon.RL, idx);
-                QtyView flux_view(flux.Fy, idx);
-                riemann_flux<rsolver, Axis>(rL_view, rR_view, flux_view);
-            }
-        );
-        Kokkos::fence();
-    }
-
-    if constexpr (NumDim > 2) {
-        dex_parallel_for(
-            "recon z",
-            FlatLoop<3>(nz + 2, ny, nx),
-            KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                CellIndex idx {
-                    .i = ii + sz.ng,
-                    .j = ji + sz.ng,
-                    .k = ki + (sz.ng - 1)
-                };
-                constexpr int Axis = 2;
-                for (int var = 0; var < state.W.extent(0); ++var) {
-                    reconstruct<reconstruction, slope_limiter, Axis>(state.W, var, idx, recon.RL(var, idx.k, idx.j, idx.i), recon.RR(var, idx.k, idx.j, idx.i));
-                }
-            }
-        );
-        Kokkos::fence();
-        dex_parallel_for(
-            "flux z",
-            FlatLoop<3>(nz + 1, ny, nx),
-            KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                CellIndex idx {
-                    .i = ii + sz.ng,
-                    .j = ji + sz.ng,
-                    .k = ki + sz.ng
-                };
-                CellIndex idxm {
-                    .i = ii + sz.ng,
-                    .j = ji + sz.ng,
-                    .k = ki + sz.ng - 1
-                };
-                constexpr int Axis = 2;
-                // NOTE(cmo): Left and right relative to the interface, taking the reconstructions from the left/right edges of the cells
-                QtyView rL_view(recon.RR, idxm);
-                QtyView rR_view(recon.RL, idx);
-                QtyView flux_view(flux.Fy, idx);
-                riemann_flux<rsolver, Axis>(rL_view, rR_view, flux_view);
-            }
-        );
-        Kokkos::fence();
-    }
 }
 
-
-template <int NumDim, Reconstruction recon, SlopeLimiter sl, RiemannSolver rs>
+template <int Axis, Reconstruction recon, SlopeLimiter sl = SlopeLimiter::MonotonizedCentral>
 std::pair<
-    std::tuple<int, Reconstruction, SlopeLimiter, RiemannSolver>,
+    std::tuple<int, ReconstructionScheme>,
+    std::function<void(const Simulation&)>
+>
+make_recon_impl() {
+    return {
+        std::make_tuple(Axis, ReconstructionScheme{.reconstruction=recon, .slope_limiter=sl}),
+        compute_recon_impl<recon, sl, Axis>
+    };
+}
+
+template <RiemannSolver rs, int Axis, int NumDim>
+std::pair<
+    std::tuple<RiemannSolver, int, int>,
     std::function<void(const Simulation&)>
 >
 make_flux_impl() {
     return {
-        std::make_tuple(NumDim, recon, sl, rs),
-        compute_hydro_fluxes_impl<NumDim, recon, sl, rs>
+        std::make_tuple(rs, Axis, NumDim),
+        compute_flux_impl<rs, Axis, NumDim>
     };
-}
-
-
-void select_hydro_fns(const NumericalSchemes& schemes, Simulation& sim) {
-    // NOTE(cmo): yes map is bad, but it doesn't matter
-    std::map<
-        std::tuple<int, Reconstruction, SlopeLimiter, RiemannSolver>,
-        std::function<void(const Simulation&)>
-    > available = {
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<1, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<2, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Fog, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Muscl, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Ppm, SlopeLimiter::Minmod, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::VanLeer, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::MonotonizedCentral, RiemannSolver::Hllc>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Rusanov>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Hll>(),
-        make_flux_impl<3, Reconstruction::Weno5Z, SlopeLimiter::Minmod, RiemannSolver::Hllc>()
-    };
-
-    sim.compute_hydro_fluxes = available[
-        std::make_tuple(NUM_DIM, schemes.reconstruction, schemes.slope_limit, schemes.riemann_solver)
-    ];
-}
-
-void compute_hydro_fluxes(const Simulation& sim) {
-    sim.compute_hydro_fluxes(sim);
 }
 
 template <int NumDim, typename WType>
 KOKKOS_INLINE_FUNCTION void dt_reducer(const WType& w, const fp_t dx, fp_t& running_dt) {
+    using Prim = Prim<NumDim>;
     const fp_t cs = std::sqrt(Gamma * w(I(Prim::Pres)) / w(I(Prim::Rho)));
     fp_t vel2 = square(w(I(Prim::Vx)));
     if (NumDim > 1) {
@@ -318,7 +175,8 @@ KOKKOS_INLINE_FUNCTION void dt_reducer(const WType& w, const fp_t dx, fp_t& runn
     running_dt = std::min(dt_local, running_dt);
 }
 
-fp_t compute_dt(const Simulation& sim) {
+template <int NumDim>
+fp_t compute_dt_impl(const Simulation& sim) {
     const auto& state = sim.state;
 
     fp_t dt_max = FP(1e5);
@@ -332,15 +190,116 @@ fp_t compute_dt(const Simulation& sim) {
                 .j = j,
                 .k = k
             };
-            cons_to_prim(QtyView(state.Q, idx), w);
-            dt_reducer<NUM_DIM>(w, state.dx, running_dt);
+            cons_to_prim<NumDim>(QtyView(state.Q, idx), w);
+            dt_reducer<NumDim>(w, state.dx, running_dt);
         },
         Kokkos::Min<fp_t>(dt_max)
     );
+    Kokkos::fence();
 
     fp_t dt = dt_max * sim.max_cfl;
     if (sim.time + dt >= sim.max_time) {
         dt = sim.max_time - sim.time + FP(1e-8);
     }
     return dt;
+}
+
+void select_hydro_fns(const NumericalSchemes& schemes, Simulation& sim) {
+    // NOTE(cmo): yes map is bad, but it doesn't matter
+    std::map<
+        std::tuple<int, ReconstructionScheme>,
+        std::function<void(const Simulation&)>
+    > recon_fns = {
+        make_recon_impl<0, Reconstruction::Fog>(),
+        make_recon_impl<0, Reconstruction::Muscl, SlopeLimiter::VanLeer>(),
+        make_recon_impl<0, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral>(),
+        make_recon_impl<0, Reconstruction::Muscl, SlopeLimiter::Minmod>(),
+        make_recon_impl<0, Reconstruction::Ppm, SlopeLimiter::VanLeer>(),
+        make_recon_impl<0, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral>(),
+        make_recon_impl<0, Reconstruction::Ppm, SlopeLimiter::Minmod>(),
+        make_recon_impl<0, Reconstruction::Weno5Z>(),
+        make_recon_impl<1, Reconstruction::Fog>(),
+        make_recon_impl<1, Reconstruction::Muscl, SlopeLimiter::VanLeer>(),
+        make_recon_impl<1, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral>(),
+        make_recon_impl<1, Reconstruction::Muscl, SlopeLimiter::Minmod>(),
+        make_recon_impl<1, Reconstruction::Ppm, SlopeLimiter::VanLeer>(),
+        make_recon_impl<1, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral>(),
+        make_recon_impl<1, Reconstruction::Ppm, SlopeLimiter::Minmod>(),
+        make_recon_impl<1, Reconstruction::Weno5Z>(),
+        make_recon_impl<2, Reconstruction::Fog>(),
+        make_recon_impl<2, Reconstruction::Muscl, SlopeLimiter::VanLeer>(),
+        make_recon_impl<2, Reconstruction::Muscl, SlopeLimiter::MonotonizedCentral>(),
+        make_recon_impl<2, Reconstruction::Muscl, SlopeLimiter::Minmod>(),
+        make_recon_impl<2, Reconstruction::Ppm, SlopeLimiter::VanLeer>(),
+        make_recon_impl<2, Reconstruction::Ppm, SlopeLimiter::MonotonizedCentral>(),
+        make_recon_impl<2, Reconstruction::Ppm, SlopeLimiter::Minmod>(),
+        make_recon_impl<2, Reconstruction::Weno5Z>(),
+    };
+    ReconstructionScheme recon{.reconstruction=schemes.reconstruction, .slope_limiter=schemes.slope_limit};
+    sim.flux_fns.recon_x = recon_fns[std::make_tuple(0, recon)];
+    if (sim.num_dim > 1) {
+        sim.flux_fns.recon_y = recon_fns[std::make_tuple(1, recon)];
+    }
+    if (sim.num_dim > 2) {
+        sim.flux_fns.recon_z = recon_fns[std::make_tuple(2, recon)];
+    }
+
+    std::map<
+        std::tuple<RiemannSolver, int, int>,
+        std::function<void(const Simulation&)>
+    > flux_fns = {
+        //             solver                axis num_dim
+        make_flux_impl<RiemannSolver::Rusanov, 0, 1>(),
+        make_flux_impl<RiemannSolver::Hll,     0, 1>(),
+        make_flux_impl<RiemannSolver::Hllc,    0, 1>(),
+        make_flux_impl<RiemannSolver::Rusanov, 0, 2>(),
+        make_flux_impl<RiemannSolver::Hll,     0, 2>(),
+        make_flux_impl<RiemannSolver::Hllc,    0, 2>(),
+        make_flux_impl<RiemannSolver::Rusanov, 0, 3>(),
+        make_flux_impl<RiemannSolver::Hll,     0, 3>(),
+        make_flux_impl<RiemannSolver::Hllc,    0, 3>(),
+        make_flux_impl<RiemannSolver::Rusanov, 1, 2>(),
+        make_flux_impl<RiemannSolver::Hll,     1, 2>(),
+        make_flux_impl<RiemannSolver::Hllc,    1, 2>(),
+        make_flux_impl<RiemannSolver::Rusanov, 1, 3>(),
+        make_flux_impl<RiemannSolver::Hll,     1, 3>(),
+        make_flux_impl<RiemannSolver::Hllc,    1, 3>(),
+        make_flux_impl<RiemannSolver::Rusanov, 2, 3>(),
+        make_flux_impl<RiemannSolver::Hll,     2, 3>(),
+        make_flux_impl<RiemannSolver::Hllc,    2, 3>()
+    };
+    sim.flux_fns.flux_x = flux_fns[std::make_tuple(schemes.riemann_solver, 0, sim.num_dim)];
+    if (sim.num_dim > 1) {
+        sim.flux_fns.flux_y = flux_fns[std::make_tuple(schemes.riemann_solver, 1, sim.num_dim)];
+    }
+    if (sim.num_dim > 2) {
+        sim.flux_fns.flux_z = flux_fns[std::make_tuple(schemes.riemann_solver, 2, sim.num_dim)];
+    }
+
+    std::vector<std::function<fp_t(const Simulation&)>> cfl_fns = {
+        compute_dt_impl<1>,
+        compute_dt_impl<2>,
+        compute_dt_impl<3>
+    };
+    sim.compute_dt = cfl_fns.at(sim.num_dim - 1);
+}
+
+void compute_hydro_fluxes(const Simulation& sim) {
+    global_cons_to_prim(sim);
+    sim.flux_fns.recon_x(sim);
+    sim.flux_fns.flux_x(sim);
+
+    if (sim.num_dim > 1) {
+        sim.flux_fns.recon_y(sim);
+        sim.flux_fns.flux_y(sim);
+    }
+
+    if (sim.num_dim > 2) {
+        sim.flux_fns.recon_z(sim);
+        sim.flux_fns.flux_z(sim);
+    }
+}
+
+fp_t compute_dt(const Simulation& sim) {
+    return sim.compute_dt(sim);
 }

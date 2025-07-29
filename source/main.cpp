@@ -1,5 +1,6 @@
 #include "Config.hpp"
 #include "Hydro.hpp"
+#include "Boundaries.hpp"
 #include <fmt/core.h>
 #include "YAKL_netcdf.h"
 
@@ -9,6 +10,8 @@ static constexpr int problem = 1; // Sod 2d
 // static constexpr int problem = 2; // quadrants (case 3)
 
 fp_t set_intial_conditions(State& state) {
+    using Prim = Prim<2>;
+    constexpr int NumDim = 2;
     fp_t max_time = FP(0.1);
     if constexpr (problem == 0) {
         state.boundaries.xs = BoundaryType::Wall;
@@ -32,7 +35,7 @@ fp_t set_intial_conditions(State& state) {
             KOKKOS_LAMBDA (int k, int j, int i) {
                 const fp_t px = i * state.dx - FP(0.5) * state.dx;
                 const fp_t py = j * state.dx - FP(0.5) * state.dx;
-                yakl::SArray<fp_t, 1, N_HYDRO_VARS> w;
+                yakl::SArray<fp_t, 1, N_HYDRO_VARS> w(FP(0.0));
                 if (std::sqrt(square(px - FP(0.5)) + square(py - FP(0.5))) <  FP(0.25)) {
                     w(I(Prim::Rho)) = FP(10.0);
                     w(I(Prim::Vx)) = FP(0.0);
@@ -49,7 +52,7 @@ fp_t set_intial_conditions(State& state) {
                     .j = j,
                     .k = k
                 };
-                prim_to_cons(w, QtyView(state.Q, idx));
+                prim_to_cons<NumDim>(w, QtyView(state.Q, idx));
             }
         );
         max_time = FP(0.2);
@@ -75,7 +78,7 @@ fp_t set_intial_conditions(State& state) {
             FlatLoop<3>(state.sz.zc, state.sz.yc, state.sz.xc),
             KOKKOS_LAMBDA (int k, int j, int i) {
                 const fp_t px = i * state.dx - (Ng - 1 + FP(0.5)) * state.dx;
-                yakl::SArray<fp_t, 1, N_HYDRO_VARS> w;
+                yakl::SArray<fp_t, 1, N_HYDRO_VARS> w(FP(0.0));
                 if (px < FP(0.5)) {
                     w(I(Prim::Rho)) = FP(1.0);
                     w(I(Prim::Vx)) = FP(0.0);
@@ -92,7 +95,7 @@ fp_t set_intial_conditions(State& state) {
                     .j = j,
                     .k = k
                 };
-                prim_to_cons(w, QtyView(state.Q, idx));
+                prim_to_cons<NumDim>(w, QtyView(state.Q, idx));
             }
         );
         max_time = FP(0.2);
@@ -119,7 +122,7 @@ fp_t set_intial_conditions(State& state) {
             KOKKOS_LAMBDA (int k, int j, int i) {
                 const fp_t px = i * state.dx - (Ng - 1 + FP(0.5)) * state.dx;
                 const fp_t py = j * state.dx - (Ng - 1 + FP(0.5)) * state.dx;
-                yakl::SArray<fp_t, 1, N_HYDRO_VARS> w;
+                yakl::SArray<fp_t, 1, N_HYDRO_VARS> w(FP(0.0));
                 if (px < FP(0.5) && py >= FP(0.5)) {
                     w(I(Prim::Pres)) = FP(0.3);
                     w(I(Prim::Rho)) = FP(0.5323);
@@ -146,7 +149,7 @@ fp_t set_intial_conditions(State& state) {
                     .j = j,
                     .k = k
                 };
-                prim_to_cons(w, QtyView(state.Q, idx));
+                prim_to_cons<NumDim>(w, QtyView(state.Q, idx));
             }
         );
         max_time = FP(0.3);
@@ -174,6 +177,7 @@ int main(int argc, const char** argv) {
         fp_t max_time = set_intial_conditions(state);
 
         Simulation sim {
+            .num_dim = 2,
             .current_step = 0,
             .max_cfl = FP(0.99),
             .time = FP(0.0),
@@ -191,8 +195,15 @@ int main(int argc, const char** argv) {
         };
         constexpr TimeStepScheme time_step_scheme = TimeStepScheme::SspRk3;
         TimeStepper<time_step_scheme>::init(sim);
+        select_hydro_fns(NumericalSchemes {
+                .reconstruction = Reconstruction::Weno5Z,
+                .slope_limit = SlopeLimiter::MonotonizedCentral,
+                .riemann_solver = RiemannSolver::Hllc
+            },
+            sim
+        );
 
-        fill_bcs(sim.state);
+        fill_bcs(sim);
 
         int i = 0;
 

@@ -24,47 +24,66 @@ struct Boundaries {
     BoundaryType ze;
 };
 
-enum class Prim : i32 {
-    Rho = 0,
-    Vx = 1,
-    Vy = 2,
-    Vz = (NUM_DIM > 2) ? 3 : -200,
-    Pres = 3 + int(NUM_DIM > 2)
+template <int NumDim = 1>
+struct Prim {
+    static constexpr i32 Rho = 0;
+    static constexpr i32 Vx = 1;
+    static constexpr i32 Vy = NumDim > 1 ? 2 : 1024;
+    static constexpr i32 Vz = NumDim > 2 ? 3 : 1024;
+    static constexpr i32 Pres = 1 + NumDim;
 };
 
-enum class Cons : i32 {
-    Rho = 0,
-    MomX = 1,
-    MomY = 2,
-    MomZ = (NUM_DIM > 2) ? 3 : -200,
-    Ene = 3 + int(NUM_DIM > 2)
+template <int NumDim = 1>
+struct Cons {
+    static constexpr i32 Rho = 0;
+    static constexpr i32 MomX = 1;
+    static constexpr i32 MomY = NumDim > 1 ? 2 : 1024;
+    static constexpr i32 MomZ = NumDim > 2 ? 3 : 1024;
+    static constexpr i32 Ene = 1 + NumDim;
 };
+
+// enum class Prim : i32 {
+//     Rho = 0,
+//     Vx = 1,
+//     Vy = 2,
+//     Vz = (NUM_DIM > 2) ? 3 : -200,
+//     Pres = 3 + int(NUM_DIM > 2)
+// };
+
+// enum class Cons : i32 {
+//     Rho = 0,
+//     MomX = 1,
+//     MomY = 2,
+//     MomZ = (NUM_DIM > 2) ? 3 : -200,
+//     Ene = 3 + int(NUM_DIM > 2)
+// };
 constexpr int N_HYDRO_VARS = 2 + NUM_DIM;
+
 
 template <typename E>
 constexpr int I(E e) {
     return static_cast<int>(e);
 }
 
-template <int Axis>
+template <int Axis, int NumDim>
 constexpr int Velocity() {
     if constexpr (Axis == 0) {
-        return I(Prim::Vx);
+        return I(Prim<NumDim>::Vx);
     } else if constexpr (Axis == 1) {
-        return I(Prim::Vy);
+        return I(Prim<NumDim>::Vy);
     } else if constexpr (Axis == 2) {
-        return I(Prim::Vz);
+        return I(Prim<NumDim>::Vz);
     }
 }
 
-template <int Axis>
+template <int Axis, int NumDim>
 constexpr int Momentum() {
     if constexpr (Axis == 0) {
-        return I(Cons::MomX);
+        return I(Cons<NumDim>::MomX);
     } else if constexpr (Axis == 1) {
-        return I(Cons::MomY);
+        return I(Cons<NumDim>::MomY);
     } else if constexpr (Axis == 2) {
-        return I(Cons::MomZ);
+        return I(Cons<NumDim>::MomZ);
     }
 }
 

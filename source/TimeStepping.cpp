@@ -1,6 +1,7 @@
 #include "TimeStepping.hpp"
 #include "Simulation.hpp"
 #include "Hydro.hpp"
+#include "Boundaries.hpp"
 
 template <int NumDim, typename Lambda>
 void integrate_flux(const std::string& step_name, const GridSize& sz, const Fluxes& flux, const Lambda& updater) {
@@ -64,7 +65,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     compute_hydro_fluxes(sim);
 
     integrate_flux<NUM_DIM>(
@@ -77,7 +78,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     sim.time += dt;
     sim.current_step += 1;
 }
@@ -116,7 +117,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     compute_hydro_fluxes(sim);
 
     integrate_flux<NUM_DIM>(
@@ -129,7 +130,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     compute_hydro_fluxes(sim);
 
     integrate_flux<NUM_DIM>(
@@ -142,7 +143,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     sim.time += dt;
     sim.current_step += 1;
 }
@@ -181,7 +182,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     compute_hydro_fluxes(sim);
 
     integrate_flux<NUM_DIM>(
@@ -194,7 +195,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     compute_hydro_fluxes(sim);
 
     integrate_flux<NUM_DIM>(
@@ -207,7 +208,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     compute_hydro_fluxes(sim);
 
     integrate_flux<NUM_DIM>(
@@ -221,7 +222,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     Kokkos::fence();
 
 
-    fill_bcs(sim.state);
+    fill_bcs(sim);
     sim.time += dt;
     sim.current_step += 1;
 }

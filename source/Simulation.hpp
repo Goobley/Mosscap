@@ -6,7 +6,6 @@
 #include "TimeStepping.hpp"
 #include "Reconstruct.hpp"
 #include "Riemann.hpp"
-#include "Boundaries.hpp"
 
 struct NumericalSchemes {
     Reconstruction reconstruction;
@@ -15,7 +14,17 @@ struct NumericalSchemes {
     TimeStepScheme time_stepper;
 };
 
+struct FluxFns {
+    std::function<void(const Simulation&)> recon_x;
+    std::function<void(const Simulation&)> recon_y;
+    std::function<void(const Simulation&)> recon_z;
+    std::function<void(const Simulation&)> flux_x;
+    std::function<void(const Simulation&)> flux_y;
+    std::function<void(const Simulation&)> flux_z;
+};
+
 struct Simulation {
+    int num_dim;
     i64 current_step;
     fp_t max_cfl;
     fp_t time;
@@ -25,9 +34,9 @@ struct Simulation {
     Fluxes fluxes;
     Sources sources;
     TimeStepperStorage ts_storage;
-    std::function<fp_t(const State&)> compute_timestep;
-    std::function<void(const State&)> time_integrate;
-    std::function<void(const Simulation&)> compute_hydro_fluxes;
+    std::function<fp_t(const Simulation&)> compute_dt;
+    // std::function<void(const Simulation&)> compute_hydro_fluxes;
+    FluxFns flux_fns;
     void step();
     void write();
 };
