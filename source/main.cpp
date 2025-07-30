@@ -5,10 +5,10 @@
 #include "YAKL_netcdf.h"
 
 // static constexpr int problem = 0; // Explosion (10x density gradient in Sod)
-// static constexpr int problem = 1; // Sod 2d
+static constexpr int problem = 1; // Sod 2d
 // cases from liska + wendroff
 // static constexpr int problem = 2; // quadrants (case 3)
-static constexpr int problem = 3; // 1d interacting blasts
+// static constexpr int problem = 3; // 1d interacting blasts
 // TODO: Work through a number of these when we have problem generators.
 
 static constexpr int dimensions[] = {
@@ -20,7 +20,7 @@ static constexpr int dimensions[] = {
 static constexpr int num_dim = dimensions[problem];
 
 
-fp_t set_intial_conditions(State& state) {
+fp_t set_intial_conditions(const Eos& eos, State& state) {
     using Prim = Prim<num_dim>;
     constexpr int NumDim = num_dim;
     constexpr int n_hydro = N_HYDRO_VARS<num_dim>;
@@ -64,7 +64,7 @@ fp_t set_intial_conditions(State& state) {
                     .j = j,
                     .k = k
                 };
-                prim_to_cons<NumDim>(w, QtyView(state.Q, idx));
+                prim_to_cons<NumDim>(EosView(eos, idx), w, QtyView(state.Q, idx));
             }
         );
         max_time = FP(0.2);
@@ -107,7 +107,7 @@ fp_t set_intial_conditions(State& state) {
                     .j = j,
                     .k = k
                 };
-                prim_to_cons<NumDim>(w, QtyView(state.Q, idx));
+                prim_to_cons<NumDim>(EosView(eos, idx), w, QtyView(state.Q, idx));
             }
         );
         max_time = FP(0.2);
@@ -161,7 +161,7 @@ fp_t set_intial_conditions(State& state) {
                     .j = j,
                     .k = k
                 };
-                prim_to_cons<NumDim>(w, QtyView(state.Q, idx));
+                prim_to_cons<NumDim>(EosView(eos, idx), w, QtyView(state.Q, idx));
             }
         );
         max_time = FP(0.3);
@@ -201,7 +201,7 @@ fp_t set_intial_conditions(State& state) {
                     .j = j,
                     .k = k
                 };
-                prim_to_cons<NumDim>(w, QtyView(state.Q, idx));
+                prim_to_cons<NumDim>(EosView(eos, idx), w, QtyView(state.Q, idx));
             }
         );
         max_time = FP(0.038);
@@ -226,7 +226,9 @@ int main(int argc, const char** argv) {
     yakl::init();
     {
         State state;
-        fp_t max_time = set_intial_conditions(state);
+        Eos eos;
+        eos.init_ideal(1.4);
+        fp_t max_time = set_intial_conditions(eos, state);
         constexpr int n_hydro = N_HYDRO_VARS<num_dim>;
 
         Simulation sim {
@@ -235,6 +237,7 @@ int main(int argc, const char** argv) {
             .max_cfl = FP(0.7),
             .time = FP(0.0),
             .max_time = max_time,
+            .eos = eos,
             .state = state,
             .recon_scratch = ReconScratch {
                 .RR = Fp4d("RR", n_hydro, state.sz.zc, state.sz.yc, state.sz.xc),
@@ -251,7 +254,7 @@ int main(int argc, const char** argv) {
         select_hydro_fns(NumericalSchemes {
                 .reconstruction = Reconstruction::Weno5Z,
                 .slope_limit = SlopeLimiter::MonotonizedCentral,
-                .riemann_solver = RiemannSolver::Rusanov
+                .riemann_solver = RiemannSolver::Hllc
             },
             sim
         );
@@ -262,7 +265,7 @@ int main(int argc, const char** argv) {
 
         while (sim.time < sim.max_time) {
             if (i % 5 == 0) {
-                write_output(sim, i, sim.time);
+                // write_output(sim, i, sim.time);
             }
             const fp_t dt = compute_dt(sim);
             fmt::println("dt: {}", dt);

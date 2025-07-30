@@ -11,8 +11,13 @@ enum class RiemannSolver {
     Hllc
 };
 
+struct ReconstructedEos {
+    const EosView& L;
+    const EosView& R;
+};
+
 template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>
-KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
     constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
@@ -21,14 +26,17 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     const fp_t vR = wR(IV);
 
     yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
-    prim_to_cons<NumDim>(wL, qL);
-    prim_to_cons<NumDim>(wR, qR);
+    prim_to_cons<NumDim>(eos.L, wL, qL);
+    prim_to_cons<NumDim>(eos.R, wR, qR);
 
-    prim_to_flux<Axis, NumDim>(wL, fL);
-    prim_to_flux<Axis, NumDim>(wR, fR);
+    prim_to_flux<Axis, NumDim>(eos.L, wL, fL);
+    prim_to_flux<Axis, NumDim>(eos.R, wR, fR);
 
-    const fp_t csL = std::sqrt(Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
-    const fp_t csR = std::sqrt(Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
+    const auto gl = eos.L.get_gamma();
+    const auto gr = eos.R.get_gamma();
+
+    const fp_t csL = std::sqrt(gl.Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
+    const fp_t csR = std::sqrt(gr.Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
     const fp_t max_c = FP(0.5) * (csL + std::abs(vL) + csR + std::abs(vR));
 
     #pragma unroll
@@ -38,14 +46,17 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
 }
 
 template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == RiemannSolver::Hll, int> = 0>
-KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
     constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
     constexpr int IV = Velocity<Axis, NumDim>();
 
-    const fp_t csL = std::sqrt(Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
-    const fp_t csR = std::sqrt(Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
+    const auto gl = eos.L.get_gamma();
+    const auto gr = eos.R.get_gamma();
+
+    const fp_t csL = std::sqrt(gl.Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
+    const fp_t csR = std::sqrt(gr.Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
 
     constexpr fp_t tiny = FP(1e-7);
     const fp_t sL = std::min(-tiny, std::min(wL(IV) - csL, wR(IV) - csR));
@@ -53,10 +64,10 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     const fp_t sM = FP(1.0) / (sR - sL);
 
     yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
-    prim_to_cons<NumDim>(wL, qL);
-    prim_to_cons<NumDim>(wR, qR);
-    prim_to_flux<Axis, NumDim>(wL, fL);
-    prim_to_flux<Axis, NumDim>(wR, fR);
+    prim_to_cons<NumDim>(eos.L, wL, qL);
+    prim_to_cons<NumDim>(eos.R, wR, qR);
+    prim_to_flux<Axis, NumDim>(eos.L, wL, fL);
+    prim_to_flux<Axis, NumDim>(eos.R, wR, fR);
 
     #pragma unroll
     for (int i = 0; i < n_hydro; ++i) {
@@ -65,15 +76,17 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
 }
 
 template <RiemannSolver rs, int Axis, int NumDim, std::enable_if_t<rs == RiemannSolver::Hllc, int> = 0>
-KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
     constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
     constexpr int IV = Velocity<Axis, NumDim>();
     constexpr int IM = Momentum<Axis, NumDim>();
 
-    const fp_t csL = std::sqrt(Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
-    const fp_t csR = std::sqrt(Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
+    const auto gl = eos.L.get_gamma();
+    const auto gr = eos.R.get_gamma();
+    const fp_t csL = std::sqrt(gl.Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
+    const fp_t csR = std::sqrt(gr.Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
 
     constexpr fp_t tiny = FP(1e-7);
     // const fp_t sL = std::min(-tiny, std::min(wL(IV) - csL, wR(IV) - csR));
@@ -81,8 +94,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     // const fp_t sM = FP(1.0) / (sR - sL);
 
     yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
-    prim_to_cons<NumDim>(wL, qL);
-    prim_to_cons<NumDim>(wR, qR);
+    prim_to_cons<NumDim>(eos.L, wL, qL);
+    prim_to_cons<NumDim>(eos.R, wR, qR);
 
     // following athena impl
     // TODO(cmo): Go back to the original paper and try to refactor in terms of hll flux
@@ -96,10 +109,10 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const QtyView& wL, const QtyView& wR, c
     // compute L, R sound speed
     const fp_t cLstar = (p_mid <= wL(I(Prim::Pres)))
                             ? FP(1.0)
-                            : std::sqrt(FP(1.0) + (Gamma + FP(1.0)) / (FP(2.0) * Gamma) * (p_mid / wL(I(Prim::Pres)) - FP(1.0)));
+                            : std::sqrt(FP(1.0) + (gl.Gamma + FP(1.0)) / (FP(2.0) * gl.Gamma) * (p_mid / wL(I(Prim::Pres)) - FP(1.0)));
     const fp_t cRstar = (p_mid <= wR(I(Prim::Pres)))
                             ? FP(1.0)
-                            : std::sqrt(FP(1.0) + (Gamma + FP(1.0)) / (FP(2.0) * Gamma) * (p_mid / wR(I(Prim::Pres)) - FP(1.0)));
+                            : std::sqrt(FP(1.0) + (gr.Gamma + FP(1.0)) / (FP(2.0) * gr.Gamma) * (p_mid / wR(I(Prim::Pres)) - FP(1.0)));
 
     // compute min/max wave speeds based on L/R
     const fp_t aL = wL(IV) - csL * cLstar;

@@ -6,6 +6,7 @@
 #include "TimeStepping.hpp"
 #include "Reconstruct.hpp"
 #include "Riemann.hpp"
+#include "Eos.hpp"
 
 struct NumericalSchemes {
     Reconstruction reconstruction;
@@ -29,6 +30,7 @@ struct Simulation {
     fp_t max_cfl;
     fp_t time;
     fp_t max_time;
+    Eos eos;
     State state;
     ReconScratch recon_scratch;
     Fluxes fluxes;

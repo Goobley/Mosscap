@@ -5,8 +5,8 @@
 
 #include "Types.hpp"
 
-constexpr fp_t Gamma = FP(1.4); // Ratio of specific heats -- monatomic
-constexpr fp_t GammaM1 = Gamma - FP(1.0);
+// constexpr fp_t Gamma = FP(1.4); // Ratio of specific heats -- diatomic/air
+// constexpr fp_t GammaM1 = Gamma - FP(1.0);
 
 enum class BoundaryType : i32 {
     Wall,

@@ -6,6 +6,7 @@
 template <int NumDim>
 void global_cons_to_prim_impl(const Simulation& sim) {
     const auto& state = sim.state;
+    const auto& eos = sim.eos;
     const auto& sz = sim.state.sz;
 
     dex_parallel_for(
@@ -19,7 +20,7 @@ void global_cons_to_prim_impl(const Simulation& sim) {
             };
             auto WView = QtyView(state.W, idx);
             auto QView = QtyView(state.Q, idx);
-            cons_to_prim<NumDim>(QView, WView);
+            cons_to_prim<NumDim>(EosView(eos, idx), QView, WView);
         }
     );
     Kokkos::fence();
@@ -46,6 +47,7 @@ void compute_recon_impl(const Simulation& sim) {
     static_assert(Axis < 3, "What are you doing?");
     const auto& state = sim.state;
     const auto& recon = sim.recon_scratch;
+    const auto& eos = sim.eos;
     const auto& sz = sim.state.sz;
     int nx = sz.xc - 2 * sz.ng;
     int ny = std::max(sz.yc - 2 * sz.ng, 1);
@@ -84,6 +86,23 @@ void compute_recon_impl(const Simulation& sim) {
                     recon.RR(var, idx.k, idx.j, idx.i)
                 );
             }
+            if (!eos.is_constant) {
+                Fp4d Gamma(
+                    "Gamma 4D",
+                    eos.gamma_space.data(),
+                    1,
+                    eos.gamma_space.extent(0),
+                    eos.gamma_space.extent(1),
+                    eos.gamma_space.extent(2)
+                );
+                reconstruct<reconstruction, slope_limiter, Axis>(
+                    Gamma,
+                    0,
+                    idx,
+                    eos.gamma_space_L(idx.k, idx.j, idx.i),
+                    eos.gamma_space_R(idx.k, idx.j, idx.i)
+                );
+            }
         }
     );
     Kokkos::fence();
@@ -95,6 +114,7 @@ void compute_flux_impl(const Simulation& sim) {
     const auto& recon = sim.recon_scratch;
     const auto& fluxes = sim.fluxes;
     const auto& sz = sim.state.sz;
+    const auto& eos = sim.eos;
     int nx = sz.xc - 2 * sz.ng;
     int ny = std::max(sz.yc - 2 * sz.ng, 1);
     int nz = std::max(sz.zc - 2 * sz.ng, 1);
@@ -126,10 +146,21 @@ void compute_flux_impl(const Simulation& sim) {
             CellIndex idxm(idx);
             idxm.along<Axis>() -= 1;
             // NOTE(cmo): Left and right relative to the interface, taking the reconstructions from the left/right edges of the cells
+            // TODO(cmo): Need to reconstruct Gamma in a variable EOS
             QtyView rL_view(recon.RR, idxm);
             QtyView rR_view(recon.RL, idx);
             QtyView flux_view(flux, idx);
-            riemann_flux<rsolver, Axis, NumDim>(rL_view, rR_view, flux_view);
+            EosView eos_L(eos, idxm, ReconstructionEdge::Right);
+            EosView eos_R(eos, idx, ReconstructionEdge::Left);
+            riemann_flux<rsolver, Axis, NumDim>(
+                ReconstructedEos{
+                    .L = eos_L,
+                    .R = eos_R
+                },
+                rL_view,
+                rR_view,
+                flux_view
+            );
         }
     );
     Kokkos::fence();
@@ -160,9 +191,10 @@ make_flux_impl() {
 }
 
 template <int NumDim, typename WType>
-KOKKOS_INLINE_FUNCTION void dt_reducer(const WType& w, const fp_t dx, fp_t& running_dt) {
+KOKKOS_INLINE_FUNCTION void dt_reducer(const EosView& eos, const WType& w, const fp_t dx, fp_t& running_dt) {
     using Prim = Prim<NumDim>;
-    const fp_t cs = std::sqrt(Gamma * w(I(Prim::Pres)) / w(I(Prim::Rho)));
+    const auto g = eos.get_gamma();
+    const fp_t cs = std::sqrt(g.Gamma * w(I(Prim::Pres)) / w(I(Prim::Rho)));
     fp_t vel2 = square(w(I(Prim::Vx)));
     if (NumDim > 1) {
         vel2 += square(w(I(Prim::Vy)));
@@ -178,6 +210,7 @@ KOKKOS_INLINE_FUNCTION void dt_reducer(const WType& w, const fp_t dx, fp_t& runn
 template <int NumDim>
 fp_t compute_dt_impl(const Simulation& sim) {
     const auto& state = sim.state;
+    const auto& eos = sim.eos;
 
     fp_t dt_max = FP(1e5);
     dex_parallel_reduce(
@@ -190,8 +223,9 @@ fp_t compute_dt_impl(const Simulation& sim) {
                 .j = j,
                 .k = k
             };
-            cons_to_prim<NumDim>(QtyView(state.Q, idx), w);
-            dt_reducer<NumDim>(w, state.dx, running_dt);
+            EosView eosv(eos, idx);
+            cons_to_prim<NumDim>(eosv, QtyView(state.Q, idx), w);
+            dt_reducer<NumDim>(eosv, w, state.dx, running_dt);
         },
         Kokkos::Min<fp_t>(dt_max)
     );
