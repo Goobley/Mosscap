@@ -6,10 +6,16 @@
 #include "Eos.hpp"
 
 enum class RiemannSolver {
-    Rusanov,
+    Rusanov = 0,
     Hll,
     Hllc
 };
+constexpr const char* RiemannSolverName[] = {
+    "rusanov",
+    "hll",
+    "hllc"
+};
+constexpr int NumRiemannSolverType = sizeof(RiemannSolverName) / sizeof(RiemannSolverName[0]);
 
 struct ReconstructedEos {
     const EosView& L;

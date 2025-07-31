@@ -5,24 +5,6 @@
 
 #include "Types.hpp"
 
-// constexpr fp_t Gamma = FP(1.4); // Ratio of specific heats -- diatomic/air
-// constexpr fp_t GammaM1 = Gamma - FP(1.0);
-
-enum class BoundaryType : i32 {
-    Wall,
-    Periodic,
-    Symmetric
-};
-
-struct Boundaries {
-    BoundaryType xs;
-    BoundaryType xe;
-    BoundaryType ys;
-    BoundaryType ye;
-    BoundaryType zs;
-    BoundaryType ze;
-};
-
 template <int NumDim = 1>
 struct Prim {
     static constexpr i32 Rho = 0;
@@ -41,23 +23,12 @@ struct Cons {
     static constexpr i32 Ene = 1 + NumDim;
 };
 
-// enum class Prim : i32 {
-//     Rho = 0,
-//     Vx = 1,
-//     Vy = 2,
-//     Vz = (NUM_DIM > 2) ? 3 : -200,
-//     Pres = 3 + int(NUM_DIM > 2)
-// };
-
-// enum class Cons : i32 {
-//     Rho = 0,
-//     MomX = 1,
-//     MomY = 2,
-//     MomZ = (NUM_DIM > 2) ? 3 : -200,
-//     Ene = 3 + int(NUM_DIM > 2)
-// };
 template <int NumDim>
 constexpr int N_HYDRO_VARS = 2 + NumDim;
+
+constexpr int get_num_hydro_vars(int num_dim)  {
+    return 2 + num_dim;
+}
 
 template <typename E>
 constexpr int I(E e) {
@@ -86,6 +57,41 @@ constexpr int Momentum() {
     }
 }
 
+enum class BoundaryType : i32 {
+    Wall = 0,
+    Periodic,
+    Symmetric,
+    Constant,
+    UserFn
+};
+constexpr const char* BoundaryTypeName[] = {
+    "wall",
+    "periodic",
+    "symmetric",
+    "constant",
+    "user_fn"
+};
+constexpr int NumBoundaryType = sizeof(BoundaryTypeName) / sizeof(BoundaryTypeName[0]);
+
+struct Boundaries {
+    BoundaryType xs;
+    BoundaryType xe;
+    BoundaryType ys;
+    BoundaryType ye;
+    BoundaryType zs;
+    BoundaryType ze;
+
+    /// Storage for constant boundaries -- may be longer than actual content due
+    /// to dimensionality, make sure to loop over the correct number!
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> xs_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> xe_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> ys_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> ye_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> zs_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> ze_const;
+};
+
+
 struct GridSize {
     i32 xc = 0; /// x-cells including ghosts
     i32 yc = 0; /// y-cells including ghosts
@@ -99,6 +105,19 @@ struct State {
     Boundaries boundaries; /// Boundary handling specifications
     Fp4d Q; // Conserved State
     Fp4d W; /// Primitive State
+
+    KOKKOS_INLINE_FUNCTION vec3 get_pos(int i, int j=0, int k=0) const {
+        vec3 result;
+        const fp_t ghost_offset = -(sz.ng - FP(0.5)) * dx;
+        result(0) = i * dx + ghost_offset;
+        if (sz.yc > 1) {
+            result(1) = j * dx + ghost_offset;
+        }
+        if (sz.zc > 1) {
+            result(2) = k * dx + ghost_offset;
+        }
+        return result;
+    }
 };
 
 struct Fluxes {

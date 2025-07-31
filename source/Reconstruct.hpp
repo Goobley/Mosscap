@@ -4,17 +4,30 @@
 #include "Types.hpp"
 
 enum class Reconstruction {
-    Fog, // first order Godunov
+    Fog = 0, // first order Godunov
     Muscl, // piecewise linear method
     Ppm, // piecewise parabolic method
     Weno5Z // 5th order weno
 };
+constexpr const char* ReconstructionName[] = {
+    "fog",
+    "muscl",
+    "ppm",
+    "weno5z"
+};
+constexpr int NumReconstructionType = sizeof(ReconstructionName) / sizeof(ReconstructionName[0]);
 
 enum class SlopeLimiter {
-    VanLeer,
+    VanLeer = 0,
     MonotonizedCentral,
     Minmod
 };
+constexpr const char* SlopeLimiterName[] = {
+    "vanleer",
+    "monotonizedcentral",
+    "minmod"
+};
+constexpr int NumSlopeLimiterType = sizeof(SlopeLimiterName) / sizeof(SlopeLimiterName[0]);
 
 constexpr bool is_limiter_agnostic(Reconstruction recon) {
     switch (recon) {
@@ -27,6 +40,22 @@ constexpr bool is_limiter_agnostic(Reconstruction recon) {
         default:
             return false;
     }
+}
+
+constexpr int min_ghost_cells(Reconstruction recon) {
+    switch (recon) {
+        case Reconstruction::Fog: {
+            return 1;
+        } break;
+        case Reconstruction::Muscl: {
+            return 2;
+        } break;
+        case Reconstruction::Ppm:
+        case Reconstruction::Weno5Z: {
+            return 3;
+        }
+    }
+    return 1;
 }
 
 struct ReconstructionScheme {

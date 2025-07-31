@@ -251,3 +251,18 @@ bool TimeStepper<TimeStepScheme::SspRk4>::init(Simulation& sim) {
     sim.time_step = dimensioned_schemes.at(sim.num_dim - 1);
     return true;
 }
+
+void select_timestepper(Simulation& sim) {
+    TimeStepScheme scheme = sim.scheme.time_stepper;
+    switch (scheme) {
+        case TimeStepScheme::Rk2: {
+            TimeStepper<TimeStepScheme::Rk2>::init(sim);
+        } break;
+        case TimeStepScheme::SspRk3: {
+            TimeStepper<TimeStepScheme::SspRk3>::init(sim);
+        } break;
+        case TimeStepScheme::SspRk4: {
+            TimeStepper<TimeStepScheme::SspRk4>::init(sim);
+        } break;
+    }
+}

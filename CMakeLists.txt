@@ -6,6 +6,7 @@ else ()
 endif()
 
 add_subdirectory(fmt)
+add_subdirectory(yaml-cpp)
 include(FetchContent)
 FetchContent_Declare(
     argparse
@@ -35,10 +36,19 @@ if (${YAKL_AUTO_FENCE})
     set(YAKL_DEFS "${YAKL_DEFS} -DYAKL_AUTO_FENCE")
 endif()
 
+list (APPEND MOSSCAP_PROBLEMS
+    "source/ProblemGenerator/CircularExplosion.cpp"
+    "source/ProblemGenerator/DoubleShockTube.cpp"
+    "source/ProblemGenerator/LinearWaves.cpp"
+    "source/ProblemGenerator/Quadrants3.cpp"
+    "source/ProblemGenerator/ShockTube2d.cpp"
+)
 list(APPEND MOSSCAP_SOURCE_FILES
     "source/main.cpp"
     "source/Hydro.cpp"
     "source/TimeStepping.cpp"
+    "source/Eos.cpp"
+    ${MOSSCAP_PROBLEMS}
 )
 
 add_executable(mosscap
@@ -81,6 +91,7 @@ target_include_directories(mosscap SYSTEM PUBLIC
 )
 target_link_libraries(mosscap "${LDLIBS}")
 target_link_libraries(mosscap fmt::fmt)
+target_link_libraries(mosscap yaml-cpp::yaml-cpp)
 target_link_libraries(mosscap argparse)
 target_link_libraries(mosscap git_version)
 target_link_libraries(mosscap Kokkos::kokkos)

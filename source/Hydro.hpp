@@ -9,7 +9,7 @@
 void global_cons_to_prim(const Simulation& sim);
 
 void compute_hydro_fluxes(const Simulation& sim);
-void select_hydro_fns(const NumericalSchemes& schemes, Simulation& sim);
+void select_hydro_fns(Simulation& sim);
 
 fp_t compute_dt(const Simulation& sim);
 

@@ -38,9 +38,9 @@ struct Simulation {
     TimeStepperStorage ts_storage;
     std::function<fp_t(const Simulation&)> compute_dt;
     std::function<void(Simulation&, fp_t)> time_step;
+    std::function<void(const Simulation&)> user_bc;
     FluxFns flux_fns;
-    void step();
-    void write();
+    NumericalSchemes scheme;
 };
 
 #else

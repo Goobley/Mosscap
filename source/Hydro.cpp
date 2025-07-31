@@ -238,7 +238,8 @@ fp_t compute_dt_impl(const Simulation& sim) {
     return dt;
 }
 
-void select_hydro_fns(const NumericalSchemes& schemes, Simulation& sim) {
+void select_hydro_fns(Simulation& sim) {
+    const auto& schemes = sim.scheme;
     // NOTE(cmo): yes map is bad, but it doesn't matter
     std::map<
         std::tuple<int, ReconstructionScheme>,

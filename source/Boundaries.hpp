@@ -111,6 +111,9 @@ inline void fill_bcs(const Simulation& sim) {
         default:
             KOKKOS_ASSERT(false && "Weird num dim");
     }
+    if (sim.user_bc) {
+        sim.user_bc(sim);
+    }
 }
 
 #else

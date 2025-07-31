@@ -14,6 +14,15 @@ enum class ReconstructionEdge {
     Right
 };
 
+enum class EosType {
+    Ideal = 0
+};
+constexpr const char* EosTypeName[] = {"ideal"};
+constexpr int NumEosType = sizeof(EosTypeName) / sizeof(EosTypeName[0]);
+
+struct Simulation;
+namespace YAML { class Node; };
+
 struct Eos {
     bool is_constant;
     fp_t Gamma;
@@ -22,6 +31,8 @@ struct Eos {
     // Reconstruction
     Fp3d gamma_space_R;
     Fp3d gamma_space_L;
+
+    bool init(const Simulation& sim, const YAML::Node& config);
 
     bool init_ideal(fp_t gamma) {
         is_constant = true;
