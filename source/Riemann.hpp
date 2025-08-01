@@ -64,7 +64,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyV
     const fp_t csL = std::sqrt(gl.Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
     const fp_t csR = std::sqrt(gr.Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
 
-    constexpr fp_t tiny = FP(1e-7);
+    constexpr fp_t tiny = FP(1e-20);
     const fp_t sL = std::min(-tiny, std::min(wL(IV) - csL, wR(IV) - csR));
     const fp_t sR = std::max(-tiny, std::max(wL(IV) + csL, wL(IV) + csR));
     const fp_t sM = FP(1.0) / (sR - sL);
@@ -94,7 +94,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyV
     const fp_t csL = std::sqrt(gl.Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
     const fp_t csR = std::sqrt(gr.Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
 
-    constexpr fp_t tiny = FP(1e-7);
+    constexpr fp_t tiny = FP(1e-20);
     // const fp_t sL = std::min(-tiny, std::min(wL(IV) - csL, wR(IV) - csR));
     // const fp_t sR = std::max(-tiny, std::max(wL(IV) + csL, wL(IV) + csR));
     // const fp_t sM = FP(1.0) / (sR - sL);

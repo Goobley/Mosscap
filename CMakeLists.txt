@@ -39,15 +39,21 @@ endif()
 list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/CircularExplosion.cpp"
     "source/ProblemGenerator/DoubleShockTube.cpp"
+    "source/ProblemGenerator/KelvinHelmholtz.cpp"
     "source/ProblemGenerator/LinearWaves.cpp"
     "source/ProblemGenerator/Quadrants3.cpp"
     "source/ProblemGenerator/ShockTube2d.cpp"
+)
+list (APPEND MOSSCAP_SOURCE_TERMS
+    "source/SourceTerms/Gravity.cpp"
 )
 list(APPEND MOSSCAP_SOURCE_FILES
     "source/main.cpp"
     "source/Hydro.cpp"
     "source/TimeStepping.cpp"
     "source/Eos.cpp"
+    "source/Output.cpp"
+    ${MOSSCAP_SOURCE_TERMS}
     ${MOSSCAP_PROBLEMS}
 )
 

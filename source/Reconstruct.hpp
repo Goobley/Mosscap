@@ -86,8 +86,8 @@ struct ReconstructionScheme {
 };
 
 struct ReconScratch {
-    Fp4d RR; /// Left-hand reconstruction [w, k, j, i]
-    Fp4d RL; /// Right-hand reconstruction [w, k, j, i]
+    Fp4d RR; /// Cell right-hand reconstruction [w, k, j, i]
+    Fp4d RL; /// Cell left-hand reconstruction [w, k, j, i]
 };
 
 template <int Order>
@@ -188,7 +188,6 @@ template <Reconstruction recon, SlopeLimiter sl, int Axis, std::enable_if_t<reco
 KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const CellIndex& idx, fp_t& wL, fp_t& wR) {
     // Borges R., Carmona M., Costa B., Don W.S. , "An improved weighted essentially
     // non-oscillatory scheme for hyperbolic conservation laws" , JCP, 227, 3191 (2008)
-    // Implementation following athenapk, but correcting beta2
     Stencil<2> s;
     s.fill<Axis>(W, var, idx);
 
@@ -203,13 +202,13 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     );
     const fp_t beta2 = (
         beta_coeff[0] * square(s.at(0) - FP(2.0) * s.at(1) + s.at(2))
-        + beta_coeff[1] * square(s.at(0) - FP(4.0) * s.at(1) + FP(3.0) * s.at(2))
+        + beta_coeff[1] * square(FP(3.0) * s.at(0) - FP(4.0) * s.at(1) + s.at(2))
     );
 
 #ifdef MOSSCAP_SINGLE_PRECISION
-    constexpr fp_t eps = FP(1e-12);
+    constexpr fp_t eps = FP(1e-15);
 #else
-    constexpr fp_t eps = FP(1e-20);
+    constexpr fp_t eps = FP(1e-36);
 #endif
     // WENO-Z+: Acker et al. 2016
     const fp_t tau5 = std::abs(beta0 - beta2);
@@ -219,28 +218,29 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     const fp_t indicator2 = tau5 / (beta2 + eps);
 
     // evaluate wL * 6 (division included later): eno, then weight
-    fp_t f0 = (FP(2.0) * s.at(2) - FP(7.0) * s.at(1) + FP(11.0) * s.at(0));
-    fp_t f1 = (-s.at(1) + FP(5.0) * s.at(0) + FP(2.0) * s.at(-1));
-    fp_t f2 = (FP(2.0) * s.at(0) + FP(5.0) * s.at(-1) - s.at(-2));
+    // These coefficients are flipped relative to the original Jiang + Shu paper
+    fp_t eno0 = (FP(2.0) * s.at(0) + FP(5.0) * s.at(-1) - s.at(-2));
+    fp_t eno1 = (-s.at(1) + FP(5.0) * s.at(0) + FP(2.0) * s.at(-1));
+    fp_t eno2 = (FP(2.0) * s.at(2) - FP(7.0) * s.at(1) + FP(11.0) * s.at(0));
 
-    fp_t alpha0 = FP(0.1) * (FP(1.0) + square(indicator2));
-    fp_t alpha1 = FP(0.6) * (FP(1.0) + square(indicator1));
-    fp_t alpha2 = FP(0.3) * (FP(1.0) + square(indicator0));
+    fp_t alpha0 = FP(3.0) * (FP(1.0) + square(indicator0));
+    fp_t alpha1 = FP(6.0) * (FP(1.0) + square(indicator1));
+    fp_t alpha2 = FP(1.0) * (FP(1.0) + square(indicator2));
     fp_t denom = FP(6.0) * (alpha0 + alpha1 + alpha2);
 
-    wL = (f0 * alpha0 + f1 * alpha1 + f2 * alpha2) / denom;
+    wL = (eno0 * alpha0 + eno1 * alpha1 + eno2 * alpha2) / denom;
 
     // evaluate wR equivalently (indicators flip)
-    f0 = (FP(2.0) * s.at(-2) - FP(7.0) * s.at(-1) + FP(11.0) * s.at(0));
-    f1 = (-s.at(-1) + FP(5.0) * s.at(0) + FP(2.0) * s.at(1));
-    f2 = (FP(2.0) * s.at(0) + FP(5.0) * s.at(1) - s.at(2));
+    eno0 = (FP(2.0) * s.at(0) + FP(5.0) * s.at(1) - s.at(2));
+    eno1 = (-s.at(-1) + FP(5.0) * s.at(0) + FP(2.0) * s.at(1));
+    eno2 = (FP(2.0) * s.at(-2) - FP(7.0) * s.at(-1) + FP(11.0) * s.at(0));
 
-    alpha0 = FP(0.1) * (FP(1.0) + square(indicator0));
-    alpha1 = FP(0.6) * (FP(1.0) + square(indicator1));
-    alpha2 = FP(0.3) * (FP(1.0) + square(indicator2));
+    alpha0 = FP(3.0) * (FP(1.0) + square(indicator2));
+    alpha1 = FP(6.0) * (FP(1.0) + square(indicator1));
+    alpha2 = FP(1.0) * (FP(1.0) + square(indicator0));
     denom = FP(6.0) * (alpha0 + alpha1 + alpha2);
 
-    wR = (f0 * alpha0 + f1 * alpha1 + f2 * alpha2) / denom;
+    wR = (eno0 * alpha0 + eno1 * alpha1 + eno2 * alpha2) / denom;
 }
 
 

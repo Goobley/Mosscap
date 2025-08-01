@@ -110,7 +110,7 @@ void compute_recon_impl(const Simulation& sim) {
 
 template <RiemannSolver rsolver, int Axis, int NumDim>
 void compute_flux_impl(const Simulation& sim) {
-    static_assert(Axis < 3, "What are you doing?");
+    static_assert(Axis < NumDim, "What are you doing?");
     const auto& recon = sim.recon_scratch;
     const auto& fluxes = sim.fluxes;
     const auto& sz = sim.state.sz;
@@ -146,7 +146,6 @@ void compute_flux_impl(const Simulation& sim) {
             CellIndex idxm(idx);
             idxm.along<Axis>() -= 1;
             // NOTE(cmo): Left and right relative to the interface, taking the reconstructions from the left/right edges of the cells
-            // TODO(cmo): Need to reconstruct Gamma in a variable EOS
             QtyView rL_view(recon.RR, idxm);
             QtyView rR_view(recon.RL, idx);
             QtyView flux_view(flux, idx);
@@ -208,7 +207,7 @@ KOKKOS_INLINE_FUNCTION void dt_reducer(const EosView& eos, const WType& w, const
 }
 
 template <int NumDim>
-fp_t compute_dt_impl(const Simulation& sim) {
+f64 compute_dt_impl(const Simulation& sim) {
     const auto& state = sim.state;
     const auto& eos = sim.eos;
 
@@ -231,9 +230,15 @@ fp_t compute_dt_impl(const Simulation& sim) {
     );
     Kokkos::fence();
 
-    fp_t dt = dt_max * sim.max_cfl;
-    if (sim.time + dt >= sim.max_time) {
-        dt = sim.max_time - sim.time + FP(1e-8);
+    f64 dt = dt_max * sim.max_cfl;
+    const auto& out = sim.out_cfg;
+    f64 next_write_time = std::min(sim.max_time, out.prev_output_time + out.delta);
+    if (sim.time + dt >= next_write_time) {
+        dt = next_write_time - sim.time;
+        while (sim.time + dt < next_write_time) {
+            // NOTE(cmo): Ensure time + dt carries us until at least next_write_time
+            dt = std::nextafter(dt, std::numeric_limits<f64>::max());
+        }
     }
     return dt;
 }
@@ -335,6 +340,6 @@ void compute_hydro_fluxes(const Simulation& sim) {
     }
 }
 
-fp_t compute_dt(const Simulation& sim) {
+f64 compute_dt(const Simulation& sim) {
     return sim.compute_dt(sim);
 }

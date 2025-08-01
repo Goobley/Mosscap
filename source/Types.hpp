@@ -66,7 +66,7 @@ struct CellIndex {
 
     template <int Axis>
     KOKKOS_INLINE_FUNCTION i32& along() {
-        static_assert(Axis <= 3);
+        static_assert(Axis < 3);
         return i;
     }
 };

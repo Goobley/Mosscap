@@ -7,6 +7,9 @@
 #include "Reconstruct.hpp"
 #include "Riemann.hpp"
 #include "Eos.hpp"
+#include "Output.hpp"
+
+#include <vector>
 
 struct NumericalSchemes {
     Reconstruction reconstruction;
@@ -24,23 +27,31 @@ struct FluxFns {
     std::function<void(const Simulation&)> flux_z;
 };
 
+struct SourceTerm {
+    std::string name;
+    std::function<void(const Simulation&)> fn;
+};
+
 struct Simulation {
     int num_dim;
     i64 current_step;
     fp_t max_cfl;
-    fp_t time;
-    fp_t max_time;
+    f64 time;
+    f64 max_time;
     Eos eos;
     State state;
     ReconScratch recon_scratch;
     Fluxes fluxes;
     Sources sources;
     TimeStepperStorage ts_storage;
-    std::function<fp_t(const Simulation&)> compute_dt;
+    std::function<f64(const Simulation&)> compute_dt;
     std::function<void(Simulation&, fp_t)> time_step;
     std::function<void(const Simulation&)> user_bc;
+    std::vector<SourceTerm> compute_source_terms;
+    std::function<bool(Simulation&)> write_output;
     FluxFns flux_fns;
     NumericalSchemes scheme;
+    OutputConfig out_cfg;
 };
 
 #else

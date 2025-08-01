@@ -8,8 +8,9 @@
 #include "GitVersion.hpp"
 #include "MosscapConfig.hpp"
 #include "SetupModules.hpp"
+#include "SourceTerms.hpp"
 
-void write_output(const Simulation& sim, int i, fp_t time) {
+void write_output_inner(const Simulation& sim, int i, fp_t time) {
     global_cons_to_prim(sim);
     yakl::SimpleNetCDF nc;
     std::string name = fmt::format("out_{:06d}.nc", i);
@@ -44,19 +45,16 @@ int main(int argc, char** argv) {
 
         fill_bcs(sim);
 
-        int i = 0;
-
         while (sim.time < sim.max_time) {
-            if (i % 5 == 0) {
-                // write_output(sim, i, sim.time);
-            }
-            const fp_t dt = compute_dt(sim);
-            fmt::println("dt: {}", dt);
+            const f64 dt = compute_dt(sim);
             sim.time_step(sim, dt);
-            i += 1;
+            if (sim.time >= sim.out_cfg.prev_output_time + sim.out_cfg.delta) {
+                sim.write_output(sim);
+                // TODO(cmo): This is printing very small dt due to step rounding... save dt natural too?
+                fmt::println("t = {:.03f}, dt = {:.03e}, iter = {}", sim.time, dt, sim.current_step);
+            }
         }
-        write_output(sim, i, sim.time);
-        fmt::println("{} iterations", i);
+        sim.write_output(sim);
     }
     yakl::finalize();
     Kokkos::finalize();

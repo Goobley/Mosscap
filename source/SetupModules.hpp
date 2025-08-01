@@ -4,7 +4,7 @@
 #include "Simulation.hpp"
 #include "yaml-cpp/yaml.h"
 
-void setup_grid(Simulation& sim, const YAML::Node& config) {
+void setup_grid(Simulation& sim, YAML::Node& config) {
     auto& sz = sim.state.sz;
     sz.ng = get_or<int>(config, "grid.num_ghost", 3);
     sz.xc = get_or<int>(config, "grid.x", 256) + 2 * sz.ng;
@@ -30,12 +30,18 @@ void setup_grid(Simulation& sim, const YAML::Node& config) {
     }
     auto& state = sim.state;
     state.dx = dx;
+    state.loc.x = get_or<fp_t>(config, "grid.x_start", FP(0.0));
+    state.loc.y = get_or<fp_t>(config, "grid.y_start", FP(0.0));
+    state.loc.z = get_or<fp_t>(config, "grid.z_start", FP(0.0));
 
     const int n_hydro = get_num_hydro_vars(sim.num_dim);
-    state.Q = Fp4d("Q", n_hydro, sz.zc, sz.yc, sz.xc);
-    state.W = Fp4d("W", n_hydro, sz.zc, sz.yc, sz.xc);
-    sim.recon_scratch.RR = Fp4d("RR", n_hydro, sz.zc, sz.yc, sz.xc);
-    sim.recon_scratch.RL = Fp4d("RL", n_hydro, sz.zc, sz.yc, sz.xc);
+    const int n_extra = get_or<int>(config, "simulation.n_extra_fields", 0);
+    const int n_total = n_hydro + n_extra;
+    state.Q = Fp4d("Q", n_total, sz.zc, sz.yc, sz.xc);
+    state.W = Fp4d("W", n_total, sz.zc, sz.yc, sz.xc);
+    sim.recon_scratch.RR = Fp4d("RR", n_total, sz.zc, sz.yc, sz.xc);
+    sim.recon_scratch.RL = Fp4d("RL", n_total, sz.zc, sz.yc, sz.xc);
+    // NOTE(cmo): The density flux is just rescaled for the tracer fields
     sim.fluxes.Fx = Fp4d("Fx", n_hydro, sz.zc, sz.yc, sz.xc);
     if (sim.num_dim > 1) {
         sim.fluxes.Fy = Fp4d("Fy", n_hydro, sz.zc, sz.yc, sz.xc);
@@ -43,9 +49,10 @@ void setup_grid(Simulation& sim, const YAML::Node& config) {
     if (sim.num_dim > 2) {
         sim.fluxes.Fz = Fp4d("Fz", n_hydro, sz.zc, sz.yc, sz.xc);
     }
+    sim.sources.S = Fp4d("S", n_total, sz.zc, sz.yc, sz.xc);
 }
 
-void setup_boundaries(Simulation& sim, const YAML::Node& config) {
+void setup_boundaries(Simulation& sim, YAML::Node& config) {
     auto& bound = sim.state.boundaries;
 
     auto set_boundary = [&](BoundaryType& out, const std::string& bdry) {
@@ -66,7 +73,7 @@ void setup_boundaries(Simulation& sim, const YAML::Node& config) {
     // TODO(cmo): Check if any are constant, and load the values if so.
 }
 
-void setup_hydro_fns(Simulation& sim, const YAML::Node& config) {
+void setup_hydro_fns(Simulation& sim, YAML::Node& config) {
     auto& scheme = sim.scheme;
 
     std::string recon_str = get_or<std::string>(config, "scheme.reconstruction", "muscl");
@@ -86,7 +93,7 @@ void setup_hydro_fns(Simulation& sim, const YAML::Node& config) {
     select_hydro_fns(sim);
 }
 
-void setup_timestepper(Simulation& sim, const YAML::Node& config) {
+void setup_timestepper(Simulation& sim, YAML::Node& config) {
     auto& scheme = sim.scheme;
 
     std::string ts_str = get_or<std::string>(config, "timestep.scheme", "ssprk3");
@@ -98,16 +105,34 @@ void setup_timestepper(Simulation& sim, const YAML::Node& config) {
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", FP(1.0));
 }
 
-void setup_eos(Simulation& sim, const YAML::Node& config) {
+void setup_eos(Simulation& sim, YAML::Node& config) {
     sim.eos.init(sim, config);
 }
 
-void setup_problem(Simulation& sim, const YAML::Node& config) {
+void setup_problem(Simulation& sim, YAML::Node& config) {
     std::string problem_name = get_or<std::string>(config, "problem.name", "circular_explosion");
     get_problem_generator().dispatch(problem_name, sim, config);
 }
 
-Simulation setup_sim(const YAML::Node& config) {
+void setup_output(Simulation& sim, YAML::Node& config) {
+    sim.out_cfg.problem_name = get_or<std::string>(config, "problem.name", "circular_explosion");
+    sim.out_cfg.filename = get_or<std::string>(config, "output.name", fmt::format("output_{}", sim.out_cfg.problem_name));
+    sim.out_cfg.single_file = get_or<bool>(config, "output.single_file", true);
+    sim.out_cfg.delta = get_or<f64>(config, "output.delta_t", 0.1);
+
+    sim.out_cfg.output_count = 0;
+    sim.out_cfg.prev_output_time = -1.0;
+    sim.out_cfg.variables.conserved = get_or<bool>(config, "output.variables.conserved", true);
+    sim.out_cfg.variables.primitive = get_or<bool>(config, "output.variables.primitive", false);
+    sim.out_cfg.variables.fluxes = get_or<bool>(config, "output.variables.fluxes", false);
+    sim.out_cfg.variables.source = get_or<bool>(config, "output.variables.source", false);
+
+    if (!sim.write_output) {
+        sim.write_output = write_output;
+    }
+}
+
+Simulation setup_sim(YAML::Node& config) {
     // TODO(cmo): Do an early check if problem.name is "from_file", and have a separate path for that.
     const int num_dim = get_or<int>(config, "simulation.num_dim", 0);
     if (num_dim < 1 || num_dim > 3) {
@@ -121,7 +146,12 @@ Simulation setup_sim(const YAML::Node& config) {
     setup_hydro_fns(sim, config);
     setup_timestepper(sim, config);
     setup_eos(sim, config);
+    setup_output(sim, config);
     setup_problem(sim, config);
+
+    // Write the header + ICs
+    // TODO(cmo): Don't do this on restart
+    sim.write_output(sim);
 
     return sim;
 }

@@ -99,9 +99,16 @@ struct GridSize {
     i32 ng = 0; /// num ghost cells (same on both ends of all axes)
 };
 
+struct GridLoc {
+    fp_t x;
+    fp_t y;
+    fp_t z;
+};
+
 struct State {
     GridSize sz; /// Grid dimensions + number of ghosts
     fp_t dx; /// Spatial grid step (constant)
+    GridLoc loc; /// Logical grid position (bottom left corner of cell 0, 0, 0)
     Boundaries boundaries; /// Boundary handling specifications
     Fp4d Q; // Conserved State
     Fp4d W; /// Primitive State
@@ -109,14 +116,31 @@ struct State {
     KOKKOS_INLINE_FUNCTION vec3 get_pos(int i, int j=0, int k=0) const {
         vec3 result;
         const fp_t ghost_offset = -(sz.ng - FP(0.5)) * dx;
-        result(0) = i * dx + ghost_offset;
+        result(0) = i * dx + ghost_offset + loc.x;
         if (sz.yc > 1) {
-            result(1) = j * dx + ghost_offset;
+            result(1) = j * dx + ghost_offset + loc.y;
         }
         if (sz.zc > 1) {
-            result(2) = k * dx + ghost_offset;
+            result(2) = k * dx + ghost_offset + loc.z;
         }
         return result;
+    }
+
+    KOKKOS_INLINE_FUNCTION fp_t get_axis_length(int axis) const {
+        if (axis == 0) {
+            return (sz.xc - 2 * sz.ng) * dx;
+        }
+        if (axis == 1) {
+            if (sz.yc == 1) {
+                return FP(1.0);
+            }
+            return (sz.yc - 2 * sz.ng) * dx;
+        }
+
+        if (sz.zc == 1) {
+            return FP(1.0);
+        }
+        return (sz.zc - 2 * sz.ng) * dx;
     }
 };
 
@@ -127,9 +151,7 @@ struct Fluxes {
 };
 
 struct Sources {
-    Fp4d Sx; /// x source
-    Fp4d Sy; /// y source
-    Fp4d Sz; /// z source
+    Fp4d S;
 };
 
 #else
