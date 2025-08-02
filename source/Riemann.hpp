@@ -38,11 +38,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyV
     prim_to_flux<Axis, NumDim>(eos.L, wL, fL);
     prim_to_flux<Axis, NumDim>(eos.R, wR, fR);
 
-    const auto gl = eos.L.get_gamma();
-    const auto gr = eos.R.get_gamma();
-
-    const fp_t csL = std::sqrt(gl.Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
-    const fp_t csR = std::sqrt(gr.Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
+    const fp_t csL = sound_speed<NumDim>(eos.L, wL);
+    const fp_t csR = sound_speed<NumDim>(eos.R, wR);
     const fp_t max_c = FP(0.5) * (csL + std::abs(vL) + csR + std::abs(vR));
 
     #pragma unroll
@@ -58,11 +55,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyV
     constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
     constexpr int IV = Velocity<Axis, NumDim>();
 
-    const auto gl = eos.L.get_gamma();
-    const auto gr = eos.R.get_gamma();
-
-    const fp_t csL = std::sqrt(gl.Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
-    const fp_t csR = std::sqrt(gr.Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
+    const fp_t csL = sound_speed<NumDim>(eos.L, wL);
+    const fp_t csR = sound_speed<NumDim>(eos.R, wR);
 
     constexpr fp_t tiny = FP(1e-20);
     const fp_t sL = std::min(-tiny, std::min(wL(IV) - csL, wR(IV) - csR));
@@ -89,10 +83,10 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyV
     constexpr int IV = Velocity<Axis, NumDim>();
     constexpr int IM = Momentum<Axis, NumDim>();
 
-    const auto gl = eos.L.get_gamma();
-    const auto gr = eos.R.get_gamma();
-    const fp_t csL = std::sqrt(gl.Gamma * wL(I(Prim::Pres)) / wL(I(Prim::Rho)));
-    const fp_t csR = std::sqrt(gr.Gamma * wR(I(Prim::Pres)) / wR(I(Prim::Rho)));
+    const auto gl = eos.L.get_gamma_e();
+    const auto gr = eos.R.get_gamma_e();
+    const fp_t csL = sound_speed<NumDim>(eos.L, wL);
+    const fp_t csR = sound_speed<NumDim>(eos.R, wR);
 
     constexpr fp_t tiny = FP(1e-20);
     // const fp_t sL = std::min(-tiny, std::min(wL(IV) - csL, wR(IV) - csR));
@@ -115,10 +109,10 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const ReconstructedEos& eos, const QtyV
     // compute L, R sound speed
     const fp_t cLstar = (p_mid <= wL(I(Prim::Pres)))
                             ? FP(1.0)
-                            : std::sqrt(FP(1.0) + (gl.Gamma + FP(1.0)) / (FP(2.0) * gl.Gamma) * (p_mid / wL(I(Prim::Pres)) - FP(1.0)));
+                            : std::sqrt(FP(1.0) + (gl.gamma_e + FP(1.0)) / (FP(2.0) * gl.gamma_e) * (p_mid / wL(I(Prim::Pres)) - FP(1.0)));
     const fp_t cRstar = (p_mid <= wR(I(Prim::Pres)))
                             ? FP(1.0)
-                            : std::sqrt(FP(1.0) + (gr.Gamma + FP(1.0)) / (FP(2.0) * gr.Gamma) * (p_mid / wR(I(Prim::Pres)) - FP(1.0)));
+                            : std::sqrt(FP(1.0) + (gr.gamma_e + FP(1.0)) / (FP(2.0) * gr.gamma_e) * (p_mid / wR(I(Prim::Pres)) - FP(1.0)));
 
     // compute min/max wave speeds based on L/R
     const fp_t aL = wL(IV) - csL * cLstar;

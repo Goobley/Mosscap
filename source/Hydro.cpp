@@ -87,20 +87,20 @@ void compute_recon_impl(const Simulation& sim) {
                 );
             }
             if (!eos.is_constant) {
-                Fp4d Gamma(
-                    "Gamma 4D",
-                    eos.gamma_space.data(),
+                Fp4d GammaE(
+                    "GammaE 4D",
+                    eos.gamma_e_space.data(),
                     1,
-                    eos.gamma_space.extent(0),
-                    eos.gamma_space.extent(1),
-                    eos.gamma_space.extent(2)
+                    eos.gamma_e_space.extent(0),
+                    eos.gamma_e_space.extent(1),
+                    eos.gamma_e_space.extent(2)
                 );
                 reconstruct<reconstruction, slope_limiter, Axis>(
-                    Gamma,
+                    GammaE,
                     0,
                     idx,
-                    eos.gamma_space_L(idx.k, idx.j, idx.i),
-                    eos.gamma_space_R(idx.k, idx.j, idx.i)
+                    eos.gamma_e_space_L(idx.k, idx.j, idx.i),
+                    eos.gamma_e_space_R(idx.k, idx.j, idx.i)
                 );
             }
         }
@@ -192,8 +192,7 @@ make_flux_impl() {
 template <int NumDim, typename WType>
 KOKKOS_INLINE_FUNCTION void dt_reducer(const EosView& eos, const WType& w, const fp_t dx, fp_t& running_dt) {
     using Prim = Prim<NumDim>;
-    const auto g = eos.get_gamma();
-    const fp_t cs = std::sqrt(g.Gamma * w(I(Prim::Pres)) / w(I(Prim::Rho)));
+    const fp_t cs = sound_speed(eos, w)
     fp_t vel2 = square(w(I(Prim::Vx)));
     if (NumDim > 1) {
         vel2 += square(w(I(Prim::Vy)));
