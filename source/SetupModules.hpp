@@ -150,6 +150,10 @@ Simulation setup_sim(YAML::Node& config) {
     setup_problem(sim, config);
 
     // Write the header + ICs
+    if (sim.update_eos) {
+        sim.update_eos(sim);
+    }
+    fill_bcs(sim);
     // TODO(cmo): Don't do this on restart
     sim.write_output(sim);
 

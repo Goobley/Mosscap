@@ -214,6 +214,7 @@ bool write_output(Simulation& sim) {
         nc.open(filename, yakl::NETCDF_MODE_WRITE);
     }
 
+    const auto& eos = sim.eos;
     if (!single_file) {
         if (cfg.variables.conserved) {
             nc.write(sim.state.Q, "Q", {"var", "z", "y", "x"});
@@ -228,6 +229,13 @@ bool write_output(Simulation& sim) {
         }
         if (cfg.variables.source) {
             nc.write(sim.sources.S, "S", {"var", "z", "y", "x"});
+        }
+        if (!eos.is_constant) {
+            nc.write(eos.gamma_e_space, "gamma_e", {"z", "y", "x"});
+            nc.write(eos.y_space, "ion_frac", {"z", "y", "x"});
+            if (eos.T_space.initialized()) {
+                nc.write(eos.T_space, "T", {"z", "y", "x"});
+            }
         }
     } else {
         std::string time_name("time");
@@ -246,6 +254,13 @@ bool write_output(Simulation& sim) {
         }
         if (cfg.variables.source) {
             nc.write1(sim.sources.S, "S", {"var", "z", "y", "x"}, time_idx, time_name);
+        }
+        if (!eos.is_constant) {
+            nc.write1(eos.gamma_e_space, "gamma_e", {"z", "y", "x"}, time_idx, time_name);
+            nc.write1(eos.y_space, "ion_frac", {"z", "y", "x"}, time_idx, time_name);
+            if (eos.T_space.initialized()) {
+                nc.write1(eos.T_space, "T", {"z", "y", "x"}, time_idx, time_name);
+            }
         }
     }
 

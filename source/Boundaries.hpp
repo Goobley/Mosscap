@@ -26,9 +26,11 @@ inline void fill_one_bc_impl(const State& state) {
             int coord[3] = {ii, ji, ki};
             const int pencil_idx = coord[Axis];
             int cflip = (2 * ng - 1) - coord[Axis];
+            int cedge = ng;
             if (pencil_idx >= ng) {
                 coord[Axis] = (dims[Axis] - 1) - (pencil_idx - ng);
                 cflip = (dims[Axis] - 1) - (2 * ng - 1) + (pencil_idx - ng);
+                cedge = (dims[Axis] - 1) - ng;
             }
 
             CellIndex idx{
@@ -48,10 +50,13 @@ inline void fill_one_bc_impl(const State& state) {
                 .k = coord[2]
             };
             i_periodic.along<Axis>() += (pencil_idx < ng ? 1 : -1) * (dims[Axis] - 2 * ng);
+            CellIndex i_edge(idx);
+            i_edge.along<Axis>() = cedge;
 
             auto Q_view = QtyView(state.Q, idx);
             auto Q_flip = QtyView(state.Q, i_flip);
             auto Q_periodic = QtyView(state.Q, i_periodic);
+            auto Q_edge = QtyView(state.Q, i_edge);
 
             BoundaryType start_bound, end_bound;
             JasUse(bdry);
@@ -79,6 +84,10 @@ inline void fill_one_bc_impl(const State& state) {
             } else if (bound == BoundaryType::Symmetric) {
                 for (int var = 0; var < state.Q.extent(0); ++var) {
                     Q_view(var) = Q_flip(var);
+                }
+            } else if (bound == BoundaryType::ZeroGrad) {
+                for (int var = 0; var < state.Q.extent(0); ++var) {
+                    Q_view(var) = Q_edge(var);
                 }
             }
         }

@@ -43,6 +43,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/LinearWaves.cpp"
     "source/ProblemGenerator/Quadrants3.cpp"
     "source/ProblemGenerator/ShockTube2d.cpp"
+    "source/ProblemGenerator/Solar1d.cpp"
 )
 list (APPEND MOSSCAP_SOURCE_TERMS
     "source/SourceTerms/Gravity.cpp"

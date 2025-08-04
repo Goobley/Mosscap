@@ -151,6 +151,8 @@ void compute_flux_impl(const Simulation& sim) {
             QtyView flux_view(flux, idx);
             EosView eos_L(eos, idxm, ReconstructionEdge::Right);
             EosView eos_R(eos, idx, ReconstructionEdge::Left);
+            // EosView eos_L(eos, idxm, ReconstructionEdge::Centred);
+            // EosView eos_R(eos, idx, ReconstructionEdge::Centred);
             riemann_flux<rsolver, Axis, NumDim>(
                 ReconstructedEos{
                     .L = eos_L,
@@ -192,7 +194,7 @@ make_flux_impl() {
 template <int NumDim, typename WType>
 KOKKOS_INLINE_FUNCTION void dt_reducer(const EosView& eos, const WType& w, const fp_t dx, fp_t& running_dt) {
     using Prim = Prim<NumDim>;
-    const fp_t cs = sound_speed(eos, w)
+    const fp_t cs = sound_speed<NumDim>(eos, w);
     fp_t vel2 = square(w(I(Prim::Vx)));
     if (NumDim > 1) {
         vel2 += square(w(I(Prim::Vy)));
@@ -324,6 +326,9 @@ void select_hydro_fns(Simulation& sim) {
 }
 
 void compute_hydro_fluxes(const Simulation& sim) {
+    if (sim.update_eos) {
+        sim.update_eos(sim);
+    }
     global_cons_to_prim(sim);
     sim.flux_fns.recon_x(sim);
     sim.flux_fns.flux_x(sim);

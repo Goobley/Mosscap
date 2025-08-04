@@ -61,6 +61,7 @@ enum class BoundaryType : i32 {
     Wall = 0,
     Periodic,
     Symmetric,
+    ZeroGrad,
     Constant,
     UserFn
 };
@@ -68,8 +69,9 @@ constexpr const char* BoundaryTypeName[] = {
     "wall",
     "periodic",
     "symmetric",
+    "zerograd",
     "constant",
-    "user_fn"
+    "userfn"
 };
 constexpr int NumBoundaryType = sizeof(BoundaryTypeName) / sizeof(BoundaryTypeName[0]);
 

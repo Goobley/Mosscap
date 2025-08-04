@@ -42,7 +42,10 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     const auto& Q_old = sim.ts_storage.Q_old[0];
     const auto& flux = sim.fluxes;
     const auto& S = sim.sources.S;
+    sim.dt = dt;
+    sim.dt_sub = dt;
 
+    zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
@@ -58,6 +61,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
+    sim.dt_sub = FP(0.5) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -74,7 +78,6 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    zero_source_terms(sim);
     fill_bcs(sim);
     sim.time += dt;
     sim.current_step += 1;
@@ -109,7 +112,10 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     const auto& Q_old = sim.ts_storage.Q_old[0];
     const auto& flux = sim.fluxes;
     const auto& S = sim.sources.S;
+    sim.dt = dt;
+    sim.dt_sub = dt;
 
+    zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
@@ -125,6 +131,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
+    sim.dt_sub = FP(0.25) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -141,6 +148,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
+    sim.dt_sub = (FP(2.0) / FP(3.0)) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -157,7 +165,6 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    zero_source_terms(sim);
     fill_bcs(sim);
     sim.time += dt;
     sim.current_step += 1;
@@ -192,7 +199,10 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     const auto& Q_old = sim.ts_storage.Q_old[0];
     const auto& flux = sim.fluxes;
     const auto& S = sim.sources.S;
+    sim.dt = dt;
 
+    sim.dt_sub = FP(0.5) * dt;
+    zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
@@ -207,6 +217,8 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += FP(0.5) * (q_update + source);
     });
     Kokkos::fence();
+
+    sim.dt_sub = FP(0.5) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -223,6 +235,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
+    sim.dt_sub = (FP(1.0) / FP(6.0)) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -239,6 +252,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
+    sim.dt_sub = FP(0.5) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -256,7 +270,6 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     Kokkos::fence();
 
 
-    zero_source_terms(sim);
     fill_bcs(sim);
     sim.time += dt;
     sim.current_step += 1;

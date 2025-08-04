@@ -38,6 +38,8 @@ struct Simulation {
     fp_t max_cfl;
     f64 time;
     f64 max_time;
+    fp_t dt = FP(0.0);
+    fp_t dt_sub = FP(0.0);
     Eos eos;
     State state;
     ReconScratch recon_scratch;
@@ -45,6 +47,7 @@ struct Simulation {
     Sources sources;
     TimeStepperStorage ts_storage;
     std::function<f64(const Simulation&)> compute_dt;
+    std::function<void(const Simulation&)> update_eos;
     std::function<void(Simulation&, fp_t)> time_step;
     std::function<void(const Simulation&)> user_bc;
     std::vector<SourceTerm> compute_source_terms;

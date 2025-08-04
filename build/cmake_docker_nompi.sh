@@ -15,7 +15,7 @@ cmake  \
       -DMOSSCAP_ARCH="CUDA"              \
       -DYAKL_AUTO_PROFILE="On"         \
       -DMOSSCAP_CXX_FLAGS="-O3 --generate-line-info -ftz=true -diag-suppress=174" \
-      -DMOSSCAP_SINGLE_PRECISION="On" \
+      -DMOSSCAP_SINGLE_PRECISION="Off" \
       -DGCC_INCLUDE_PATH="${GCC_INCLUDE_PATH}" \
       -DNETCDF_INCLUDE_PATH="$(nc-config --includedir)" \
       -DLDLIBS="$(nc-config --libs) -lz" \

@@ -15,9 +15,11 @@ enum class ReconstructionEdge {
 };
 
 enum class EosType {
-    Ideal = 0
+    Ideal = 0,
+    AnalyticLteH,
+    TabulatedLteH
 };
-constexpr const char* EosTypeName[] = {"ideal"};
+constexpr const char* EosTypeName[] = {"ideal", "analyticlteh", "tabulatedlteh"};
 constexpr int NumEosType = sizeof(EosTypeName) / sizeof(EosTypeName[0]);
 
 struct Simulation;
@@ -28,18 +30,23 @@ struct Eos {
     fp_t Gamma;
     fp_t Gamma_e; // for conversion between pressure and energy
     Fp3d gamma_e_space;
+    Fp3d y_space;
+    Fp3d T_space;
     // Reconstruction
     Fp3d gamma_e_space_R;
     Fp3d gamma_e_space_L;
 
-    bool init(const Simulation& sim, const YAML::Node& config);
+    bool init(Simulation& sim, const YAML::Node& config);
 
-    bool init_ideal(fp_t gamma) {
+    inline bool init_ideal(fp_t gamma, Simulation& sim) {
         is_constant = true;
         Gamma = gamma;
         Gamma_e = gamma;
         return true;
     }
+
+    bool init_analytic_lte_h(fp_t gamma, Simulation& sim);
+    bool init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& table_path);
 
     KOKKOS_INLINE_FUNCTION GammaEs get_gamma_e(const CellIndex& idx, const ReconstructionEdge& edge) const {
         if (is_constant) {
