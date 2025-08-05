@@ -3,7 +3,7 @@
 #include "../MosscapConfig.hpp"
 #include "YAKL_netcdf.h"
 #include "../SourceTerms/Gravity.hpp"
-#include "../TabulatedLteH.hpp"
+#include "../AnalyticLteH.hpp"
 
 // NOTE(cmo): This is a 1d problem
 static constexpr int num_dim = 1;
@@ -270,21 +270,6 @@ KOKKOS_INLINE_FUNCTION T interp(
     return interp(alpha, xx, yy);
 }
 
-static KOKKOS_INLINE_FUNCTION f64 saha_rhs_H(f64 T) {
-    // NOTE(cmo): From sympy
-    return 2.4146830395719654e+21*std::pow(T, 1.5)*std::exp(-157763.42386247337/T);
-}
-
-static KOKKOS_INLINE_FUNCTION f64 y_from_nhtot(f64 nhtot, f64 T) {
-    f64 X = saha_rhs_H(T);
-    return 0.5 * (-X + std::sqrt(square(X) + 4 * nhtot * X)) / nhtot;
-}
-
-static KOKKOS_INLINE_FUNCTION f64 ne_from_ntot(f64 ntot, f64 T) {
-    f64 X = saha_rhs_H(T);
-    return 0.5 * (-2 * X + std::sqrt(square(2 * X) + 4 * ntot * X));
-}
-
 MOSSCAP_NEW_PROBLEM(solar_1d) {
     MOSSCAP_PROBLEM_PREAMBLE(solar_1d);
 
@@ -305,6 +290,8 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
     nc.read(base_nh, "base_nhtot");
 
     const bool ideal = sim.eos.is_constant;
+    const bool ion_frac = get_or<fp_t>(config, "problem.ion_frac", FP(0.0));
+    fmt::println("Is Ideal: {}", ideal);
 
     const auto& state = sim.state;
     const auto& eos = sim.eos;
@@ -317,6 +304,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
     static constexpr f64 h_mass = 1.6737830080950003e-27;
     static constexpr f64 k_B = 1.380649e-23;
     static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
+    const f64 mean_mass = eos.avg_mass * h_mass;
     // Set up base values and interpolate run of temperature
     for (int i = 0; i < sz.xc; ++i) {
         temperature(i) = interp(state.get_pos(i)(0) + z(0), z, temperature_profile);
@@ -325,25 +313,25 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
     nhtot(sz.ng) = base_nh;
     y(sz.ng) = y_from_nhtot(nhtot(sz.ng), temperature(sz.ng));
     if (ideal) {
-        y(sz.ng) = FP(0.0);
+        y(sz.ng) = ion_frac;
     }
     pressure(sz.ng) = base_nh * (1.0 + y(sz.ng)) * k_B * temperature(sz.ng);
     fmt::println("P: {}, y: {}, nhtot {:e}", pressure(sz.ng), y(sz.ng), nhtot(sz.ng));
 
     const f64 dz = state.dx;
     for (int i = sz.ng + 1; i < sz.xc; ++i) {
-        const f64 dP_dz_base = h_mass * nhtot(i-1) * solar_g;
+        const f64 dP_dz_base = mean_mass * nhtot(i-1) * solar_g;
         const f64 P_half = pressure(i - 1) + dP_dz_base * 0.5 * dz;
         const f64 T_half = 0.5 * (temperature(i) + temperature(i-1));
         const f64 ntot_half = P_half / (k_B * T_half);
-        const f64 ne_half = ideal ? FP(0.0) : ne_from_ntot(ntot_half, T_half);
-        const f64 nhtot_half = ntot_half - ne_half;
+        const f64 y_half = ideal ? ion_frac : y_from_ntot(ntot_half, T_half);
+        const f64 nhtot_half = ntot_half / (1.0 + y_half);
 
-        const f64 dP_dz_mid = h_mass * nhtot_half * solar_g;
+        const f64 dP_dz_mid = mean_mass * nhtot_half * solar_g;
         pressure(i) = pressure(i - 1) + dP_dz_mid * dz;
         const f64 ntotal = pressure(i) / (k_B * temperature(i));
-        const f64 ne = ideal ? FP(0.0) : ne_from_ntot(ntotal, temperature(i));
-        nhtot(i) = ntotal - ne;
+        y(i) = ideal ? ion_frac : y_from_ntot(ntotal, temperature(i));
+        nhtot(i) = ntotal / (1.0 + y(i));
         // try to refine guess
         int iter = 0;
         for (iter = 0; iter < 100; ++iter) {
@@ -351,40 +339,37 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
             // https://iopscience.iop.org/article/10.1086/342754/fulltext/
             // Eq 40 + 41
             if (i == sz.ng + 1) {
-                pressure(i) = pressure(i - 1) + 0.5 * solar_g * dz * (nhtot(i) + nhtot(i - 1)) * h_mass;
+                pressure(i) = pressure(i - 1) + 0.5 * solar_g * dz * (nhtot(i) + nhtot(i - 1)) * mean_mass;
             } else {
-                pressure(i) = pressure(i - 1) + 1.0/12.0 * solar_g * dz * (5 * nhtot(i) + 8 * nhtot(i - 1) - nhtot(i-2)) * h_mass;
+                pressure(i) = pressure(i - 1) + 1.0/12.0 * solar_g * dz * (5 * nhtot(i) + 8 * nhtot(i - 1) - nhtot(i-2)) * mean_mass;
             }
-            if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-7) {
+            if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-5) {
                 break;
             }
             const f64 ntotal = pressure(i) / (k_B * temperature(i));
-            const f64 ne = ideal ? FP(0.0) : ne_from_ntot(ntotal, temperature(i));
-            nhtot(i) = ntotal - ne;
+            y(i) = ideal ? ion_frac : y_from_ntot(ntotal, temperature(i));
+            nhtot(i) = ntotal / (1.0 + y(i));
         }
         if (iter == 100) {
-            fmt::println("No converge: {}", iter);
+            fmt::println("No converge: {}", i);
         }
-        y(i) = ne / nhtot(i);
     }
 
     F64Host rho("rho", sz.xc);
     F64Host eint("eint", sz.xc);
+    bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
+    AnalyticLteH lte_eos;
+    lte_eos.init(include_ionisation_energy);
     for (int i = sz.ng; i < sz.xc; ++i) {
-        rho(i) = nhtot(i) * h_mass;
-        eint(i) = 1.0 / (eos.Gamma - 1.0) * pressure(i) + nhtot(i) * y(i) * chi_H;
+        rho(i) = nhtot(i) * mean_mass;
+        eint(i) = lte_eos.internal_energy(eos.Gamma, eos.avg_mass, rho(i), y(i), temperature(i));
     }
 
     {
-    // NOTE(cmo): Needs to be self-consistent with the table
         auto rho_d = rho.createDeviceCopy();
         auto eint_d = eint.createDeviceCopy();
-        auto y_d = y.createDeviceCopy();
-        auto pressure_d = pressure.createDeviceCopy();
         const auto& Q = state.Q;
         const auto& eos = sim.eos;
-        TabulatedLteH lte_h;
-        lte_h.init(get_or<std::string>(config, "eos.table_path", "mosscap_lte_h_tables.nc"));
         using Cons = Cons<num_dim>;
 
         dex_parallel_for(
@@ -392,41 +377,8 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
             FlatLoop<3>(sz.zc, sz.yc, sz.xc),
             KOKKOS_LAMBDA (int k, int j, int i) {
                 int ii = std::max(i, sz.ng);
-                fp_t eint = eint_d(ii);
-                const fp_t rho = rho_d(ii);
-                fp_t starting_pressure;
-
-                if (!ideal) {
-                    int iter = 0;
-                    const int max_iter = 1000;
-                    for (iter = 0; iter < max_iter; ++iter) {
-                        fp_t log_eint = std::log10(eint);
-                        fp_t log_rho = std::log10(rho);
-                        fp_t log_eint_rho = log_eint - log_rho;
-                        auto s = lte_h.sample(log_eint_rho, log_rho);
-                        fp_t T = std::pow(FP(10.0), s.log_T);
-                        fp_t pressure = rho * (FP(1.0) + s.y) * (k_B / h_mass) * T;
-                        if (iter == 0) {
-                            starting_pressure = pressure;
-                        }
-
-                        fp_t pressure_err = pressure_d(ii) - pressure;
-                        eint += FP(0.25) * pressure_err / (eos.Gamma - FP(1.0));
-
-                        if (std::abs(pressure_err) / pressure < 1e-6) {
-                            break;
-                        }
-                    }
-                    if (ii % 20 == 0) {
-                        printf("i: %d, num_iter %d %e->%e\n", ii, iter, starting_pressure, pressure_d(ii));
-                    }
-                    if (iter == max_iter) {
-                        printf("Equalisation didn't converge (%d)\n", ii);
-                    }
-                }
-
-                Q(I(Cons::Rho), k, j, i) = rho;
-                Q(I(Cons::Ene), k, j, i) = eint;
+                Q(I(Cons::Rho), k, j, i) = rho_d(ii);
+                Q(I(Cons::Ene), k, j, i) = eint_d(ii);
                 Q(I(Cons::MomX), k, j, i) = FP(0.0);
             }
         );

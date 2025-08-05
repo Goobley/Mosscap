@@ -151,8 +151,6 @@ void compute_flux_impl(const Simulation& sim) {
             QtyView flux_view(flux, idx);
             EosView eos_L(eos, idxm, ReconstructionEdge::Right);
             EosView eos_R(eos, idx, ReconstructionEdge::Left);
-            // EosView eos_L(eos, idxm, ReconstructionEdge::Centred);
-            // EosView eos_R(eos, idx, ReconstructionEdge::Centred);
             riemann_flux<rsolver, Axis, NumDim>(
                 ReconstructedEos{
                     .L = eos_L,

@@ -29,6 +29,7 @@ struct Eos {
     bool is_constant;
     fp_t Gamma;
     fp_t Gamma_e; // for conversion between pressure and energy
+    fp_t avg_mass;
     Fp3d gamma_e_space;
     Fp3d y_space;
     Fp3d T_space;
@@ -45,7 +46,7 @@ struct Eos {
         return true;
     }
 
-    bool init_analytic_lte_h(fp_t gamma, Simulation& sim);
+    bool init_analytic_lte_h(fp_t gamma, Simulation& sim, bool include_ionisation_energy);
     bool init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& table_path);
 
     KOKKOS_INLINE_FUNCTION GammaEs get_gamma_e(const CellIndex& idx, const ReconstructionEdge& edge) const {
