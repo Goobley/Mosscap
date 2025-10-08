@@ -38,7 +38,9 @@ endif()
 
 list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/CircularExplosion.cpp"
+    "source/ProblemGenerator/CoronalRainDrop.cpp"
     "source/ProblemGenerator/DoubleShockTube.cpp"
+    "source/ProblemGenerator/HillierSnowKelvinHelmholtz.cpp"
     "source/ProblemGenerator/KelvinHelmholtz.cpp"
     "source/ProblemGenerator/LinearWaves.cpp"
     "source/ProblemGenerator/Quadrants3.cpp"

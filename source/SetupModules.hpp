@@ -65,12 +65,63 @@ void setup_boundaries(Simulation& sim, YAML::Node& config) {
     if (sim.num_dim > 1) {
         set_boundary(bound.ys, "ys");
         set_boundary(bound.ye, "ye");
-    } else {
+    }
+    if (sim.num_dim > 2) {
         set_boundary(bound.zs, "zs");
         set_boundary(bound.ze, "ze");
     }
 
     // TODO(cmo): Check if any are constant, and load the values if so.
+    auto check_and_load_constant = [&](
+        const BoundaryType boundary,
+        const decltype(bound.xs_const)& arr,
+        const std::string& bdry) {
+            if (boundary != BoundaryType::Constant) {
+                return;
+            }
+            const auto name = fmt::format("{}_const", bdry);
+            if (config["boundary"][name]){
+                if (config["boundary"][name].IsSequence()) {
+                    using Cons3 = Cons<3>;
+                    auto node = config["boundary"][fmt::format("{}_const", bdry)];
+                    if (sim.num_dim == 1) {
+                        using Cons1 = Cons<1>;
+                        arr(I(Cons1::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
+                        arr(I(Cons1::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
+                        arr(I(Cons1::Ene)) = node[I(Cons3::Ene)].as<fp_t>();
+                    } else if (sim.num_dim == 2) {
+                        using Cons2 = Cons<2>;
+                        arr(I(Cons2::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
+                        arr(I(Cons2::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
+                        arr(I(Cons2::MomY)) = node[I(Cons3::MomY)].as<fp_t>();
+                        arr(I(Cons2::Ene)) = node[I(Cons3::Ene)].as<fp_t>();
+                    } else {
+                        arr(I(Cons3::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
+                        arr(I(Cons3::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
+                        arr(I(Cons3::MomY)) = node[I(Cons3::MomY)].as<fp_t>();
+                        arr(I(Cons3::MomZ)) = node[I(Cons3::MomZ)].as<fp_t>();
+                        arr(I(Cons3::Ene)) = node[I(Cons3::Ene)].as<fp_t>();
+                    }
+                } else {
+                    std::string vals = get_or<std::string>(config, fmt::format("boundary.{}_const", bdry), "xxx");
+                    if (vals == "xxx") {
+                        throw std::runtime_error(fmt::format("Provide constant boundary values for {}_const, or set to problem_supplied and fill in your problem setup function", bdry));
+                    } else if (vals == "problem_supplied") {
+                        return;
+                    }
+                }
+            }
+    };
+    check_and_load_constant(bound.xs, bound.xs_const, "xs");
+    check_and_load_constant(bound.xe, bound.xe_const, "xe");
+    if (sim.num_dim > 1) {
+        check_and_load_constant(bound.ys, bound.ys_const, "ys");
+        check_and_load_constant(bound.ye, bound.ye_const, "ye");
+    }
+    if (sim.num_dim > 2) {
+        check_and_load_constant(bound.zs, bound.zs_const, "zs");
+        check_and_load_constant(bound.ze, bound.ze_const, "ze");
+    }
 }
 
 void setup_hydro_fns(Simulation& sim, YAML::Node& config) {

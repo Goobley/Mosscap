@@ -56,7 +56,7 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
         }
     };
 
-    if (source_term_exists(sim, "gravity")) {
+    if (source_term_index(sim, "gravity") != sim.compute_source_terms.size()) {
         throw std::runtime_error("Source \"gravity\" already registered.");
     }
 

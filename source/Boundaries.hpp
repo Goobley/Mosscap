@@ -22,6 +22,7 @@ inline void fill_one_bc_impl(const State& state) {
         kernel_name[Axis],
         FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
+            using Cons = Cons<NumDim>;
             constexpr int IM = Momentum<Axis, NumDim>();
             int coord[3] = {ii, ji, ki};
             const int pencil_idx = coord[Axis];
@@ -58,19 +59,24 @@ inline void fill_one_bc_impl(const State& state) {
             auto Q_periodic = QtyView(state.Q, i_periodic);
             auto Q_edge = QtyView(state.Q, i_edge);
 
+            const bool start = (coord[Axis] < ng);
             BoundaryType start_bound, end_bound;
             JasUse(bdry);
+            decltype(bdry.xs_const) const_vals;
             if constexpr (Axis == 0) {
                 start_bound = bdry.xs;
                 end_bound = bdry.xe;
+                const_vals = (start) ? bdry.xs_const : bdry.xe_const;
             } else if constexpr (Axis == 1) {
                 start_bound = bdry.ys;
                 end_bound = bdry.ye;
+                const_vals = (start) ? bdry.ys_const : bdry.ye_const;
             } else {
                 start_bound = bdry.zs;
                 end_bound = bdry.ze;
+                const_vals = (start) ? bdry.zs_const : bdry.ze_const;
             }
-            BoundaryType bound = (coord[Axis] < ng) ? start_bound : end_bound;
+            BoundaryType bound = (start) ? start_bound : end_bound;
 
             if (bound == BoundaryType::Wall) {
                 for (int var = 0; var < state.Q.extent(0); ++var) {
@@ -85,9 +91,24 @@ inline void fill_one_bc_impl(const State& state) {
                 for (int var = 0; var < state.Q.extent(0); ++var) {
                     Q_view(var) = Q_flip(var);
                 }
+            } else if (bound == BoundaryType::SymmetricOutflowDiode) {
+                for (int var = 0; var < state.Q.extent(0); ++var) {
+                    Q_view(var) = Q_flip(var);
+                }
+                const fp_t mom_pre = Q_view(IM);
+                if (start) {
+                    Q_view(IM) = std::min(mom_pre, FP(0.0));
+                } else {
+                    Q_view(IM) = std::max(mom_pre, FP(0.0));
+                }
+                Q_view(I(Cons::Ene)) -= square(Q_view(IM) - mom_pre) / Q_view(I(Cons::Rho));
             } else if (bound == BoundaryType::ZeroGrad) {
                 for (int var = 0; var < state.Q.extent(0); ++var) {
                     Q_view(var) = Q_edge(var);
+                }
+            } else if (bound == BoundaryType::Constant) {
+                for (int var = 0; var < state.Q.extent(0); ++var) {
+                    Q_view(var) = const_vals(var);
                 }
             }
         }

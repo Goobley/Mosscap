@@ -61,6 +61,7 @@ enum class BoundaryType : i32 {
     Wall = 0,
     Periodic,
     Symmetric,
+    SymmetricOutflowDiode,
     ZeroGrad,
     Constant,
     UserFn
@@ -69,6 +70,7 @@ constexpr const char* BoundaryTypeName[] = {
     "wall",
     "periodic",
     "symmetric",
+    "symmetricoutflowdiode",
     "zerograd",
     "constant",
     "userfn"

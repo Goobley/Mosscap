@@ -13,7 +13,7 @@ inline void compute_source_terms(const Simulation& sim) {
     }
 }
 
-inline int source_term_exists(const Simulation& sim, std::string name) {
+inline int source_term_index(const Simulation& sim, std::string name) {
     for (int i = 0; i < sim.compute_source_terms.size(); ++i) {
         if (name == sim.compute_source_terms[i].name) {
             return i;
