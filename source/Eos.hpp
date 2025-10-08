@@ -3,11 +3,6 @@
 
 #include "State.hpp"
 
-struct GammaEs {
-    fp_t gamma_e;
-    fp_t gamma_e_m1;
-};
-
 enum class ReconstructionEdge {
     Centred,
     Left,
@@ -27,73 +22,34 @@ namespace YAML { class Node; };
 
 struct Eos {
     bool is_constant;
-    fp_t Gamma;
-    fp_t Gamma_e; // for conversion between pressure and energy
+    fp_t gamma;
+    fp_t y; // ion_frac
     fp_t avg_mass;
-    Fp3d gamma_e_space;
     Fp3d y_space;
     Fp3d T_space;
-    // Reconstruction
-    Fp3d gamma_e_space_R;
-    Fp3d gamma_e_space_L;
 
     bool init(Simulation& sim, const YAML::Node& config);
 
-    inline bool init_ideal(fp_t gamma, Simulation& sim) {
+    inline bool init_ideal(fp_t gamma_, fp_t ion_frac, Simulation& sim) {
         is_constant = true;
-        Gamma = gamma;
-        Gamma_e = gamma;
+        y = ion_frac;
+        gamma = gamma_;
         return true;
     }
 
     bool init_analytic_lte_h(fp_t gamma, Simulation& sim, bool include_ionisation_energy);
     bool init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& table_path);
-
-    KOKKOS_INLINE_FUNCTION GammaEs get_gamma_e(const CellIndex& idx, const ReconstructionEdge& edge) const {
-        if (is_constant) {
-            return GammaEs {
-                .gamma_e = Gamma_e,
-                .gamma_e_m1 = Gamma_e - FP(1.0)
-            };
-        }
-        const Fp3d* gamma_arrs[3] = {&gamma_e_space, &gamma_e_space_L, &gamma_e_space_R};
-        const fp_t g = (*gamma_arrs[int(edge)])(idx.k, idx.j, idx.i);
-        return GammaEs {
-            .gamma_e = g,
-            .gamma_e_m1 = g - FP(1.0)
-        };
-    }
-};
-
-struct EosView {
-    const Eos& eos;
-    CellIndex idx;
-    ReconstructionEdge edge;
-    KOKKOS_INLINE_FUNCTION EosView(
-        const Eos& eos_,
-        CellIndex idx_,
-        ReconstructionEdge = ReconstructionEdge::Centred
-    ) : eos(eos_), idx(idx_)
-    {}
-
-    KOKKOS_INLINE_FUNCTION fp_t gamma() const {
-        return eos.Gamma;
-    }
-
-    KOKKOS_INLINE_FUNCTION GammaEs get_gamma_e() const {
-        return eos.get_gamma_e(idx, edge);
-    }
 };
 
 template <int NumDim, typename WType>
-KOKKOS_INLINE_FUNCTION fp_t sound_speed(const EosView& eos, const WType& w) {
+KOKKOS_INLINE_FUNCTION fp_t sound_speed(const fp_t& gamma, const WType& w) {
     // NOTE(cmo): This uses the "standard" gamma = c_P / c_V
     using Prim = Prim<NumDim>;
-    return std::sqrt(eos.gamma() * w(I(Prim::Pres)) / w(I(Prim::Rho)));
+    return std::sqrt(gamma * w(I(Prim::Pres)) / w(I(Prim::Rho)));
 }
 
 template <int NumDim, typename QType, typename WType>
-KOKKOS_INLINE_FUNCTION void cons_to_prim(const EosView& eos, const QType& q, const WType& w) {
+KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const QType& q, const WType& w) {
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
     w(I(Prim::Rho)) = q(I(Cons::Rho));
@@ -108,12 +64,11 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const EosView& eos, const QType& q, con
         v2_sum += square(w(I(Prim::Vz)));
     }
     const fp_t e_kin = FP(0.5) * q(I(Cons::Rho)) * v2_sum;
-    const auto g = eos.get_gamma_e();
-    w(I(Prim::Pres)) = g.gamma_e_m1 * ((q(I(Cons::Ene)) - e_kin));
+    w(I(Prim::Pres)) = (gamma - FP(1.0)) * ((q(I(Cons::Ene)) - e_kin));
 }
 
 template <int NumDim, typename WType, typename QType>
-KOKKOS_INLINE_FUNCTION void prim_to_cons(const EosView& eos, const WType& w, const QType& q) {
+KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const WType& w, const QType& q) {
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
     q(I(Cons::Rho)) = w(I(Prim::Rho));
@@ -128,13 +83,12 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const EosView& eos, const WType& w, con
         v2_sum += square(w(I(Prim::Vz)));
     }
     const fp_t e_kin = FP(0.5) * w(I(Prim::Rho)) * v2_sum;
-    const auto g = eos.get_gamma_e();
-    const fp_t e_int = w(I(Prim::Pres)) / g.gamma_e_m1;
+    const fp_t e_int = w(I(Prim::Pres)) / (gamma - FP(1.0));
     q(I(Cons::Ene)) = e_int + e_kin;
 }
 
 template <int Axis, int NumDim, typename WType, typename FType>
-KOKKOS_INLINE_FUNCTION void prim_to_flux(const EosView& eos, const WType& w, const FType& f) {
+KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const WType& w, const FType& f) {
     constexpr int IV1 = Velocity<Axis, NumDim>();
     // constexpr int IV2 = Velocity<(Axis + 1) % 3>();
     // constexpr int IV3 = Velocity<(Axis + 2) % 3>();
@@ -161,8 +115,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const EosView& eos, const WType& w, con
 
     f(IM1) += w(I(Prim::Pres));
 
-    const auto g = eos.get_gamma_e();
-    const fp_t e_tot = w(I(Prim::Pres)) / g.gamma_e_m1 + e_kin;
+    const fp_t e_tot = w(I(Prim::Pres)) / (gamma - FP(1.0)) + e_kin;
     f(I(Cons::Ene)) = (e_tot + w(I(Prim::Pres))) * w(IV1);
 }
 

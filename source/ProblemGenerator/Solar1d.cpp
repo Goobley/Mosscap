@@ -84,10 +84,8 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
 
                 if (bound == BoundaryType::UserFn) {
                     using Prim = Prim<NumDim>;
-                    auto ev = EosView(eos, i_edge);
                     yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
-                    cons_to_prim<NumDim>(ev, Q_prev, w);
-                    auto g = ev.get_gamma_e();
+                    cons_to_prim<NumDim>(eos.gamma, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
                     fp_t p = w(I(Prim::Pres)) - FP(0.5) * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * g_x * state.dx;
                     // const fp_t dP_dz = h_mass * gravity;
@@ -98,7 +96,7 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
                     Q_view(I(Cons::Rho)) = p / w(I(Prim::Pres)) * w(I(Prim::Rho));
                     Q_view(IM) = FP(0.0);
                     if (time >= driver.start_time) {
-                        const fp_t cs = sound_speed<num_dim>(EosView(eos, idx), w);
+                        const fp_t cs = sound_speed<num_dim>(eos.gamma, w);
                         const fp_t vbase = driver.amplitude * cs * std::sin((FP(2.0) * M_PI) / driver.period * time);
                         Q_view(IM) = Q_view(I(Cons::Rho)) * vbase;
                     }
@@ -106,7 +104,7 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
                     // if (Q_edge(IM) > FP(0.0)) {
                     //     Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     // }
-                    Q_view(I(Cons::Ene)) = p / g.gamma_e_m1 + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - FP(1.0)) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
                     // for (int var = 0; var < state.Q.extent(0); ++var) {
                     //     Q_view(var) = Q_edge(var);
                     // }
@@ -169,10 +167,8 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
 
                 if (bound == BoundaryType::UserFn) {
                     using Prim = Prim<NumDim>;
-                    auto ev = EosView(eos, i_edge);
                     yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
-                    cons_to_prim<NumDim>(ev, Q_prev, w);
-                    auto g = ev.get_gamma_e();
+                    cons_to_prim<NumDim>(eos.gamma, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
                     fp_t p = w(I(Prim::Pres)) + FP(0.5) * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * g_x * state.dx;
                     // const fp_t dP_dz = h_mass * gravity;
@@ -186,7 +182,7 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
                     if (Q_edge(IM) > FP(0.0)) {
                         Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     }
-                    Q_view(I(Cons::Ene)) = p / g.gamma_e_m1 + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - FP(1.0)) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
                     // for (int var = 0; var < state.Q.extent(0); ++var) {
                     //     Q_view(var) = Q_edge(var);
                     // }
@@ -290,7 +286,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
     nc.read(base_nh, "base_nhtot");
 
     const bool ideal = sim.eos.is_constant;
-    const bool ion_frac = get_or<fp_t>(config, "problem.ion_frac", FP(0.0));
+    const bool ion_frac = ideal ? sim.eos.y;
     fmt::println("Is Ideal: {}", ideal);
 
     const auto& state = sim.state;
@@ -362,7 +358,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
     lte_eos.init(include_ionisation_energy);
     for (int i = sz.ng; i < sz.xc; ++i) {
         rho(i) = nhtot(i) * mean_mass;
-        eint(i) = lte_eos.internal_energy(eos.Gamma, eos.avg_mass, rho(i), y(i), temperature(i));
+        eint(i) = lte_eos.internal_energy(eos.gamma, eos.avg_mass, rho(i), y(i), temperature(i));
     }
 
     {

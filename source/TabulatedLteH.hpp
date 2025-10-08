@@ -150,9 +150,9 @@ struct TabulatedLteH {
 
                 // P = nh (1 + y) kB T
                 const fp_t pressure = rho * (k_B / h_mass) * (FP(1.0) + s.y) * T;
-                const fp_t new_eint = pressure / (eos.Gamma - FP(1.0)) + rho * (chi_H / h_mass) * s.y;
+                const fp_t new_eint = pressure / (eos.gamma - FP(1.0)) + rho * (chi_H / h_mass) * s.y;
 
-                eos.gamma_e_space(k, j, i) = FP(1.0) + pressure / (new_eint);
+                // eos.gamma_e_space(k, j, i) = FP(1.0) + pressure / (new_eint);
                 // Q(I(Cons::Ene), k, j, i) = new_eint + e_kin;
                 Q(I(Cons::Ene), k, j, i) += delta_eint;
             }

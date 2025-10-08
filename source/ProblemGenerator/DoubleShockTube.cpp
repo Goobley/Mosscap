@@ -34,7 +34,7 @@ void double_shock_tube_impl(Simulation& sim, int axis) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<NumDim>(EosView(eos, idx), w, QtyView(state.Q, idx));
+            prim_to_cons<NumDim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
 }

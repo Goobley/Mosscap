@@ -40,7 +40,7 @@ MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<num_dim>(EosView(eos, idx), w, QtyView(state.Q, idx));
+            prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", FP(0.2));

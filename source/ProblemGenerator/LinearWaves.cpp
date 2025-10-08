@@ -26,12 +26,10 @@ void linear_waves_impl(Simulation& sim, fp_t amp, fp_t vflow) {
                 .j = j,
                 .k = k
             };
-            auto ev = EosView(eos, idx);
-            auto g = ev.get_gamma_e();
             w(I(Prim::Rho)) = FP(1.0) + amp * sx;
             w(I(Prim::Vx)) = FP(1.0) + amp * sx;
-            w(I(Prim::Pres)) = FP(1.0) / g.gamma_e;
-            prim_to_cons<NumDim>(ev, w, QtyView(state.Q, idx));
+            w(I(Prim::Pres)) = FP(1.0) / eos.gamma;
+            prim_to_cons<NumDim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
 }

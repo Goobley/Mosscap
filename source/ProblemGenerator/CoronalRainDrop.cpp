@@ -76,10 +76,8 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
 
                 if (bound == BoundaryType::UserFn) {
                     using Prim = Prim<NumDim>;
-                    auto ev = EosView(eos, i_edge);
                     yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
-                    cons_to_prim<NumDim>(ev, Q_prev, w);
-                    auto g = ev.get_gamma_e();
+                    cons_to_prim<NumDim>(eos.gamma, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
                     fp_t p = w(I(Prim::Pres)) - FP(0.5) * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * driver.g_y * state.dx;
                     // add that contribution to rho and eint
@@ -93,7 +91,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                     //     Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     // }
                     // TODO(cmo): This isn't technically correct in the 2D case as there could be x-momentum too
-                    Q_view(I(Cons::Ene)) = p / g.gamma_e_m1 + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - FP(1.0))+ square(Q_view(IM)) / Q_view(I(Cons::Rho));
 
                     // const fp_t prev_mom2 = square(Q_view(IM));
                     // Q_view(IM) = -(Q_flip(IM) / Q_flip(I(Cons::Rho))) * Q_view(I(Cons::Rho));
@@ -153,10 +151,8 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
 
                 if (bound == BoundaryType::UserFn) {
                     using Prim = Prim<NumDim>;
-                    auto ev = EosView(eos, i_edge);
                     yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
-                    cons_to_prim<NumDim>(ev, Q_prev, w);
-                    auto g = ev.get_gamma_e();
+                    cons_to_prim<NumDim>(eos.gamma, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
                     fp_t p = w(I(Prim::Pres)) + FP(0.5) * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * driver.g_y * state.dx;
                     // const fp_t dP_dz = h_mass * gravity;
@@ -170,7 +166,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                     // if (Q_edge(IM) > FP(0.0)) {
                     //     Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     // }
-                    Q_view(I(Cons::Ene)) = p / g.gamma_e_m1 + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - FP(1.0)) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
                     // for (int var = 0; var < state.Q.extent(0); ++var) {
                     //     Q_view(var) = Q_edge(var);
                     // }
@@ -274,7 +270,7 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<num_dim>(EosView(eos, idx), w, QtyView(state.Q, idx));
+            prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", FP(400.0));

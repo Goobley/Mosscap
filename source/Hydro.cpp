@@ -20,7 +20,7 @@ void global_cons_to_prim_impl(const Simulation& sim) {
             };
             auto WView = QtyView(state.W, idx);
             auto QView = QtyView(state.Q, idx);
-            cons_to_prim<NumDim>(EosView(eos, idx), QView, WView);
+            cons_to_prim<NumDim>(eos.gamma, QView, WView);
         }
     );
     Kokkos::fence();
@@ -86,23 +86,6 @@ void compute_recon_impl(const Simulation& sim) {
                     recon.RR(var, idx.k, idx.j, idx.i)
                 );
             }
-            if (!eos.is_constant) {
-                Fp4d GammaE(
-                    "GammaE 4D",
-                    eos.gamma_e_space.data(),
-                    1,
-                    eos.gamma_e_space.extent(0),
-                    eos.gamma_e_space.extent(1),
-                    eos.gamma_e_space.extent(2)
-                );
-                reconstruct<reconstruction, slope_limiter, Axis>(
-                    GammaE,
-                    0,
-                    idx,
-                    eos.gamma_e_space_L(idx.k, idx.j, idx.i),
-                    eos.gamma_e_space_R(idx.k, idx.j, idx.i)
-                );
-            }
         }
     );
     Kokkos::fence();
@@ -149,13 +132,8 @@ void compute_flux_impl(const Simulation& sim) {
             QtyView rL_view(recon.RR, idxm);
             QtyView rR_view(recon.RL, idx);
             QtyView flux_view(flux, idx);
-            EosView eos_L(eos, idxm, ReconstructionEdge::Right);
-            EosView eos_R(eos, idx, ReconstructionEdge::Left);
             riemann_flux<rsolver, Axis, NumDim>(
-                ReconstructedEos{
-                    .L = eos_L,
-                    .R = eos_R
-                },
+                eos,
                 rL_view,
                 rR_view,
                 flux_view
@@ -190,9 +168,9 @@ make_flux_impl() {
 }
 
 template <int NumDim, typename WType>
-KOKKOS_INLINE_FUNCTION void dt_reducer(const EosView& eos, const WType& w, const fp_t dx, fp_t& running_dt) {
+KOKKOS_INLINE_FUNCTION void dt_reducer(const Eos& eos, const WType& w, const fp_t dx, fp_t& running_dt) {
     using Prim = Prim<NumDim>;
-    const fp_t cs = sound_speed<NumDim>(eos, w);
+    const fp_t cs = sound_speed<NumDim>(eos.gamma, w);
     fp_t vel2 = square(w(I(Prim::Vx)));
     if (NumDim > 1) {
         vel2 += square(w(I(Prim::Vy)));
@@ -221,9 +199,8 @@ f64 compute_dt_impl(const Simulation& sim) {
                 .j = j,
                 .k = k
             };
-            EosView eosv(eos, idx);
-            cons_to_prim<NumDim>(eosv, QtyView(state.Q, idx), w);
-            dt_reducer<NumDim>(eosv, w, state.dx, running_dt);
+            cons_to_prim<NumDim>(eos.gamma, QtyView(state.Q, idx), w);
+            dt_reducer<NumDim>(eos, w, state.dx, running_dt);
         },
         Kokkos::Min<fp_t>(dt_max)
     );
@@ -324,10 +301,10 @@ void select_hydro_fns(Simulation& sim) {
 }
 
 void compute_hydro_fluxes(const Simulation& sim) {
+    global_cons_to_prim(sim);
     if (sim.update_eos) {
         sim.update_eos(sim);
     }
-    global_cons_to_prim(sim);
     sim.flux_fns.recon_x(sim);
     sim.flux_fns.flux_x(sim);
 

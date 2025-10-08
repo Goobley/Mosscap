@@ -14,7 +14,8 @@ bool Eos::init(Simulation& sim, const YAML::Node& config) {
     switch (type) {
         case EosType::Ideal: {
             fp_t gamma = get_or<fp_t>(config, "eos.gamma", FP(1.4));
-            return init_ideal(gamma, sim);
+            fp_t ion_frac = get_or<fp_t>(config, "eos.ion_frac", FP(1.0));
+            return init_ideal(gamma, ion_frac, sim);
         } break;
         case EosType::AnalyticLteH: {
             fp_t gamma = get_or<fp_t>(config, "eos.gamma", FP(5.0) / FP(3.0));
@@ -33,12 +34,8 @@ bool Eos::init(Simulation& sim, const YAML::Node& config) {
 
 bool Eos::init_analytic_lte_h(fp_t gamma, Simulation& sim, bool include_ionisation_energy) {
     is_constant = false;
-    Gamma = gamma;
-    Gamma_e = -gamma;
+    gamma = gamma;
     const auto& sz = sim.state.sz;
-    gamma_e_space = Fp3d("gamma_e_space", sz.zc, sz.yc, sz.xc);
-    gamma_e_space_R = Fp3d("gamma_e_space_R", sz.zc, sz.yc, sz.xc);
-    gamma_e_space_L = Fp3d("gamma_e_space_L", sz.zc, sz.yc, sz.xc);
     y_space = Fp3d("y_space", sz.zc, sz.yc, sz.xc);
     T_space = Fp3d("T_space", sz.zc, sz.yc, sz.xc);
 
@@ -60,15 +57,11 @@ bool Eos::init_analytic_lte_h(fp_t gamma, Simulation& sim, bool include_ionisati
 
 bool Eos::init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& table_path) {
     is_constant = false;
-    Gamma = gamma;
-    Gamma_e = -gamma;
+    gamma = gamma;
 
     const auto& sz = sim.state.sz;
-    gamma_e_space = Fp3d("gamma_e_space", sz.zc, sz.yc, sz.xc);
     y_space = Fp3d("y_space", sz.zc, sz.yc, sz.xc);
     T_space = Fp3d("T_space", sz.zc, sz.yc, sz.xc);
-    gamma_e_space_R = Fp3d("gamma_e_space_R", sz.zc, sz.yc, sz.xc);
-    gamma_e_space_L = Fp3d("gamma_e_space_L", sz.zc, sz.yc, sz.xc);
 
     TabulatedLteH lte_h;
     lte_h.init(table_path);

@@ -52,7 +52,7 @@ MOSSCAP_NEW_PROBLEM(quadrants_3) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<num_dim>(EosView(eos, idx), w, QtyView(state.Q, idx));
+            prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
 

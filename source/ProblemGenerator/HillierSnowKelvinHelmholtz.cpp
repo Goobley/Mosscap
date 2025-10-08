@@ -35,7 +35,7 @@ static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl) {
             };
             const auto& w = QtyView(W, idx);
 
-            const fp_t temperature = eos.Gamma * w(I(Prim::Pres)) / w(I(Prim::Rho));
+            const fp_t temperature = eos.gamma * w(I(Prim::Pres)) / w(I(Prim::Rho));
             // fp_t loss = (FP(1.0) - square(std::tanh(std::log10(temperature * inv_T_peak) * (FP(0.5) * M_PI) * FP(5.0)))) / rl.tau_rad;
             // loss *= square(w(I(Prim::Rho)));
             fp_t loss = FP(1.0) / square(std::cosh(std::log10(temperature * inv_T_peak)) * (FP(1.0) / FP(0.04) * M_PIf)) * inv_timescale;
@@ -71,7 +71,7 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
     const fp_t random_scale = get_or<fp_t>(config, "problem.random_scale", FP(0.01));
     const fp_t rho_h = FP(100.0);
     const fp_t rho_l = FP(1.0);
-    const fp_t pressure = FP(1.0) / eos.Gamma;
+    const fp_t pressure = FP(1.0) / eos.gamma;
 
     dex_parallel_for(
         "Setup problem",
@@ -104,7 +104,7 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<num_dim>(EosView(eos, idx), w, QtyView(state.Q, idx));
+            prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
 
@@ -121,7 +121,7 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
             .j=0,
             .k=0
         };
-        prim_to_cons<num_dim>(EosView(eos, idx), w, state.boundaries.ys_const);
+        prim_to_cons<num_dim>(eos.gamma, w, state.boundaries.ys_const);
     }
 
     bool enable_rad_loss = get_or<bool>(config, "problem.enable_rad_loss", false);

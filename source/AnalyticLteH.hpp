@@ -71,7 +71,7 @@ struct AnalyticLteH {
                 const fp_t e_kin = FP(0.5) * mom2_sum / rho;
                 const fp_t eint = Q(I(Cons::Ene), k, j, i) - e_kin;
 
-                const fp_t e_to_T = (eos.Gamma - FP(1.0)) / (rho * (k_B / h_mass) * inv_avg_mass);
+                const fp_t e_to_T = (eos.gamma - FP(1.0)) / (rho * (k_B / h_mass) * inv_avg_mass);
                 auto temp_from_y = [&](fp_t y) {
                     return e_to_T / (FP(1.0) + y) * (eint - ionisation_e * y * rho * (chi_H / h_mass) * inv_avg_mass);
                 };
@@ -114,7 +114,7 @@ struct AnalyticLteH {
 
                 eos.y_space(k, j, i) = y;
                 eos.T_space(k, j, i) = temp;
-                eos.gamma_e_space(k, j, i) = FP(1.0) + pressure / eint;
+                // eos.gamma_e_space(k, j, i) = FP(1.0) + pressure / eint;
             }
         );
         Kokkos::fence();
