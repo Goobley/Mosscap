@@ -6,6 +6,8 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
+using namespace Mosscap;
+
 struct BcParams {
     fp_t g_y;
 };

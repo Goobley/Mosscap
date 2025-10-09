@@ -5,6 +5,8 @@
 #include "State.hpp"
 #include "Eos.hpp"
 
+namespace Mosscap {
+
 enum class RiemannSolver {
     Rusanov = 0,
     Hll,
@@ -171,6 +173,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const QtyView& wL, cons
     }
     flux(IM) += sM * cp;
     flux(I(Cons::Ene)) += sM * cp * aM;
+}
+
 }
 
 #else

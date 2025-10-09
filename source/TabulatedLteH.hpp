@@ -4,6 +4,8 @@
 #include "Simulation.hpp"
 #include "YAKL_netcdf.h"
 
+namespace Mosscap {
+
 struct TabulatedLteH {
     struct LogSpace {
         fp_t start;
@@ -160,6 +162,8 @@ struct TabulatedLteH {
         Kokkos::fence();
     }
 };
+
+}
 
 #else
 #endif

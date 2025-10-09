@@ -5,6 +5,8 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
+using namespace Mosscap;
+
 MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
     MOSSCAP_PROBLEM_PREAMBLE(shock_tube_2d);
     using Prim = Prim<num_dim>;

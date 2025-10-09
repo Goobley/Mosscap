@@ -4,6 +4,8 @@
 #include "Simulation.hpp"
 #include "yaml-cpp/yaml.h"
 
+namespace Mosscap {
+
 void setup_grid(Simulation& sim, YAML::Node& config) {
     auto& sz = sim.state.sz;
     sz.ng = get_or<int>(config, "grid.num_ghost", 3);
@@ -209,6 +211,8 @@ Simulation setup_sim(YAML::Node& config) {
     sim.write_output(sim);
 
     return sim;
+}
+
 }
 
 #else

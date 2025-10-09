@@ -6,6 +6,8 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
+using namespace Mosscap;
+
 MOSSCAP_NEW_PROBLEM(kelvin_helmholtz) {
     MOSSCAP_PROBLEM_PREAMBLE(kelvin_helmholtz);
 

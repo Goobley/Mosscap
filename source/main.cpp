@@ -10,6 +10,8 @@
 #include "SetupModules.hpp"
 #include "SourceTerms.hpp"
 
+namespace Mosscap {
+
 void write_output_inner(const Simulation& sim, int i, fp_t time) {
     global_cons_to_prim(sim);
     yakl::SimpleNetCDF nc;
@@ -21,7 +23,11 @@ void write_output_inner(const Simulation& sim, int i, fp_t time) {
     nc.write(time, "time");
 }
 
+}
+
 int main(int argc, char** argv) {
+    using namespace Mosscap;
+
     argparse::ArgumentParser program("Mosscap", GIT_HASH);
     program
         .add_argument("--config")

@@ -3,6 +3,8 @@
 #include <map>
 #include <tuple>
 
+namespace Mosscap {
+
 template <int NumDim>
 void global_cons_to_prim_impl(const Simulation& sim) {
     const auto& state = sim.state;
@@ -321,4 +323,6 @@ void compute_hydro_fluxes(const Simulation& sim) {
 
 f64 compute_dt(const Simulation& sim) {
     return sim.compute_dt(sim);
+}
+
 }

@@ -3,6 +3,8 @@
 
 #include "Types.hpp"
 
+namespace Mosscap {
+
 enum class Reconstruction {
     Fog = 0, // first order Godunov
     Muscl, // piecewise linear method
@@ -120,15 +122,26 @@ struct Stencil {
     }
 };
 
+/**
+ * Compute the flux limited slope using a MUSCL-like scheme. i.e. phi(r)
+ * (u_{i+1} - u_i) with um = (u_i - u_{i-1}), up = (u_{i+1} - u_i), and r =
+ * um/up. phi(r) is the chosen flux/slope-limiter scheme.
+ */
 template <SlopeLimiter scheme>
-KOKKOS_INLINE_FUNCTION fp_t slope_limiter(const fp_t a, const fp_t b) {
+KOKKOS_INLINE_FUNCTION fp_t slope_limiter(const fp_t um, const fp_t up) {
     using std::copysign;
     if constexpr (scheme == SlopeLimiter::VanLeer) {
-        return (a * b > FP(0.0)) ? FP(2.0) * a * b / (a + b) : FP(0.0);
+        // phi(r) = 2r / (1 + r) but monotonic
+        return (um * up > FP(0.0)) ? FP(2.0) * um * up / (um + up) : FP(0.0);
     } else if constexpr (scheme == SlopeLimiter::MonotonizedCentral) {
-        return (copysign(FP(1.0), a) + copysign(FP(1.0), b)) * std::min(std::abs(a), std::min(FP(0.25) * std::abs(a + b), std::abs(b)));
+        // phi(r) = max(0, min(2r, 0.5 * (1 + r), 2)). The term in the min is
+        // multiplied through by up and sign terms implement the monotonicity
+        // (and the factor of 2 that needs to multiply the second term)
+        return (copysign(FP(1.0), um) + copysign(FP(1.0), up)) * std::min(std::abs(um), std::min(FP(0.25) * std::abs(um + up), std::abs(up)));
     }  else if constexpr (scheme == SlopeLimiter::Minmod) {
-        return FP(0.5) * (copysign(FP(1.0), a) + copysign(FP(1.0), b)) * std::min(std::abs(a), std::abs(b));
+        // minmod(a, b) = whichever of a or b has the small magnitude, or 0 if a
+        // * b < 0. The copysign implements the a * b < 0 term.
+        return FP(0.5) * (copysign(FP(1.0), um) + copysign(FP(1.0), up)) * std::min(std::abs(um), std::abs(up));
     }
 
     return FP(0.0);
@@ -158,8 +171,10 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     Stencil<2> s;
     s.fill<Axis>(W, var, idx);
 
+    constexpr bool do_clamp = false;
+
     auto limited_slope = [](const Stencil<2>& s, const int idx) {
-        return slope_limiter<sl>(s.at(idx + 1) - s.at(idx), s.at(idx) - s.at(idx - 1));
+        return slope_limiter<sl>(s.at(idx) - s.at(idx - 1), s.at(idx + 1) - s.at(idx));
     };
 
     const fp_t dw_m = limited_slope(s, -1);
@@ -170,16 +185,31 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     wL = FP(0.5) * (s.at(-1) + s.at(0)) - (FP(1.0) / FP(6.0)) * (dw_0 - dw_m);
     wR = FP(0.5) * (s.at(0) + s.at(1)) - (FP(1.0) / FP(6.0)) * (dw_p - dw_0);
 
-    // NOTE(cmo): Enforce monotonicity
+    if constexpr (do_clamp) {
+        // Following Castro: make sure in between adjacent centred values --
+        // this is likely unnecessary here as we only use the local slopes (no
+        // second order gradients when computing the limited terms)
+        fp_t lower = std::min(s.at(0), s.at(-1));
+        fp_t upper = std::max(s.at(0), s.at(-1));
+        wL = (wL < lower) ? lower : ((wL > upper) ? upper : wL);
+
+        lower = std::min(s.at(0), s.at(1));
+        upper = std::max(s.at(0), s.at(1));
+        wR = (wR < lower) ? lower : ((wR > upper) ? upper : wR);
+    }
+
+    // NOTE(cmo): Enforce monotonicity -- following McCorquodale & Collela
+    // (2011) for the latter cases without flattening (based on Collela & Sekora
+    // 2008) as written in Castro (Almgren+ 2010)
     if ((wR - s.at(0)) * (s.at(0) - wL) <= FP(0.0)) {
         wL = s.at(0);
         wR = s.at(0);
     }
-
-    if (-square(wR - wL) > FP(6.0) * (wR - wL) * (s.at(0) - FP(0.5) * (wL + wR))) {
+    if (std::abs(wR - s.at(0)) >= FP(2.0) * std::abs(wL - s.at(0))) {
         wR = FP(3.0) * s.at(0) - FP(2.0) * wL;
+
     }
-    if (square(wR - wL) < FP(6.0) * (wR - wL) * (s.at(0) - FP(0.5) * (wL + wR))) {
+    if (std::abs(wL - s.at(0)) >= FP(2.0) * std::abs(wR - s.at(0))) {
         wL = FP(3.0) * s.at(0) - FP(2.0) * wR;
     }
 }
@@ -243,6 +273,7 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     wR = (eno0 * alpha0 + eno1 * alpha1 + eno2 * alpha2) / denom;
 }
 
+}
 
 #else
 #endif

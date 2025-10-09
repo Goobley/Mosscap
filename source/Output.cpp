@@ -4,6 +4,8 @@
 #include "GitVersion.hpp"
 #include <fmt/core.h>
 
+namespace Mosscap {
+
 void ncwrap (int ierr, int line) {
     if (ierr != NC_NOERR) {
         printf("NetCDF Error writing attributes at Output.cpp:%d\n", line);
@@ -268,4 +270,6 @@ bool write_output(Simulation& sim) {
     nc.close();
 
     return true;
+}
+
 }

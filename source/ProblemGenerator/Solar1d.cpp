@@ -8,6 +8,8 @@
 // NOTE(cmo): This is a 1d problem
 static constexpr int num_dim = 1;
 
+using namespace Mosscap;
+
 // We assume a fully H atmosphere with LTE ionisation
 
 struct OurWaveDriver {
@@ -286,7 +288,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
     nc.read(base_nh, "base_nhtot");
 
     const bool ideal = sim.eos.is_constant;
-    const bool ion_frac = ideal ? sim.eos.y;
+    const bool ion_frac = ideal ? sim.eos.y : FP(1.0);
     fmt::println("Is Ideal: {}", ideal);
 
     const auto& state = sim.state;

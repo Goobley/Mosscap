@@ -5,6 +5,8 @@
 
 #include "Types.hpp"
 
+namespace Mosscap {
+
 template <int NumDim = 1>
 struct Prim {
     static constexpr i32 Rho = 0;
@@ -157,6 +159,8 @@ struct Fluxes {
 struct Sources {
     Fp4d S;
 };
+
+}
 
 #else
 #endif

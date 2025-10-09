@@ -3,6 +3,8 @@
 
 #include "Simulation.hpp"
 
+namespace Mosscap {
+
 inline void zero_source_terms(const Simulation& sim) {
     sim.sources.S = FP(0.0);
 }
@@ -20,6 +22,8 @@ inline int source_term_index(const Simulation& sim, std::string name) {
         }
     }
     return sim.compute_source_terms.size();
+}
+
 }
 
 #else

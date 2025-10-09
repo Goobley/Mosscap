@@ -6,6 +6,8 @@
 #include "TabulatedLteH.hpp"
 #include "AnalyticLteH.hpp"
 
+namespace Mosscap {
+
 bool Eos::init(Simulation& sim, const YAML::Node& config) {
     std::string eos_str = get_or<std::string>(config, "eos.type", "ideal");
     EosType type = find_associated_enum<EosType>(EosTypeName, NumEosType, eos_str);
@@ -77,4 +79,6 @@ bool Eos::init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& t
         }
     };
     return true;
+}
+
 }

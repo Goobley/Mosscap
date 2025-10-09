@@ -6,6 +6,8 @@
 #include "Simulation.hpp"
 #include <fmt/core.h>
 
+namespace Mosscap {
+
 template <int Axis, int NumDim>
 inline void fill_one_bc_impl(const State& state) {
     static_assert(Axis < 3, "What are you doing?");
@@ -144,6 +146,8 @@ inline void fill_bcs(const Simulation& sim) {
     if (sim.user_bc) {
         sim.user_bc(sim);
     }
+}
+
 }
 
 #else

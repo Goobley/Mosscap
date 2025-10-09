@@ -2,6 +2,8 @@
 #include "../Hydro.hpp"
 #include "../MosscapConfig.hpp"
 
+using namespace Mosscap;
+
 template <int NumDim>
 void double_shock_tube_impl(Simulation& sim, int axis) {
     using Prim = Prim<NumDim>;

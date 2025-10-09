@@ -4,6 +4,8 @@
 #include "Types.hpp"
 #include "Simulation.hpp"
 
+namespace Mosscap {
+
 template <typename T>
 KOKKOS_INLINE_FUNCTION T saha_rhs_H(T temp) {
     // NOTE(cmo): From sympy
@@ -124,6 +126,8 @@ struct AnalyticLteH {
 
 
 };
+
+}
 
 #else
 #endif

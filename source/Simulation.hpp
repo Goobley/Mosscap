@@ -11,6 +11,8 @@
 
 #include <vector>
 
+namespace Mosscap {
+
 struct NumericalSchemes {
     Reconstruction reconstruction;
     SlopeLimiter slope_limit;
@@ -56,6 +58,8 @@ struct Simulation {
     NumericalSchemes scheme;
     OutputConfig out_cfg;
 };
+
+}
 
 #else
 #endif

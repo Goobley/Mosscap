@@ -5,6 +5,8 @@
 #include "Config.hpp"
 #include "LoopUtils.hpp"
 
+namespace Mosscap {
+
 constexpr auto memDevice = yakl::memDevice;
 // constexpr auto memDevice = yakl::memHost;
 typedef yakl::Array<fp_t, 1, memDevice> Fp1d;
@@ -105,6 +107,7 @@ constexpr KOKKOS_INLINE_FUNCTION T cube(const T t) {
     return t * t * t;
 }
 
+}
 
 #else
 #endif

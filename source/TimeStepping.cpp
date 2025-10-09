@@ -4,6 +4,8 @@
 #include "Boundaries.hpp"
 #include "SourceTerms.hpp"
 
+namespace Mosscap {
+
 template <int NumDim, typename Lambda>
 void integrate_flux(const std::string& step_name, const GridSize& sz, const Fluxes& flux, const Lambda& updater) {
     int nx = sz.xc - 2 * sz.ng;
@@ -295,6 +297,7 @@ bool TimeStepper<TimeStepScheme::SspRk4>::init(Simulation& sim) {
     return true;
 }
 
+
 void select_timestepper(Simulation& sim) {
     TimeStepScheme scheme = sim.scheme.time_stepper;
     switch (scheme) {
@@ -308,4 +311,6 @@ void select_timestepper(Simulation& sim) {
             TimeStepper<TimeStepScheme::SspRk4>::init(sim);
         } break;
     }
+}
+
 }

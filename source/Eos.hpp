@@ -3,6 +3,10 @@
 
 #include "State.hpp"
 
+namespace YAML { class Node; };
+
+namespace Mosscap {
+
 enum class ReconstructionEdge {
     Centred,
     Left,
@@ -12,13 +16,13 @@ enum class ReconstructionEdge {
 enum class EosType {
     Ideal = 0,
     AnalyticLteH,
-    TabulatedLteH
+    TabulatedLteH,
+    DexrtEos,
 };
 constexpr const char* EosTypeName[] = {"ideal", "analyticlteh", "tabulatedlteh"};
 constexpr int NumEosType = sizeof(EosTypeName) / sizeof(EosTypeName[0]);
 
 struct Simulation;
-namespace YAML { class Node; };
 
 struct Eos {
     bool is_constant;
@@ -39,6 +43,7 @@ struct Eos {
 
     bool init_analytic_lte_h(fp_t gamma, Simulation& sim, bool include_ionisation_energy);
     bool init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& table_path);
+    bool init_dexrt(fp_t gamma, Simulation& sim);
 };
 
 template <int NumDim, typename WType>
@@ -64,6 +69,7 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const QType& q, const
         v2_sum += square(w(I(Prim::Vz)));
     }
     const fp_t e_kin = FP(0.5) * q(I(Cons::Rho)) * v2_sum;
+    // NOTE(cmo): Will probably need to bring EosView back in some capacity to handle ionisation energy
     w(I(Prim::Pres)) = (gamma - FP(1.0)) * ((q(I(Cons::Ene)) - e_kin));
 }
 
@@ -119,6 +125,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const WType& w, const
     f(I(Cons::Ene)) = (e_tot + w(I(Prim::Pres))) * w(IV1);
 }
 
+}
 
 #else
 #endif

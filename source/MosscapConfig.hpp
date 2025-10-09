@@ -8,6 +8,8 @@
 #include <string>
 #include <algorithm>
 
+namespace Mosscap {
+
 namespace impl
 {
     // https://stackoverflow.com/a/59522794
@@ -118,6 +120,8 @@ T find_associated_enum(const char* const* names, int num_names, std::string to_c
     }
 
     throw std::runtime_error(fmt::format("Unable to find associated key in \"{}\" for \"{}\".", type_name<T>(), to_compare));
+}
+
 }
 
 #else

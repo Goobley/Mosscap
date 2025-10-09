@@ -7,6 +7,8 @@
 #include "../Simulation.hpp"
 #include "../JasPP.hpp"
 
+namespace Mosscap {
+
 template <typename T>
 struct DispatchFactory {
     typedef std::function<void(T&, YAML::Node&)> Callable;
@@ -34,6 +36,8 @@ inline DispatchFactory<Simulation>& get_problem_generator() {
     // NOTE(cmo): This is a Meyer's singleton, it should be available at static init time (i.e. before main)
     static DispatchFactory<Simulation> factory;
     return factory;
+}
+
 }
 
 #define MOSSCAP_PROB_FN_NAME(PROB_NAME) JasConcat(config_, PROB_NAME)

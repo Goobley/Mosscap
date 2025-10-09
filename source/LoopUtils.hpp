@@ -9,6 +9,8 @@
 // NOTE(cmo): Define the line below to swap to the default loop being over Kokkos::TeamPolicy
 // #define DEX_BALANCE_TEAM_WORK
 
+namespace Mosscap {
+
 template <int N>
 struct FlatLoop {
     Kokkos::Array<i32, N> bounds;
@@ -85,16 +87,89 @@ inline TeamWorkDivision balance_parallel_work_division(const BalanceLoopArgs<N>&
     };
 }
 
-template <int N, class Lambda>
-KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, N>& arr);
+template <class Lambda>
+KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 1>& arr) {
+    closure(arr[0]);
+}
 
+template <class Lambda>
+KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 2>& arr) {
+    closure(arr[0], arr[1]);
+}
 
-template <int N, class Lambda, typename T>
+template <class Lambda>
+KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 3>& arr) {
+    closure(arr[0], arr[1], arr[2]);
+}
+
+template <class Lambda>
+KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 4>& arr) {
+    closure(arr[0], arr[1], arr[2], arr[3]);
+}
+
+template <class Lambda>
+KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 5>& arr) {
+    closure(arr[0], arr[1], arr[2], arr[3], arr[4]);
+}
+
+template <class Lambda>
+KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 6>& arr) {
+    closure(arr[0], arr[1], arr[2], arr[3], arr[4], arr[5]);
+}
+
+template <class Lambda, typename T>
 KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
     const Lambda& closure,
-    const Kokkos::Array<i32, N>& arr,
+    const Kokkos::Array<i32, 1>& arr,
     T& ref
-);
+) {
+    closure(arr[0], ref);
+}
+
+template <class Lambda, typename T>
+KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
+    const Lambda& closure,
+    const Kokkos::Array<i32, 2>& arr,
+    T& ref
+) {
+    closure(arr[0], arr[1], ref);
+}
+
+template <class Lambda, typename T>
+KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
+    const Lambda& closure,
+    const Kokkos::Array<i32, 3>& arr,
+    T& ref
+) {
+    closure(arr[0], arr[1], arr[2], ref);
+}
+
+template <class Lambda, typename T>
+KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
+    const Lambda& closure,
+    const Kokkos::Array<i32, 4>& arr,
+    T& ref
+) {
+    closure(arr[0], arr[1], arr[2], arr[3]);
+}
+
+template <class Lambda, typename T>
+KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
+    const Lambda& closure,
+    const Kokkos::Array<i32, 5>& arr,
+    T& ref
+) {
+    closure(arr[0], arr[1], arr[2], arr[3], arr[4], ref);
+}
+
+template <class Lambda, typename T>
+KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
+    const Lambda& closure,
+    const Kokkos::Array<i32, 6>& arr,
+    T& ref
+) {
+    closure(arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], ref);
+}
 
 namespace DexImpl {
 #if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
@@ -394,6 +469,8 @@ Kokkos::Array<i32, 6> FlatLoop<6>::unpack(i64 i) const {
     return {idx0, idx1, idx2, idx3, idx4, idx5};
 }
 
+}
+
 namespace Kokkos {
     template<>
     struct reduction_identity<Kokkos::pair<i32, i32>> {
@@ -403,88 +480,5 @@ namespace Kokkos {
     };
 }
 
-template <class Lambda>
-KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 1>& arr) {
-    closure(arr[0]);
-}
-
-template <class Lambda>
-KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 2>& arr) {
-    closure(arr[0], arr[1]);
-}
-
-template <class Lambda>
-KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 3>& arr) {
-    closure(arr[0], arr[1], arr[2]);
-}
-
-template <class Lambda>
-KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 4>& arr) {
-    closure(arr[0], arr[1], arr[2], arr[3]);
-}
-
-template <class Lambda>
-KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 5>& arr) {
-    closure(arr[0], arr[1], arr[2], arr[3], arr[4]);
-}
-
-template <class Lambda>
-KOKKOS_INLINE_FUNCTION void array_invoke(const Lambda& closure, const Kokkos::Array<i32, 6>& arr) {
-    closure(arr[0], arr[1], arr[2], arr[3], arr[4], arr[5]);
-}
-
-template <class Lambda, typename T>
-KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
-    const Lambda& closure,
-    const Kokkos::Array<i32, 1>& arr,
-    T& ref
-) {
-    closure(arr[0], ref);
-}
-
-template <class Lambda, typename T>
-KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
-    const Lambda& closure,
-    const Kokkos::Array<i32, 2>& arr,
-    T& ref
-) {
-    closure(arr[0], arr[1], ref);
-}
-
-template <class Lambda, typename T>
-KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
-    const Lambda& closure,
-    const Kokkos::Array<i32, 3>& arr,
-    T& ref
-) {
-    closure(arr[0], arr[1], arr[2], ref);
-}
-
-template <class Lambda, typename T>
-KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
-    const Lambda& closure,
-    const Kokkos::Array<i32, 4>& arr,
-    T& ref
-) {
-    closure(arr[0], arr[1], arr[2], arr[3]);
-}
-
-template <class Lambda, typename T>
-KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
-    const Lambda& closure,
-    const Kokkos::Array<i32, 5>& arr,
-    T& ref
-) {
-    closure(arr[0], arr[1], arr[2], arr[3], arr[4], ref);
-}
-
-template <class Lambda, typename T>
-KOKKOS_INLINE_FUNCTION void array_invoke_with_ref_arg(
-    const Lambda& closure,
-    const Kokkos::Array<i32, 6>& arr,
-    T& ref
-) {
-    closure(arr[0], arr[1], arr[2], arr[3], arr[4], arr[5], ref);
-}
 #else
 #endif

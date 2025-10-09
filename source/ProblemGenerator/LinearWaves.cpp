@@ -4,6 +4,8 @@
 
 // NOTE(cmo): This is only 1D and isn't really set up correctly!
 
+using namespace Mosscap;
+
 template <int NumDim>
 void linear_waves_impl(Simulation& sim, fp_t amp, fp_t vflow) {
     using Prim = Prim<NumDim>;

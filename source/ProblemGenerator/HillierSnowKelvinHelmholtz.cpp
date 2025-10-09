@@ -6,6 +6,8 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
+using namespace Mosscap;
+
 struct RadLossCoeffs {
     fp_t T_peak;
     fp_t tau_rad;

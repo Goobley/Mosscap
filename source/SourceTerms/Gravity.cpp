@@ -3,6 +3,8 @@
 #include "../MosscapConfig.hpp"
 #include "../SourceTerms.hpp"
 
+namespace Mosscap {
+
 struct GravityVals {
     fp_t x;
     fp_t y;
@@ -64,4 +66,6 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
         .name = "gravity",
         .fn = apply_gravity
     });
+}
+
 }

@@ -3,6 +3,8 @@
 
 #include "State.hpp"
 
+namespace Mosscap {
+
 struct Simulation;
 
 enum class TimeStepScheme {
@@ -29,6 +31,8 @@ struct TimeStepper {
 };
 
 void select_timestepper(Simulation&);
+
+}
 
 #else
 #endif

@@ -4,6 +4,8 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
+using namespace Mosscap;
+
 MOSSCAP_NEW_PROBLEM(circular_explosion) {
     MOSSCAP_PROBLEM_PREAMBLE(circular_explosion);
 

@@ -11,7 +11,7 @@ cmake  \
       -DGCC_INCLUDE_PATH="${GCC_INCLUDE_PATH}" \
       -DNETCDF_INCLUDE_PATH="$(nc-config --includedir)" \
       -DLDLIBS="$(nc-config --libs)" \
-      -DKokkos_ROOT="$(pwd)/../kokkos-debug/" \
-      -DCMAKE_PREFIX_PATH="$(pwd)/../kokkos-debug/lib/cmake" \
+      -DKokkos_ROOT="$(pwd)/../kokkos/" \
+      -DCMAKE_PREFIX_PATH="$(pwd)/../kokkos/" \
       -DCMAKE_BUILD_TYPE="Debug" \
       ..

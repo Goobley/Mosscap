@@ -4,6 +4,8 @@
 #include "Types.hpp"
 #include <string>
 
+namespace Mosscap {
+
 struct OutputOptions {
     bool conserved = true;
     bool primitive = false;
@@ -23,6 +25,8 @@ struct OutputConfig {
 
 struct Simulation;
 bool write_output(Simulation& sim);
+
+}
 
 #else
 #endif
