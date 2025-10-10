@@ -6,7 +6,7 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
-using namespace Mosscap;
+namespace Mosscap {
 
 struct RadLossCoeffs {
     fp_t T_peak;
@@ -152,4 +152,6 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
     if (enable_gravity) {
         setup_gravity(sim, config);
     }
+}
+
 }

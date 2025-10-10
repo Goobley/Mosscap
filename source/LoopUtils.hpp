@@ -9,8 +9,6 @@
 // NOTE(cmo): Define the line below to swap to the default loop being over Kokkos::TeamPolicy
 // #define DEX_BALANCE_TEAM_WORK
 
-namespace Mosscap {
-
 template <int N>
 struct FlatLoop {
     Kokkos::Array<i32, N> bounds;
@@ -467,8 +465,6 @@ Kokkos::Array<i32, 6> FlatLoop<6>::unpack(i64 i) const {
     offset += idx4 * dim_prod;
     i32 idx5 = i32(i - offset);
     return {idx0, idx1, idx2, idx3, idx4, idx5};
-}
-
 }
 
 namespace Kokkos {

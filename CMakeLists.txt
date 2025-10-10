@@ -56,6 +56,7 @@ list(APPEND MOSSCAP_SOURCE_FILES
     "source/TimeStepping.cpp"
     "source/Eos.cpp"
     "source/Output.cpp"
+    "source/DexInterface.cpp"
     ${MOSSCAP_SOURCE_TERMS}
     ${MOSSCAP_PROBLEMS}
 )

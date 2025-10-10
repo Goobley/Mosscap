@@ -4,7 +4,7 @@
 
 // NOTE(cmo): This is only 1D and isn't really set up correctly!
 
-using namespace Mosscap;
+namespace Mosscap {
 
 template <int NumDim>
 void linear_waves_impl(Simulation& sim, fp_t amp, fp_t vflow) {
@@ -67,4 +67,6 @@ MOSSCAP_NEW_PROBLEM(linear_waves) {
     } else {
         linear_waves_impl<3>(sim, amp, vflow);
     }
+}
+
 }

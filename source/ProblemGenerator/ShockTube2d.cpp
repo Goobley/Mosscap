@@ -5,7 +5,7 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
-using namespace Mosscap;
+namespace Mosscap {
 
 MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
     MOSSCAP_PROBLEM_PREAMBLE(shock_tube_2d);
@@ -46,4 +46,6 @@ MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
         }
     );
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.2_fp);
+}
+
 }

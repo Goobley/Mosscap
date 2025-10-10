@@ -5,7 +5,7 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
-using namespace Mosscap;
+namespace Mosscap {
 
 // Case 3 of liska + wendroff
 
@@ -59,4 +59,6 @@ MOSSCAP_NEW_PROBLEM(quadrants_3) {
     );
 
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.3_fp);
+}
+
 }

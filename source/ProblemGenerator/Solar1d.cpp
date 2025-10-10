@@ -8,7 +8,7 @@
 // NOTE(cmo): This is a 1d problem
 static constexpr int num_dim = 1;
 
-using namespace Mosscap;
+namespace Mosscap {
 
 // We assume a fully H atmosphere with LTE ionisation
 
@@ -393,5 +393,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
         fill_one_bc_hse<0, num_dim>(sim, driver);
     };
 
+
+}
 
 }

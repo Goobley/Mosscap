@@ -6,7 +6,7 @@
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
-using namespace Mosscap;
+namespace Mosscap {
 
 struct BcParams {
     fp_t g_y;
@@ -283,4 +283,6 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
     sim.user_bc = [=](const Simulation& sim) {
         fill_one_bc_hse<1, num_dim>(sim, bc_params);
     };
+}
+
 }

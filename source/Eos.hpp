@@ -46,6 +46,11 @@ struct Eos {
     bool init_dexrt(fp_t gamma, Simulation& sim);
 };
 
+KOKKOS_INLINE_FUNCTION fp_t temperature_si(fp_t pressure, fp_t n_baryon, fp_t y = 1.0_fp) {
+    constexpr fp_t k_B = 1.380649e-23_fp; // [J / K]
+    return pressure / (n_baryon * (1.0_fp + y) * k_B);
+}
+
 template <int NumDim, typename WType>
 KOKKOS_INLINE_FUNCTION fp_t sound_speed(const fp_t& gamma, const WType& w) {
     // NOTE(cmo): This uses the "standard" gamma = c_P / c_V

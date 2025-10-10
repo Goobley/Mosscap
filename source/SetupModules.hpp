@@ -185,6 +185,14 @@ void setup_output(Simulation& sim, YAML::Node& config) {
     }
 }
 
+void setup_dex(Simulation& sim, YAML::Node& config) {
+    if (sim.num_dim != 2) {
+        throw std::runtime_error("Dex integration only supports 2D models!");
+    }
+
+    sim.dex.init(sim, config);
+}
+
 Simulation setup_sim(YAML::Node& config) {
     // TODO(cmo): Do an early check if problem.name is "from_file", and have a separate path for that.
     const int num_dim = get_or<int>(config, "simulation.num_dim", 0);

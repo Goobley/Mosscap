@@ -8,6 +8,7 @@
 #include "Riemann.hpp"
 #include "Eos.hpp"
 #include "Output.hpp"
+#include "DexInterface.hpp"
 
 #include <vector>
 
@@ -57,6 +58,7 @@ struct Simulation {
     FluxFns flux_fns;
     NumericalSchemes scheme;
     OutputConfig out_cfg;
+    DexInterface dex;
 };
 
 }

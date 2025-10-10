@@ -2,7 +2,7 @@
 #include "../Hydro.hpp"
 #include "../MosscapConfig.hpp"
 
-using namespace Mosscap;
+namespace Mosscap {
 
 template <int NumDim>
 void double_shock_tube_impl(Simulation& sim, int axis) {
@@ -53,4 +53,6 @@ MOSSCAP_NEW_PROBLEM(double_shock_tube) {
     } else {
         double_shock_tube_impl<3>(sim, axis);
     }
+}
+
 }
