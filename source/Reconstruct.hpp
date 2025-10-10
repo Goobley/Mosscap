@@ -132,19 +132,19 @@ KOKKOS_INLINE_FUNCTION fp_t slope_limiter(const fp_t um, const fp_t up) {
     using std::copysign;
     if constexpr (scheme == SlopeLimiter::VanLeer) {
         // phi(r) = 2r / (1 + r) but monotonic
-        return (um * up > FP(0.0)) ? FP(2.0) * um * up / (um + up) : FP(0.0);
+        return (um * up > 0.0_fp) ? 2.0_fp * um * up / (um + up) : 0.0_fp;
     } else if constexpr (scheme == SlopeLimiter::MonotonizedCentral) {
         // phi(r) = max(0, min(2r, 0.5 * (1 + r), 2)). The term in the min is
         // multiplied through by up and sign terms implement the monotonicity
         // (and the factor of 2 that needs to multiply the second term)
-        return (copysign(FP(1.0), um) + copysign(FP(1.0), up)) * std::min(std::abs(um), std::min(FP(0.25) * std::abs(um + up), std::abs(up)));
+        return (copysign(1.0_fp, um) + copysign(1.0_fp, up)) * std::min(std::abs(um), std::min(0.25_fp * std::abs(um + up), std::abs(up)));
     }  else if constexpr (scheme == SlopeLimiter::Minmod) {
         // minmod(a, b) = whichever of a or b has the small magnitude, or 0 if a
         // * b < 0. The copysign implements the a * b < 0 term.
-        return FP(0.5) * (copysign(FP(1.0), um) + copysign(FP(1.0), up)) * std::min(std::abs(um), std::abs(up));
+        return 0.5_fp * (copysign(1.0_fp, um) + copysign(1.0_fp, up)) * std::min(std::abs(um), std::abs(up));
     }
 
-    return FP(0.0);
+    return 0.0_fp;
 }
 
 template <Reconstruction recon, SlopeLimiter sl, int Axis, std::enable_if_t<recon == Reconstruction::Fog, int> = 0>
@@ -162,8 +162,8 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     const fp_t dwR = s.at(1) - s.at(0);
     const fp_t delta = slope_limiter<sl>(dwL, dwR);
 
-    wL = s.at(0) - FP(0.5) * delta;
-    wR = s.at(0) + FP(0.5) * delta;
+    wL = s.at(0) - 0.5_fp * delta;
+    wR = s.at(0) + 0.5_fp * delta;
 }
 
 template <Reconstruction recon, SlopeLimiter sl, int Axis, std::enable_if_t<recon == Reconstruction::Ppm, int> = 0>
@@ -182,8 +182,8 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     const fp_t dw_p = limited_slope(s, 1);
 
     // NOTE(cmo): Cubic reconstruction
-    wL = FP(0.5) * (s.at(-1) + s.at(0)) - (FP(1.0) / FP(6.0)) * (dw_0 - dw_m);
-    wR = FP(0.5) * (s.at(0) + s.at(1)) - (FP(1.0) / FP(6.0)) * (dw_p - dw_0);
+    wL = 0.5_fp * (s.at(-1) + s.at(0)) - (1.0_fp / 6.0_fp) * (dw_0 - dw_m);
+    wR = 0.5_fp * (s.at(0) + s.at(1)) - (1.0_fp / 6.0_fp) * (dw_p - dw_0);
 
     if constexpr (do_clamp) {
         // Following Castro: make sure in between adjacent centred values --
@@ -201,16 +201,16 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     // NOTE(cmo): Enforce monotonicity -- following McCorquodale & Collela
     // (2011) for the latter cases without flattening (based on Collela & Sekora
     // 2008) as written in Castro (Almgren+ 2010)
-    if ((wR - s.at(0)) * (s.at(0) - wL) <= FP(0.0)) {
+    if ((wR - s.at(0)) * (s.at(0) - wL) <= 0.0_fp) {
         wL = s.at(0);
         wR = s.at(0);
     }
-    if (std::abs(wR - s.at(0)) >= FP(2.0) * std::abs(wL - s.at(0))) {
-        wR = FP(3.0) * s.at(0) - FP(2.0) * wL;
+    if (std::abs(wR - s.at(0)) >= 2.0_fp * std::abs(wL - s.at(0))) {
+        wR = 3.0_fp * s.at(0) - 2.0_fp * wL;
 
     }
-    if (std::abs(wL - s.at(0)) >= FP(2.0) * std::abs(wR - s.at(0))) {
-        wL = FP(3.0) * s.at(0) - FP(2.0) * wR;
+    if (std::abs(wL - s.at(0)) >= 2.0_fp * std::abs(wR - s.at(0))) {
+        wL = 3.0_fp * s.at(0) - 2.0_fp * wR;
     }
 }
 
@@ -221,24 +221,24 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     Stencil<2> s;
     s.fill<Axis>(W, var, idx);
 
-    constexpr fp_t beta_coeff[2] = {FP(13.0) / FP(12.0), FP(0.25)};
+    constexpr fp_t beta_coeff[2] = {13.0_fp / 12.0_fp, 0.25_fp};
     const fp_t beta0 = (
-        beta_coeff[0] * square(s.at(-2) - FP(2.0) * s.at(-1) + s.at(0))
-        + beta_coeff[1] * square(s.at(-2) - FP(4.0) * s.at(-1) + FP(3.0) * s.at(0))
+        beta_coeff[0] * square(s.at(-2) - 2.0_fp * s.at(-1) + s.at(0))
+        + beta_coeff[1] * square(s.at(-2) - 4.0_fp * s.at(-1) + 3.0_fp * s.at(0))
     );
     const fp_t beta1 = (
-        beta_coeff[0] * square(s.at(-1) - FP(2.0) * s.at(0) + s.at(1))
+        beta_coeff[0] * square(s.at(-1) - 2.0_fp * s.at(0) + s.at(1))
         + beta_coeff[1] * square(s.at(-1) - s.at(1))
     );
     const fp_t beta2 = (
-        beta_coeff[0] * square(s.at(0) - FP(2.0) * s.at(1) + s.at(2))
-        + beta_coeff[1] * square(FP(3.0) * s.at(0) - FP(4.0) * s.at(1) + s.at(2))
+        beta_coeff[0] * square(s.at(0) - 2.0_fp * s.at(1) + s.at(2))
+        + beta_coeff[1] * square(3.0_fp * s.at(0) - 4.0_fp * s.at(1) + s.at(2))
     );
 
 #ifdef MOSSCAP_SINGLE_PRECISION
-    constexpr fp_t eps = FP(1e-15);
+    constexpr fp_t eps = 1e-15_fp;
 #else
-    constexpr fp_t eps = FP(1e-36);
+    constexpr fp_t eps = 1e-36_fp;
 #endif
     // WENO-Z+: Acker et al. 2016
     const fp_t tau5 = std::abs(beta0 - beta2);
@@ -249,26 +249,26 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
 
     // evaluate wL * 6 (division included later): eno, then weight
     // These coefficients are flipped relative to the original Jiang + Shu paper
-    fp_t eno0 = (FP(2.0) * s.at(0) + FP(5.0) * s.at(-1) - s.at(-2));
-    fp_t eno1 = (-s.at(1) + FP(5.0) * s.at(0) + FP(2.0) * s.at(-1));
-    fp_t eno2 = (FP(2.0) * s.at(2) - FP(7.0) * s.at(1) + FP(11.0) * s.at(0));
+    fp_t eno0 = (2.0_fp * s.at(0) + 5.0_fp * s.at(-1) - s.at(-2));
+    fp_t eno1 = (-s.at(1) + 5.0_fp * s.at(0) + 2.0_fp * s.at(-1));
+    fp_t eno2 = (2.0_fp * s.at(2) - 7.0_fp * s.at(1) + 11.0_fp * s.at(0));
 
-    fp_t alpha0 = FP(3.0) * (FP(1.0) + square(indicator0));
-    fp_t alpha1 = FP(6.0) * (FP(1.0) + square(indicator1));
-    fp_t alpha2 = FP(1.0) * (FP(1.0) + square(indicator2));
-    fp_t denom = FP(6.0) * (alpha0 + alpha1 + alpha2);
+    fp_t alpha0 = 3.0_fp * (1.0_fp + square(indicator0));
+    fp_t alpha1 = 6.0_fp * (1.0_fp + square(indicator1));
+    fp_t alpha2 = 1.0_fp * (1.0_fp + square(indicator2));
+    fp_t denom = 6.0_fp * (alpha0 + alpha1 + alpha2);
 
     wL = (eno0 * alpha0 + eno1 * alpha1 + eno2 * alpha2) / denom;
 
     // evaluate wR equivalently (indicators flip)
-    eno0 = (FP(2.0) * s.at(0) + FP(5.0) * s.at(1) - s.at(2));
-    eno1 = (-s.at(-1) + FP(5.0) * s.at(0) + FP(2.0) * s.at(1));
-    eno2 = (FP(2.0) * s.at(-2) - FP(7.0) * s.at(-1) + FP(11.0) * s.at(0));
+    eno0 = (2.0_fp * s.at(0) + 5.0_fp * s.at(1) - s.at(2));
+    eno1 = (-s.at(-1) + 5.0_fp * s.at(0) + 2.0_fp * s.at(1));
+    eno2 = (2.0_fp * s.at(-2) - 7.0_fp * s.at(-1) + 11.0_fp * s.at(0));
 
-    alpha0 = FP(3.0) * (FP(1.0) + square(indicator2));
-    alpha1 = FP(6.0) * (FP(1.0) + square(indicator1));
-    alpha2 = FP(1.0) * (FP(1.0) + square(indicator0));
-    denom = FP(6.0) * (alpha0 + alpha1 + alpha2);
+    alpha0 = 3.0_fp * (1.0_fp + square(indicator2));
+    alpha1 = 6.0_fp * (1.0_fp + square(indicator1));
+    alpha2 = 1.0_fp * (1.0_fp + square(indicator0));
+    denom = 6.0_fp * (alpha0 + alpha1 + alpha2);
 
     wR = (eno0 * alpha0 + eno1 * alpha1 + eno2 * alpha2) / denom;
 }

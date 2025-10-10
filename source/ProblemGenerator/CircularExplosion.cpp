@@ -24,17 +24,17 @@ MOSSCAP_NEW_PROBLEM(circular_explosion) {
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
             vec3 p = state.get_pos(i, j);
-            yakl::SArray<fp_t, 1, n_hydro> w(FP(0.0));
-            if (std::sqrt(square(p(0) - FP(0.5)) + square(p(1) - FP(0.5))) <  FP(0.25)) {
-                w(I(Prim::Rho)) = FP(10.0);
-                w(I(Prim::Vx)) = FP(0.0);
-                w(I(Prim::Vy)) = FP(0.0);
-                w(I(Prim::Pres)) = FP(10.0);
+            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
+            if (std::sqrt(square(p(0) - 0.5_fp) + square(p(1) - 0.5_fp)) <  0.25_fp) {
+                w(I(Prim::Rho)) = 10.0_fp;
+                w(I(Prim::Vx)) = 0.0_fp;
+                w(I(Prim::Vy)) = 0.0_fp;
+                w(I(Prim::Pres)) = 10.0_fp;
             } else {
-                w(I(Prim::Rho)) = FP(0.125);
-                w(I(Prim::Vx)) = FP(0.0);
-                w(I(Prim::Vy)) = FP(0.0);
-                w(I(Prim::Pres)) = FP(0.1);
+                w(I(Prim::Rho)) = 0.125_fp;
+                w(I(Prim::Vx)) = 0.0_fp;
+                w(I(Prim::Vy)) = 0.0_fp;
+                w(I(Prim::Pres)) = 0.1_fp;
             }
             CellIndex idx {
                 .i = i,

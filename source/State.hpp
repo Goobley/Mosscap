@@ -121,7 +121,7 @@ struct State {
 
     KOKKOS_INLINE_FUNCTION vec3 get_pos(int i, int j=0, int k=0) const {
         vec3 result;
-        const fp_t ghost_offset = -(sz.ng - FP(0.5)) * dx;
+        const fp_t ghost_offset = -(sz.ng - 0.5_fp) * dx;
         result(0) = i * dx + ghost_offset + loc.x;
         if (sz.yc > 1) {
             result(1) = j * dx + ghost_offset + loc.y;
@@ -138,13 +138,13 @@ struct State {
         }
         if (axis == 1) {
             if (sz.yc == 1) {
-                return FP(1.0);
+                return 1.0_fp;
             }
             return (sz.yc - 2 * sz.ng) * dx;
         }
 
         if (sz.zc == 1) {
-            return FP(1.0);
+            return 1.0_fp;
         }
         return (sz.zc - 2 * sz.ng) * dx;
     }

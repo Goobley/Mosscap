@@ -68,9 +68,9 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const QType& q, const
         w(I(Prim::Vz)) = q(I(Cons::MomZ)) / q(I(Cons::Rho));
         v2_sum += square(w(I(Prim::Vz)));
     }
-    const fp_t e_kin = FP(0.5) * q(I(Cons::Rho)) * v2_sum;
+    const fp_t e_kin = 0.5_fp * q(I(Cons::Rho)) * v2_sum;
     // NOTE(cmo): Will probably need to bring EosView back in some capacity to handle ionisation energy
-    w(I(Prim::Pres)) = (gamma - FP(1.0)) * ((q(I(Cons::Ene)) - e_kin));
+    w(I(Prim::Pres)) = (gamma - 1.0_fp) * ((q(I(Cons::Ene)) - e_kin));
 }
 
 template <int NumDim, typename WType, typename QType>
@@ -88,8 +88,8 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const WType& w, const
         q(I(Cons::MomZ)) = w(I(Prim::Rho)) * w(I(Prim::Vz));
         v2_sum += square(w(I(Prim::Vz)));
     }
-    const fp_t e_kin = FP(0.5) * w(I(Prim::Rho)) * v2_sum;
-    const fp_t e_int = w(I(Prim::Pres)) / (gamma - FP(1.0));
+    const fp_t e_kin = 0.5_fp * w(I(Prim::Rho)) * v2_sum;
+    const fp_t e_int = w(I(Prim::Pres)) / (gamma - 1.0_fp);
     q(I(Cons::Ene)) = e_int + e_kin;
 }
 
@@ -105,7 +105,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const WType& w, const
     using Prim = Prim<NumDim>;
     using Cons = Cons<NumDim>;
     const fp_t mass_flux = w(I(Prim::Rho)) * w(IV1);
-    fp_t e_kin = FP(0.0);
+    fp_t e_kin = 0.0_fp;
     f(I(Cons::Rho)) = mass_flux;
     f(I(Cons::MomX)) = mass_flux * w(I(Prim::Vx));
     e_kin += square(w(I(Prim::Vx)));
@@ -117,11 +117,11 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const WType& w, const
         f(I(Cons::MomZ)) = mass_flux * w(I(Prim::Vz));
         e_kin += square(w(I(Prim::Vz)));
     }
-    e_kin *= FP(0.5) * w(I(Prim::Rho));
+    e_kin *= 0.5_fp * w(I(Prim::Rho));
 
     f(IM1) += w(I(Prim::Pres));
 
-    const fp_t e_tot = w(I(Prim::Pres)) / (gamma - FP(1.0)) + e_kin;
+    const fp_t e_tot = w(I(Prim::Pres)) / (gamma - 1.0_fp) + e_kin;
     f(I(Cons::Ene)) = (e_tot + w(I(Prim::Pres))) * w(IV1);
 }
 

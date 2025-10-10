@@ -23,9 +23,9 @@ struct TabulatedLteH {
 
     Fp2d y_table;
     Fp2d log_T_table;
-    static constexpr fp_t h_mass = FP(1.6737830080950003e-27);
-    static constexpr fp_t k_B = FP(1.380649e-23);
-    static constexpr fp_t chi_H = FP(2.178710282685096e-18); // [J]
+    static constexpr fp_t h_mass = 1.6737830080950003e-27_fp;
+    static constexpr fp_t k_B = 1.380649e-23_fp;
+    static constexpr fp_t chi_H = 2.178710282685096e-18_fp; // [J]
 
     inline bool init(const std::string& table_path) {
         yakl::SimpleNetCDF nc;
@@ -66,15 +66,15 @@ struct TabulatedLteH {
         const i32 max_x = eint_rho_grid.num - 1;
         const i32 max_y = rho_grid.num - 1;
 
-        if (frac_eint_rho < FP(0.0) || frac_eint_rho >= max_x) {
+        if (frac_eint_rho < 0.0_fp || frac_eint_rho >= max_x) {
             ix = std::min(std::max(ix, 0), max_x);
             ixp = ix;
-            tx = FP(1.0);
-            txp = FP(0.0);
+            tx = 1.0_fp;
+            txp = 0.0_fp;
         } else {
             ixp = ix + 1;
             txp = frac_eint_rho - ix;
-            tx = FP(1.0) - txp;
+            tx = 1.0_fp - txp;
         }
         if (ix < 0 || ixp > eint_rho_grid.num) {
             printf("Sadness x: %d, %d (%d) %e\n", ix, ixp, eint_rho_grid.num, log_eint_rho);
@@ -85,15 +85,15 @@ struct TabulatedLteH {
         int iyp;
         fp_t ty, typ;
 
-        if (frac_rho < FP(0.0) || frac_rho >= max_y) {
+        if (frac_rho < 0.0_fp || frac_rho >= max_y) {
             iy = std::min(std::max(iy, 0), max_y);
             iyp = iy;
-            ty = FP(1.0);
-            typ = FP(0.0);
+            ty = 1.0_fp;
+            typ = 0.0_fp;
         } else {
             iyp = iy + 1;
             typ = frac_rho - iy;
-            ty = FP(1.0) - typ;
+            ty = 1.0_fp - typ;
         }
         if (iy < 0 || iyp > eint_rho_grid.num) {
             printf("Sadness y: %d, %d (%d): %e\n", iy, iyp, rho_grid.num, log_rho);
@@ -134,9 +134,9 @@ struct TabulatedLteH {
                     mom2_sum += square(Q(I(Cons::MomZ), k, j, i));
                 }
                 const fp_t rho = Q(I(Cons::Rho), k, j, i);
-                const fp_t e_kin = FP(0.5) * mom2_sum / rho;
+                const fp_t e_kin = 0.5_fp * mom2_sum / rho;
                 const fp_t eint = Q(I(Cons::Ene), k, j, i) - e_kin;
-                if (eint < FP(0.0)) {
+                if (eint < 0.0_fp) {
                     Kokkos::abort("eint negative");
                 }
 
@@ -146,15 +146,15 @@ struct TabulatedLteH {
                 Sample s = sample(log_eint_rho, log_rho);
                 const fp_t prev_y = eos.y_space(k, j, i);
                 eos.y_space(k, j, i) = s.y;
-                const fp_t delta_eint = (prev_y < FP(0.0)) ? FP(0.0) : rho * (chi_H / h_mass) * (s.y - prev_y);
-                const fp_t T = std::pow(FP(10.0), s.log_T);
+                const fp_t delta_eint = (prev_y < 0.0_fp) ? 0.0_fp : rho * (chi_H / h_mass) * (s.y - prev_y);
+                const fp_t T = std::pow(10.0_fp, s.log_T);
                 eos.T_space(k, j, i) = T;
 
                 // P = nh (1 + y) kB T
-                const fp_t pressure = rho * (k_B / h_mass) * (FP(1.0) + s.y) * T;
-                const fp_t new_eint = pressure / (eos.gamma - FP(1.0)) + rho * (chi_H / h_mass) * s.y;
+                const fp_t pressure = rho * (k_B / h_mass) * (1.0_fp + s.y) * T;
+                const fp_t new_eint = pressure / (eos.gamma - 1.0_fp) + rho * (chi_H / h_mass) * s.y;
 
-                // eos.gamma_e_space(k, j, i) = FP(1.0) + pressure / (new_eint);
+                // eos.gamma_e_space(k, j, i) = 1.0_fp + pressure / (new_eint);
                 // Q(I(Cons::Ene), k, j, i) = new_eint + e_kin;
                 Q(I(Cons::Ene), k, j, i) += delta_eint;
             }

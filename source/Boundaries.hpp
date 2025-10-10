@@ -99,9 +99,9 @@ inline void fill_one_bc_impl(const State& state) {
                 }
                 const fp_t mom_pre = Q_view(IM);
                 if (start) {
-                    Q_view(IM) = std::min(mom_pre, FP(0.0));
+                    Q_view(IM) = std::min(mom_pre, 0.0_fp);
                 } else {
-                    Q_view(IM) = std::max(mom_pre, FP(0.0));
+                    Q_view(IM) = std::max(mom_pre, 0.0_fp);
                 }
                 Q_view(I(Cons::Ene)) -= square(Q_view(IM) - mom_pre) / Q_view(I(Cons::Rho));
             } else if (bound == BoundaryType::ZeroGrad) {

@@ -25,17 +25,17 @@ MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
             vec3 p = state.get_pos(i);
-            yakl::SArray<fp_t, 1, n_hydro> w(FP(0.0));
-            if (p(0) < FP(0.5)) {
-                w(I(Prim::Rho)) = FP(1.0);
-                w(I(Prim::Vx)) = FP(0.0);
-                w(I(Prim::Vy)) = FP(0.0);
-                w(I(Prim::Pres)) = FP(1.0);
+            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
+            if (p(0) < 0.5_fp) {
+                w(I(Prim::Rho)) = 1.0_fp;
+                w(I(Prim::Vx)) = 0.0_fp;
+                w(I(Prim::Vy)) = 0.0_fp;
+                w(I(Prim::Pres)) = 1.0_fp;
             } else {
-                w(I(Prim::Rho)) = FP(0.125);
-                w(I(Prim::Vx)) = FP(0.0);
-                w(I(Prim::Vy)) = FP(0.0);
-                w(I(Prim::Pres)) = FP(0.1);
+                w(I(Prim::Rho)) = 0.125_fp;
+                w(I(Prim::Vx)) = 0.0_fp;
+                w(I(Prim::Vy)) = 0.0_fp;
+                w(I(Prim::Pres)) = 0.1_fp;
             }
             CellIndex idx {
                 .i = i,
@@ -45,5 +45,5 @@ MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
             prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
-    sim.max_time = get_or<fp_t>(config, "timestep.max_time", FP(0.2));
+    sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.2_fp);
 }

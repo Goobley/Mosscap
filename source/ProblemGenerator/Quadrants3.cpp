@@ -27,27 +27,27 @@ MOSSCAP_NEW_PROBLEM(quadrants_3) {
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
             vec3 p = state.get_pos(i, j);
-            yakl::SArray<fp_t, 1, n_hydro> w(FP(0.0));
-            if (p(0) < FP(0.5) && p(1) >= FP(0.5)) {
-                w(I(Prim::Pres)) = FP(0.3);
-                w(I(Prim::Rho)) = FP(0.5323);
-                w(I(Prim::Vx)) = FP(1.206);
-                w(I(Prim::Vy)) = FP(0.0);
-            } else if (p(0) < FP(0.5) && p(1) < FP(0.5)) {
-                w(I(Prim::Pres)) = FP(0.029);
-                w(I(Prim::Rho)) = FP(0.138);
-                w(I(Prim::Vx)) = FP(1.206);
-                w(I(Prim::Vy)) = FP(1.206);
-            } else if (p(0) >= FP(0.5) && p(1) >= FP(0.5)) {
-                w(I(Prim::Pres)) = FP(1.5);
-                w(I(Prim::Rho)) = FP(1.5);
-                w(I(Prim::Vx)) = FP(0.0);
-                w(I(Prim::Vy)) = FP(0.0);
-            } else if (p(0) >= FP(0.5) && p(1) < FP(0.5)) {
-                w(I(Prim::Pres)) = FP(0.3);
-                w(I(Prim::Rho)) = FP(0.5323);
-                w(I(Prim::Vx)) = FP(0.0);
-                w(I(Prim::Vy)) = FP(1.206);
+            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
+            if (p(0) < 0.5_fp && p(1) >= 0.5_fp) {
+                w(I(Prim::Pres)) = 0.3_fp;
+                w(I(Prim::Rho)) = 0.5323_fp;
+                w(I(Prim::Vx)) = 1.206_fp;
+                w(I(Prim::Vy)) = 0.0_fp;
+            } else if (p(0) < 0.5_fp && p(1) < 0.5_fp) {
+                w(I(Prim::Pres)) = 0.029_fp;
+                w(I(Prim::Rho)) = 0.138_fp;
+                w(I(Prim::Vx)) = 1.206_fp;
+                w(I(Prim::Vy)) = 1.206_fp;
+            } else if (p(0) >= 0.5_fp && p(1) >= 0.5_fp) {
+                w(I(Prim::Pres)) = 1.5_fp;
+                w(I(Prim::Rho)) = 1.5_fp;
+                w(I(Prim::Vx)) = 0.0_fp;
+                w(I(Prim::Vy)) = 0.0_fp;
+            } else if (p(0) >= 0.5_fp && p(1) < 0.5_fp) {
+                w(I(Prim::Pres)) = 0.3_fp;
+                w(I(Prim::Rho)) = 0.5323_fp;
+                w(I(Prim::Vx)) = 0.0_fp;
+                w(I(Prim::Vy)) = 1.206_fp;
             }
             CellIndex idx {
                 .i = i,
@@ -58,5 +58,5 @@ MOSSCAP_NEW_PROBLEM(quadrants_3) {
         }
     );
 
-    sim.max_time = get_or<fp_t>(config, "timestep.max_time", FP(0.3));
+    sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.3_fp);
 }

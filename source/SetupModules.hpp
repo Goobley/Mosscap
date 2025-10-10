@@ -32,9 +32,9 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     }
     auto& state = sim.state;
     state.dx = dx;
-    state.loc.x = get_or<fp_t>(config, "grid.x_start", FP(0.0));
-    state.loc.y = get_or<fp_t>(config, "grid.y_start", FP(0.0));
-    state.loc.z = get_or<fp_t>(config, "grid.z_start", FP(0.0));
+    state.loc.x = get_or<fp_t>(config, "grid.x_start", 0.0_fp);
+    state.loc.y = get_or<fp_t>(config, "grid.y_start", 0.0_fp);
+    state.loc.z = get_or<fp_t>(config, "grid.z_start", 0.0_fp);
 
     const int n_hydro = get_num_hydro_vars(sim.num_dim);
     const int n_extra = get_or<int>(config, "simulation.n_extra_fields", 0);
@@ -154,8 +154,8 @@ void setup_timestepper(Simulation& sim, YAML::Node& config) {
 
     select_timestepper(sim);
 
-    sim.max_cfl = get_or<fp_t>(config, "timestep.max_cfl", FP(0.8));
-    sim.max_time = get_or<fp_t>(config, "timestep.max_time", FP(1.0));
+    sim.max_cfl = get_or<fp_t>(config, "timestep.max_cfl", 0.8_fp);
+    sim.max_time = get_or<fp_t>(config, "timestep.max_time", 1.0_fp);
 }
 
 void setup_eos(Simulation& sim, YAML::Node& config) {

@@ -11,19 +11,9 @@ typedef double f64;
 
 namespace Mosscap {
 #ifdef MOSSCAP_SINGLE_PRECISION
-    // typedef f32 fp_t;
-    #define CMO_EXPAND(x) x
-    #ifdef _MSC_VER
-        #define FP(x) (CMO_EXPAND(x)##f)
-    #else
-        #define FP(x) (x##f)
-    #endif
     using fp_t = f32;
 #else
-    // typedef double fp_t;
-    #define FP(x) (x)
     using fp_t = f64;
-
 #endif
 
     // NOTE(cmo): I didn't realise custom number literals were possible until

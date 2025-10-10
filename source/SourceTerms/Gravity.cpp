@@ -42,9 +42,9 @@ void gravity_kernel(const Simulation& sim, const GravityVals& grav) {
 void setup_gravity(Simulation& sim, YAML::Node& config) {
 
     GravityVals grav{
-        .x = get_or<fp_t>(config, "sources.gravity.x", FP(-1.0)),
-        .y = get_or<fp_t>(config, "sources.gravity.y", FP(0.0)),
-        .z = get_or<fp_t>(config, "sources.gravity.z", FP(0.0))
+        .x = get_or<fp_t>(config, "sources.gravity.x", -1.0_fp),
+        .y = get_or<fp_t>(config, "sources.gravity.y", 0.0_fp),
+        .z = get_or<fp_t>(config, "sources.gravity.z", 0.0_fp)
     };
 
     auto apply_gravity = [=](const Simulation& sim) {

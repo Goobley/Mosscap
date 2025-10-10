@@ -25,8 +25,8 @@ MOSSCAP_NEW_PROBLEM(kelvin_helmholtz) {
     const u64 seed = 123456UL;
     const int axis = get_or<int>(config, "problem.axis", 1);
     std::string source_name = fmt::format("sources.gravity.{}", axis == 0 ? "x" : "y");
-    set_if_not_present<fp_t>(config, source_name, FP(-0.1));
-    const fp_t grav = get_or<fp_t>(config, source_name, FP(-0.1));
+    set_if_not_present<fp_t>(config, source_name, -0.1_fp);
+    const fp_t grav = get_or<fp_t>(config, source_name, -0.1_fp);
     int other_axis;
     if (axis == 0) {
         if ((sz.xc - 2 * sz.ng) / (sz.yc - 2 * sz.ng) != 3) {
@@ -47,17 +47,17 @@ MOSSCAP_NEW_PROBLEM(kelvin_helmholtz) {
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
             vec3 p = state.get_pos(i, j);
-            const fp_t pres_0 = FP(2.5);
-            yakl::SArray<fp_t, 1, n_hydro> w(FP(0.0));
+            const fp_t pres_0 = 2.5_fp;
+            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
 
-            if (p(axis) > FP(0.0)) {
-                w(I(Prim::Rho)) = FP(2.0);
+            if (p(axis) > 0.0_fp) {
+                w(I(Prim::Rho)) = 2.0_fp;
             } else {
-                w(I(Prim::Rho)) = FP(1.0);
+                w(I(Prim::Rho)) = 1.0_fp;
             }
             w(I(Prim::Pres)) = pres_0 + w(I(Prim::Rho)) * grav * p(axis);
-            w(IV) = FP(0.01) * (FP(1.0) + std::cos(FP(2.0) * M_PI / other_axis_length * p(other_axis)))
-                             * (FP(1.0) + std::cos(FP(2.0) * M_PI / axis_length * p(axis))) * FP(0.25);
+            w(IV) = 0.01_fp * (1.0_fp + std::cos(2.0_fp * M_PI / other_axis_length * p(other_axis)))
+                             * (1.0_fp + std::cos(2.0_fp * M_PI / axis_length * p(axis))) * 0.25_fp;
 
             CellIndex idx {
                 .i = i,

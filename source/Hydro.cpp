@@ -190,7 +190,7 @@ f64 compute_dt_impl(const Simulation& sim) {
     const auto& state = sim.state;
     const auto& eos = sim.eos;
 
-    fp_t dt_max = FP(1e5);
+    fp_t dt_max = 1e5_fp;
     dex_parallel_reduce(
         "CFL reduction",
         FlatLoop<3>(state.sz.zc, state.sz.yc, state.sz.xc),

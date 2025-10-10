@@ -20,16 +20,16 @@ void double_shock_tube_impl(Simulation& sim, int axis) {
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
             vec3 p = state.get_pos(i, j, k);
-            yakl::SArray<fp_t, 1, n_hydro> w(FP(0.0));
-            if (p(axis) < FP(0.1)) {
-                w(I(Prim::Rho)) = FP(1.0);
-                w(I(Prim::Pres)) = FP(1000.0);
-            } else if (p(axis) > FP(0.9)) {
-                w(I(Prim::Rho)) = FP(1.0);
-                w(I(Prim::Pres)) = FP(100.0);
+            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
+            if (p(axis) < 0.1_fp) {
+                w(I(Prim::Rho)) = 1.0_fp;
+                w(I(Prim::Pres)) = 1000.0_fp;
+            } else if (p(axis) > 0.9_fp) {
+                w(I(Prim::Rho)) = 1.0_fp;
+                w(I(Prim::Pres)) = 100.0_fp;
             } else {
-                w(I(Prim::Rho)) = FP(1.0);
-                w(I(Prim::Pres)) = FP(0.01);
+                w(I(Prim::Rho)) = 1.0_fp;
+                w(I(Prim::Pres)) = 0.01_fp;
             }
             CellIndex idx {
                 .i = i,
@@ -44,7 +44,7 @@ void double_shock_tube_impl(Simulation& sim, int axis) {
 MOSSCAP_NEW_PROBLEM(double_shock_tube) {
     MOSSCAP_PROBLEM_PREAMBLE(double_shock_tube);
 
-    sim.max_time = get_or<fp_t>(config, "timestep.max_time", FP(0.038));
+    sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.038_fp);
     int axis = get_or<int>(config, "problem.shock_axis", 0);
     if (sim.num_dim == 1) {
         double_shock_tube_impl<1>(sim, axis);

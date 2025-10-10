@@ -6,7 +6,7 @@
 namespace Mosscap {
 
 inline void zero_source_terms(const Simulation& sim) {
-    sim.sources.S = FP(0.0);
+    sim.sources.S = 0.0_fp;
 }
 
 inline void compute_source_terms(const Simulation& sim) {

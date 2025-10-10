@@ -22,8 +22,8 @@ static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl) {
     const auto& W = sim.state.W;
     const auto& S = sim.sources.S;
     const auto& sz = sim.state.sz;
-    const fp_t inv_T_peak = FP(1.0) / rl.T_peak;
-    const fp_t inv_timescale = FP(1.0) / rl.tau_rad;
+    const fp_t inv_T_peak = 1.0_fp / rl.T_peak;
+    const fp_t inv_timescale = 1.0_fp / rl.tau_rad;
 
     dex_parallel_for(
         "Apply rad loss",
@@ -38,9 +38,9 @@ static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl) {
             const auto& w = QtyView(W, idx);
 
             const fp_t temperature = eos.gamma * w(I(Prim::Pres)) / w(I(Prim::Rho));
-            // fp_t loss = (FP(1.0) - square(std::tanh(std::log10(temperature * inv_T_peak) * (FP(0.5) * M_PI) * FP(5.0)))) / rl.tau_rad;
+            // fp_t loss = (1.0_fp - square(std::tanh(std::log10(temperature * inv_T_peak) * (0.5_fp * M_PI) * 5.0_fp))) / rl.tau_rad;
             // loss *= square(w(I(Prim::Rho)));
-            fp_t loss = FP(1.0) / square(std::cosh(std::log10(temperature * inv_T_peak)) * (FP(1.0) / FP(0.04) * M_PIf)) * inv_timescale;
+            fp_t loss = 1.0_fp / square(std::cosh(std::log10(temperature * inv_T_peak)) * (1.0_fp / 0.04_fp * M_PIf)) * inv_timescale;
             S(I(Cons::Ene), k, j, i) += -loss;
         }
     );
@@ -68,30 +68,30 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
     // 0 - Hillier + Snow periodic
     // 1 -  1 blob
     const int mode = get_or<int>(config, "problem.mode", 0);
-    const fp_t blob_radius = get_or<fp_t>(config, "problem.blob_radius", FP(0.4));
-    const fp_t streaming_vel = get_or<fp_t>(config, "problem.streaming_vel", FP(0.1));
-    const fp_t random_scale = get_or<fp_t>(config, "problem.random_scale", FP(0.01));
-    const fp_t rho_h = FP(100.0);
-    const fp_t rho_l = FP(1.0);
-    const fp_t pressure = FP(1.0) / eos.gamma;
+    const fp_t blob_radius = get_or<fp_t>(config, "problem.blob_radius", 0.4_fp);
+    const fp_t streaming_vel = get_or<fp_t>(config, "problem.streaming_vel", 0.1_fp);
+    const fp_t random_scale = get_or<fp_t>(config, "problem.random_scale", 0.01_fp);
+    const fp_t rho_h = 100.0_fp;
+    const fp_t rho_l = 1.0_fp;
+    const fp_t pressure = 1.0_fp / eos.gamma;
 
     dex_parallel_for(
         "Setup problem",
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
             vec3 p = state.get_pos(i, j);
-            yakl::SArray<fp_t, 1, n_hydro> w(FP(0.0));
+            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
 
             w(I(Prim::Pres)) = pressure;
             if (mode == 0) {
-                if (p(axis) > FP(0.0)) {
+                if (p(axis) > 0.0_fp) {
                     w(I(Prim::Rho)) = rho_h;
                 } else {
                     w(I(Prim::Rho)) = rho_l;
                     w(I(Prim::Vy)) = streaming_vel;
                 }
             } else if (mode == 1) {
-                if (square(p(0) + FP(0.5)) + square(p(1) - FP(1.0)) < square(blob_radius)) {
+                if (square(p(0) + 0.5_fp) + square(p(1) - 1.0_fp) < square(blob_radius)) {
                     w(I(Prim::Rho)) = rho_h;
                 } else {
                     w(I(Prim::Rho)) = rho_l;
@@ -100,7 +100,7 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
 
             }
             yakl::Random rng(seed + k * sz.yc * sz.xc + j * sz.xc + i);
-            w(I(Prim::Vx)) = random_scale * (rng.genFP<fp_t>() - FP(0.5));
+            w(I(Prim::Vx)) = random_scale * (rng.genFP<fp_t>() - 0.5_fp);
             CellIndex idx {
                 .i = i,
                 .j = j,
@@ -111,8 +111,8 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
     );
 
     if (sim.state.boundaries.ys == BoundaryType::Constant && !config["boundary"]["ys"].IsSequence()) {
-        const fp_t boundary_inflow_vel = get_or<fp_t>(config, "problem.boundary_inflow_vel", FP(1.0));
-        yakl::SArray<fp_t, 1, n_hydro> w(FP(0.0));
+        const fp_t boundary_inflow_vel = get_or<fp_t>(config, "problem.boundary_inflow_vel", 1.0_fp);
+        yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
         w(I(Prim::Rho)) = rho_l;
         w(I(Prim::Vy)) = boundary_inflow_vel;
         w(I(Prim::Pres)) = pressure;
@@ -129,8 +129,8 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
     bool enable_rad_loss = get_or<bool>(config, "problem.enable_rad_loss", false);
     if (enable_rad_loss) {
         RadLossCoeffs rad_loss{
-            .T_peak = get_or<fp_t>(config, "sources.rad_loss.T_peak", FP(0.15)),
-            .tau_rad = get_or<fp_t>(config, "sources.rad_loss.tau_rad", FP(1e2))
+            .T_peak = get_or<fp_t>(config, "sources.rad_loss.T_peak", 0.15_fp),
+            .tau_rad = get_or<fp_t>(config, "sources.rad_loss.tau_rad", 1e2_fp)
         };
 
         // TODO(cmo): Setup sources

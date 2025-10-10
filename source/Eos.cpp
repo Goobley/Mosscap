@@ -11,21 +11,21 @@ namespace Mosscap {
 bool Eos::init(Simulation& sim, const YAML::Node& config) {
     std::string eos_str = get_or<std::string>(config, "eos.type", "ideal");
     EosType type = find_associated_enum<EosType>(EosTypeName, NumEosType, eos_str);
-    avg_mass = get_or<fp_t>(config, "eos.avg_mass", FP(1.0));
+    avg_mass = get_or<fp_t>(config, "eos.avg_mass", 1.0_fp);
 
     switch (type) {
         case EosType::Ideal: {
-            fp_t gamma = get_or<fp_t>(config, "eos.gamma", FP(1.4));
-            fp_t ion_frac = get_or<fp_t>(config, "eos.ion_frac", FP(1.0));
+            fp_t gamma = get_or<fp_t>(config, "eos.gamma", 1.4_fp);
+            fp_t ion_frac = get_or<fp_t>(config, "eos.ion_frac", 1.0_fp);
             return init_ideal(gamma, ion_frac, sim);
         } break;
         case EosType::AnalyticLteH: {
-            fp_t gamma = get_or<fp_t>(config, "eos.gamma", FP(5.0) / FP(3.0));
+            fp_t gamma = get_or<fp_t>(config, "eos.gamma", 5.0_fp / 3.0_fp);
             bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
             return init_analytic_lte_h(gamma, sim, include_ionisation_energy);
         } break;
         case EosType::TabulatedLteH: {
-            fp_t gamma = get_or<fp_t>(config, "eos.gamma", FP(5.0) / FP(3.0));
+            fp_t gamma = get_or<fp_t>(config, "eos.gamma", 5.0_fp / 3.0_fp);
             std::string eos_table = get_or<std::string>(config, "eos.table_path", "mosscap_lte_h_tables.nc");
             return init_tabulated_lte_h(gamma, sim, eos_table);
         } break;
@@ -67,7 +67,7 @@ bool Eos::init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& t
 
     TabulatedLteH lte_h;
     lte_h.init(table_path);
-    y_space = FP(-1.0);
+    y_space = -1.0_fp;
 
     sim.update_eos = [lte_h](const Simulation& sim) {
         if (sim.num_dim == 1) {

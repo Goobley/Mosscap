@@ -37,11 +37,11 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const QtyView& wL, cons
 
     const fp_t csL = sound_speed<NumDim>(eos.gamma, wL);
     const fp_t csR = sound_speed<NumDim>(eos.gamma, wR);
-    const fp_t max_c = FP(0.5) * (csL + std::abs(vL) + csR + std::abs(vR));
+    const fp_t max_c = 0.5_fp * (csL + std::abs(vL) + csR + std::abs(vR));
 
     #pragma unroll
     for (int i = 0; i < n_hydro; ++i) {
-        flux(i) = FP(0.5) * (fL(i) + fR(i) - max_c * (qR(i) - qL(i)));
+        flux(i) = 0.5_fp * (fL(i) + fR(i) - max_c * (qR(i) - qL(i)));
     }
 }
 
@@ -55,10 +55,10 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const QtyView& wL, cons
     const fp_t csL = sound_speed<NumDim>(eos.gamma, wL);
     const fp_t csR = sound_speed<NumDim>(eos.gamma, wR);
 
-    constexpr fp_t tiny = FP(1e-20);
+    constexpr fp_t tiny = 1e-20_fp;
     const fp_t sL = std::min(-tiny, std::min(wL(IV) - csL, wR(IV) - csR));
     const fp_t sR = std::max(-tiny, std::max(wL(IV) + csL, wL(IV) + csR));
-    const fp_t sM = FP(1.0) / (sR - sL);
+    const fp_t sM = 1.0_fp / (sR - sL);
 
     yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
     prim_to_cons<NumDim>(eos.gamma, wL, qL);
@@ -83,10 +83,10 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const QtyView& wL, cons
     const fp_t csL = sound_speed<NumDim>(eos.gamma, wL);
     const fp_t csR = sound_speed<NumDim>(eos.gamma, wR);
 
-    constexpr fp_t tiny = FP(1e-20);
+    constexpr fp_t tiny = 1e-20_fp;
     // const fp_t sL = std::min(-tiny, std::min(wL(IV) - csL, wR(IV) - csR));
     // const fp_t sR = std::max(-tiny, std::max(wL(IV) + csL, wL(IV) + csR));
-    // const fp_t sM = FP(1.0) / (sR - sL);
+    // const fp_t sM = 1.0_fp / (sR - sL);
 
     yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
     prim_to_cons<NumDim>(eos.gamma, wL, qL);
@@ -97,17 +97,17 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const QtyView& wL, cons
 
     const fp_t pL = wL(I(Prim::Pres));
     const fp_t pR = wR(I(Prim::Pres));
-    const fp_t rho_avg = FP(0.5) * (wL(I(Prim::Rho)) + wR(I(Prim::Rho)));
-    const fp_t cs_avg = FP(0.5) * (csL + csR);
-    const fp_t p_mid = FP(0.5) * (pL + pR + (wL(IV) - wR(IV)) * rho_avg * cs_avg);
+    const fp_t rho_avg = 0.5_fp * (wL(I(Prim::Rho)) + wR(I(Prim::Rho)));
+    const fp_t cs_avg = 0.5_fp * (csL + csR);
+    const fp_t p_mid = 0.5_fp * (pL + pR + (wL(IV) - wR(IV)) * rho_avg * cs_avg);
 
     // compute L, R sound speed
     const fp_t cLstar = (p_mid <= wL(I(Prim::Pres)))
-                            ? FP(1.0)
-                            : std::sqrt(FP(1.0) + (eos.gamma + FP(1.0)) / (FP(2.0) * eos.gamma) * (p_mid / wL(I(Prim::Pres)) - FP(1.0)));
+                            ? 1.0_fp
+                            : std::sqrt(1.0_fp + (eos.gamma + 1.0_fp) / (2.0_fp * eos.gamma) * (p_mid / wL(I(Prim::Pres)) - 1.0_fp));
     const fp_t cRstar = (p_mid <= wR(I(Prim::Pres)))
-                            ? FP(1.0)
-                            : std::sqrt(FP(1.0) + (eos.gamma + FP(1.0)) / (FP(2.0) * eos.gamma) * (p_mid / wR(I(Prim::Pres)) - FP(1.0)));
+                            ? 1.0_fp
+                            : std::sqrt(1.0_fp + (eos.gamma + 1.0_fp) / (2.0_fp * eos.gamma) * (p_mid / wR(I(Prim::Pres)) - 1.0_fp));
 
     // compute min/max wave speeds based on L/R
     const fp_t aL = wL(IV) - csL * cLstar;
@@ -127,7 +127,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const QtyView& wL, cons
     // determine contact wave speed
     const fp_t aM = (tL - tR) / (mL + mR);
     // pressure at contact surface
-    const fp_t cp = std::max((mL * tR + mR * tL) / (mL + mR), FP(0.0));
+    const fp_t cp = std::max((mL * tR + mR * tL) / (mL + mR), 0.0_fp);
 
     // compute L/R fluxes along clamped line bm, bp
     vxL = wL(IV) - bM;
@@ -157,12 +157,12 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const QtyView& wL, cons
 
     // compute flux weights
     fp_t sL, sR, sM;
-    if (aM >= FP(0.0)) {
+    if (aM >= 0.0_fp) {
         sL = aM / (aM - bM);
-        sR = FP(0.0);
+        sR = 0.0_fp;
         sM = -bM / (aM - bM);
     } else {
-        sL = FP(0.0);
+        sL = 0.0_fp;
         sR = -aM / (bP - aM);
         sM = bP / (bP - aM);
     }

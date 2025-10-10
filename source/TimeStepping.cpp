@@ -20,7 +20,7 @@ void integrate_flux(const std::string& step_name, const GridSize& sz, const Flux
             const int i = ii + sz.ng;
             #pragma unroll
             for (int var = 0; var < flux.Fx.extent(0); ++var) {
-                fp_t q_update = FP(0.0);
+                fp_t q_update = 0.0_fp;
                 q_update += flux.Fx(var, k, j, i) - flux.Fx(var, k, j, i+1);
                 if constexpr (NumDim > 1) {
                     q_update += flux.Fy(var, k, j, i) - flux.Fy(var, k, j+1, i);
@@ -63,7 +63,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    sim.dt_sub = FP(0.5) * dt;
+    sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -76,7 +76,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
         KOKKOS_LAMBDA (const int var, const int k, const int j, const int i, fp_t q_update) {
             q_update *= dt / state.dx;
             const fp_t source = S(var, k, j, i) * dt;
-            state.Q(var, k, j, i) = FP(0.5) * (Q_old(var, k, j, i) + state.Q(var, k, j, i) + q_update + source);
+            state.Q(var, k, j, i) = 0.5_fp * (Q_old(var, k, j, i) + state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
 
@@ -133,7 +133,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     });
     Kokkos::fence();
 
-    sim.dt_sub = FP(0.25) * dt;
+    sim.dt_sub = 0.25_fp * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -146,11 +146,11 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
         KOKKOS_LAMBDA (const int var, const int k, const int j, const int i, fp_t q_update) {
             q_update *= dt / state.dx;
             const fp_t source = S(var, k, j, i) * dt;
-            state.Q(var, k, j, i) = FP(0.75) * Q_old(var, k, j, i) + FP(0.25) * (state.Q(var, k, j, i) + q_update + source);
+            state.Q(var, k, j, i) = 0.75_fp * Q_old(var, k, j, i) + 0.25_fp * (state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
 
-    sim.dt_sub = (FP(2.0) / FP(3.0)) * dt;
+    sim.dt_sub = (2.0_fp / 3.0_fp) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -163,7 +163,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
         KOKKOS_LAMBDA (const int var, const int k, const int j, const int i, fp_t q_update) {
             q_update *= dt / state.dx;
             const fp_t source = S(var, k, j, i) * dt;
-            state.Q(var, k, j, i) = (FP(1.0) / FP(3.0)) * Q_old(var, k, j, i) + (FP(2.0) / FP(3.0)) * (state.Q(var, k, j, i) + q_update + source);
+            state.Q(var, k, j, i) = (1.0_fp / 3.0_fp) * Q_old(var, k, j, i) + (2.0_fp / 3.0_fp) * (state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
 
@@ -203,7 +203,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     const auto& S = sim.sources.S;
     sim.dt = dt;
 
-    sim.dt_sub = FP(0.5) * dt;
+    sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
@@ -216,11 +216,11 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
         KOKKOS_LAMBDA (const int var, const int k, const int j, const int i, fp_t q_update) {
             q_update *= dt / state.dx;
             const fp_t source = S(var, k, j, i) * dt;
-            state.Q(var, k, j, i) += FP(0.5) * (q_update + source);
+            state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
 
-    sim.dt_sub = FP(0.5) * dt;
+    sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -233,11 +233,11 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
         KOKKOS_LAMBDA (const int var, const int k, const int j, const int i, fp_t q_update) {
             q_update *= dt / state.dx;
             const fp_t source = S(var, k, j, i) * dt;
-            state.Q(var, k, j, i) += FP(0.5) * (q_update + source);
+            state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
 
-    sim.dt_sub = (FP(1.0) / FP(6.0)) * dt;
+    sim.dt_sub = (1.0_fp / 6.0_fp) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -250,11 +250,11 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
         KOKKOS_LAMBDA (const int var, const int k, const int j, const int i, fp_t q_update) {
             q_update *= dt / state.dx;
             const fp_t source = S(var, k, j, i) * dt;
-            state.Q(var, k, j, i) = (FP(2.0) / FP(3.0)) * Q_old(var, k, j, i) + (FP(1.0) / FP(3.0)) * state.Q(var, k, j, i) + (FP(1.0) / (6.0)) * (q_update + source);
+            state.Q(var, k, j, i) = (2.0_fp / 3.0_fp) * Q_old(var, k, j, i) + (1.0_fp / 3.0_fp) * state.Q(var, k, j, i) + (1.0_fp / (6.0)) * (q_update + source);
     });
     Kokkos::fence();
 
-    sim.dt_sub = FP(0.5) * dt;
+    sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
@@ -267,7 +267,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
         KOKKOS_LAMBDA (const int var, const int k, const int j, const int i, fp_t q_update) {
             q_update *= dt / state.dx;
             const fp_t source = S(var, k, j, i) * dt;
-            state.Q(var, k, j, i) += FP(0.5) * (q_update + source);
+            state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
 

@@ -40,8 +40,8 @@ struct Simulation {
     fp_t max_cfl;
     f64 time;
     f64 max_time;
-    fp_t dt = FP(0.0);
-    fp_t dt_sub = FP(0.0);
+    fp_t dt = 0.0_fp;
+    fp_t dt_sub = 0.0_fp;
     Eos eos;
     State state;
     ReconScratch recon_scratch;

@@ -15,22 +15,22 @@ void linear_waves_impl(Simulation& sim, fp_t amp, fp_t vflow) {
     const auto& sz = state.sz;
 
     constexpr int axis = 0;
-    const fp_t k_par = FP(2.0) * M_PI / ((sz.xc - 2 * sz.ng) * state.dx);
+    const fp_t k_par = 2.0_fp * M_PI / ((sz.xc - 2 * sz.ng) * state.dx);
 
     dex_parallel_for(
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
             vec3 p = state.get_pos(i, j, k);
             const fp_t sx = std::sin(k_par * p(axis));
-            yakl::SArray<fp_t, 1, n_hydro> w(FP(0.0));
+            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
             CellIndex idx {
                 .i = i,
                 .j = j,
                 .k = k
             };
-            w(I(Prim::Rho)) = FP(1.0) + amp * sx;
-            w(I(Prim::Vx)) = FP(1.0) + amp * sx;
-            w(I(Prim::Pres)) = FP(1.0) / eos.gamma;
+            w(I(Prim::Rho)) = 1.0_fp + amp * sx;
+            w(I(Prim::Vx)) = 1.0_fp + amp * sx;
+            w(I(Prim::Pres)) = 1.0_fp / eos.gamma;
             prim_to_cons<NumDim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
@@ -39,7 +39,7 @@ void linear_waves_impl(Simulation& sim, fp_t amp, fp_t vflow) {
 MOSSCAP_NEW_PROBLEM(linear_waves) {
     MOSSCAP_PROBLEM_PREAMBLE(linear_waves);
 
-    sim.max_time = get_or<fp_t>(config, "timestep.max_time", FP(0.038));
+    sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.038_fp);
 
     auto& bd = sim.state.boundaries;
     auto set_boundary = [&](BoundaryType& out, const std::string& bdry) {
@@ -47,8 +47,8 @@ MOSSCAP_NEW_PROBLEM(linear_waves) {
         out = find_associated_enum<BoundaryType>(BoundaryTypeName, NumBoundaryType, bdry_string);
     };
 
-    fp_t vflow = get_or<fp_t>(config, "problem.v_flow", FP(0.0));
-    fp_t amp = get_or<fp_t>(config, "problem.amplitude", FP(1.0));
+    fp_t vflow = get_or<fp_t>(config, "problem.v_flow", 0.0_fp);
+    fp_t amp = get_or<fp_t>(config, "problem.amplitude", 1.0_fp);
 
     set_boundary(bd.xs, "xs");
     set_boundary(bd.xe, "xe");

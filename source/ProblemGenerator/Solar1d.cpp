@@ -34,7 +34,7 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
     // launch_dims[Axis] = 2 * ng;
     launch_dims[Axis] = 1;
 
-    constexpr fp_t g_x = -FP(274.0);
+    constexpr fp_t g_x = -274.0_fp;
     fp_t dt_sub = sim.dt_sub;
 
     dex_parallel_for(
@@ -89,31 +89,31 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
                     yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
                     cons_to_prim<NumDim>(eos.gamma, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
-                    fp_t p = w(I(Prim::Pres)) - FP(0.5) * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * g_x * state.dx;
+                    fp_t p = w(I(Prim::Pres)) - 0.5_fp * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * g_x * state.dx;
                     // const fp_t dP_dz = h_mass * gravity;
                     // add that contribution to rho and eint
                     // flip or set momentum to 0
 
                     // Assume all change in pressure from rho
                     Q_view(I(Cons::Rho)) = p / w(I(Prim::Pres)) * w(I(Prim::Rho));
-                    Q_view(IM) = FP(0.0);
+                    Q_view(IM) = 0.0_fp;
                     if (time >= driver.start_time) {
                         const fp_t cs = sound_speed<num_dim>(eos.gamma, w);
-                        const fp_t vbase = driver.amplitude * cs * std::sin((FP(2.0) * M_PI) / driver.period * time);
+                        const fp_t vbase = driver.amplitude * cs * std::sin((2.0_fp * M_PI) / driver.period * time);
                         Q_view(IM) = Q_view(I(Cons::Rho)) * vbase;
                     }
                     // Diode condition
-                    // if (Q_edge(IM) > FP(0.0)) {
+                    // if (Q_edge(IM) > 0.0_fp) {
                     //     Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     // }
-                    Q_view(I(Cons::Ene)) = p / (eos.gamma - FP(1.0)) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
                     // for (int var = 0; var < state.Q.extent(0); ++var) {
                     //     Q_view(var) = Q_edge(var);
                     // }
 
                     // const fp_t prev_mom2 = square(Q_view(IM));
                     // Q_view(IM) = -(Q_flip(IM) / Q_flip(I(Cons::Rho))) * Q_view(I(Cons::Rho));
-                    // Q_view(IM) -= FP(1.001) * g_x * dt_sub * Q_view(I(Cons::Rho));
+                    // Q_view(IM) -= 1.001_fp * g_x * dt_sub * Q_view(I(Cons::Rho));
                     // const fp_t new_mom2 = square(Q_view(IM));
                     // Q_view(I(Cons::Ene)) += (new_mom2 - prev_mom2) / Q_view(I(Cons::Rho));
                 }
@@ -172,26 +172,26 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
                     yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
                     cons_to_prim<NumDim>(eos.gamma, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
-                    fp_t p = w(I(Prim::Pres)) + FP(0.5) * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * g_x * state.dx;
+                    fp_t p = w(I(Prim::Pres)) + 0.5_fp * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * g_x * state.dx;
                     // const fp_t dP_dz = h_mass * gravity;
                     // add that contribution to rho and eint
                     // flip or set momentum to 0
 
                     // Assume all change in pressure from rho
                     Q_view(I(Cons::Rho)) = p / w(I(Prim::Pres)) * w(I(Prim::Rho));
-                    Q_view(IM) = FP(0.0);
+                    Q_view(IM) = 0.0_fp;
                     // Diode condition
-                    if (Q_edge(IM) > FP(0.0)) {
+                    if (Q_edge(IM) > 0.0_fp) {
                         Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     }
-                    Q_view(I(Cons::Ene)) = p / (eos.gamma - FP(1.0)) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
                     // for (int var = 0; var < state.Q.extent(0); ++var) {
                     //     Q_view(var) = Q_edge(var);
                     // }
 
                     // const fp_t prev_mom2 = square(Q_view(IM));
                     // Q_view(IM) = -(Q_flip(IM) / Q_flip(I(Cons::Rho))) * Q_view(I(Cons::Rho));
-                    // Q_view(IM) -= FP(1.001) * g_x * dt_sub * Q_view(I(Cons::Rho));
+                    // Q_view(IM) -= 1.001_fp * g_x * dt_sub * Q_view(I(Cons::Rho));
                     // const fp_t new_mom2 = square(Q_view(IM));
                     // Q_view(I(Cons::Ene)) += (new_mom2 - prev_mom2) / Q_view(I(Cons::Rho));
                 }
@@ -252,7 +252,7 @@ KOKKOS_INLINE_FUNCTION T interp(
     int idx = idxp - 1;
 
     T t = (x(idxp) - alpha) / (x(idxp) - x(idx));
-    return t * y(idx) + (FP(1.0) - t) * y(idxp);
+    return t * y(idx) + (1.0_fp - t) * y(idxp);
 }
 
 template <typename T=fp_t, int mem_space=yakl::memDevice>
@@ -288,7 +288,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
     nc.read(base_nh, "base_nhtot");
 
     const bool ideal = sim.eos.is_constant;
-    const bool ion_frac = ideal ? sim.eos.y : FP(1.0);
+    const bool ion_frac = ideal ? sim.eos.y : 1.0_fp;
     fmt::println("Is Ideal: {}", ideal);
 
     const auto& state = sim.state;
@@ -377,7 +377,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
                 int ii = std::max(i, sz.ng);
                 Q(I(Cons::Rho), k, j, i) = rho_d(ii);
                 Q(I(Cons::Ene), k, j, i) = eint_d(ii);
-                Q(I(Cons::MomX), k, j, i) = FP(0.0);
+                Q(I(Cons::MomX), k, j, i) = 0.0_fp;
             }
         );
         Kokkos::fence();
@@ -385,9 +385,9 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
 
     setup_gravity(sim, config);
     OurWaveDriver driver{
-        .start_time = get_or<fp_t>(config, "problem.drive_start", FP(0.0)),
-        .period = get_or<fp_t>(config, "problem.period", FP(300.0)),
-        .amplitude = get_or<fp_t>(config, "problem.amplitude", FP(0.01))
+        .start_time = get_or<fp_t>(config, "problem.drive_start", 0.0_fp),
+        .period = get_or<fp_t>(config, "problem.period", 300.0_fp),
+        .amplitude = get_or<fp_t>(config, "problem.amplitude", 0.01_fp)
     };
     sim.user_bc = [=](const Simulation& sim){
         fill_one_bc_hse<0, num_dim>(sim, driver);
