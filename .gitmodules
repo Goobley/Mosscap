@@ -7,3 +7,6 @@
 [submodule "yaml-cpp"]
 	path = yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp.git
+[submodule "DexRT"]
+	path = DexRT
+	url = https://github.com/Goobley/DexRT.git
