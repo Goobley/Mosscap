@@ -53,6 +53,12 @@ int main(int argc, char** argv) {
 
         while (sim.time < sim.max_time) {
             const f64 dt = compute_dt(sim);
+            if (sim.dex.interface_config.enable) {
+                sim.dex.iterate(DexConvergence{
+                    .convergence=1e-3_fp,
+                    .max_iter=200
+                });
+            }
             sim.time_step(sim, dt);
             if (sim.time >= sim.out_cfg.prev_output_time + sim.out_cfg.delta) {
                 sim.write_output(sim);

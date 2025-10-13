@@ -22,6 +22,7 @@ SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Kokkos REQUIRED GLOBAL)
+find_package(KokkosKernels REQUIRED)
 
 add_library(yakl INTERFACE)
 target_include_directories(yakl INTERFACE YAKL/src YAKL/external YAKL/src/extensions)
@@ -50,6 +51,22 @@ list (APPEND MOSSCAP_PROBLEMS
 list (APPEND MOSSCAP_SOURCE_TERMS
     "source/SourceTerms/Gravity.cpp"
 )
+list(APPEND DEX_SOURCE_FILES
+    "DexRT/source/PromweaverBoundary.cpp"
+    "DexRT/source/ProfileNormalisation.cpp"
+    "DexRT/source/ProbesToCompute.cpp"
+    "DexRT/source/CascadeState.cpp"
+    "DexRT/source/Mipmaps.cpp"
+    "DexRT/source/MiscSparse.cpp"
+    "DexRT/source/DynamicFormalSolution.cpp"
+    "DexRT/source/CoreAndVoigtEmisOpac.cpp"
+    "DexRT/source/DirectionalEmisOpacInterp.cpp"
+    "DexRT/source/Collisions.cpp"
+    "DexRT/source/NgAcceleration.cpp"
+    "DexRT/source/ChargeConservation.cpp"
+    "DexRT/source/Populations.cpp"
+
+)
 list(APPEND MOSSCAP_SOURCE_FILES
     "source/main.cpp"
     "source/Hydro.cpp"
@@ -59,6 +76,7 @@ list(APPEND MOSSCAP_SOURCE_FILES
     "source/DexInterface.cpp"
     ${MOSSCAP_SOURCE_TERMS}
     ${MOSSCAP_PROBLEMS}
+    ${DEX_SOURCE_FILES}
 )
 
 add_executable(mosscap
@@ -105,6 +123,7 @@ target_link_libraries(mosscap yaml-cpp::yaml-cpp)
 target_link_libraries(mosscap argparse)
 target_link_libraries(mosscap git_version)
 target_link_libraries(mosscap Kokkos::kokkos)
+target_link_libraries(mosscap Kokkos::kokkoskernels)
 target_link_libraries(mosscap yakl)
 
 set_target_properties(mosscap PROPERTIES

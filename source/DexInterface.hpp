@@ -17,15 +17,28 @@ namespace Mosscap {
 using DexState = ::State;
 using DexCascState = ::CascadeState;
 
+struct DexMosscapConfig {
+    bool advect = false;
+    bool enable = false;
+    i32 max_mip_level = 0;
+};
+
+struct DexConvergence {
+    Dex::fp_t convergence;
+    i32 max_iter;
+};
+
 struct Simulation;
 
 struct DexInterface {
+    DexMosscapConfig interface_config;
     DexState state;
     DexCascState casc_state;
 
     bool init(Simulation& sim, YAML::Node& config);
     bool init_atmosphere(Simulation& sim, i32 max_mip_level);
     bool update_atmosphere(Simulation& sim);
+    bool iterate(const DexConvergence& tol);
 };
 
 template <typename T, typename U, int rank, int mem_space>

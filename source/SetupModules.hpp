@@ -186,6 +186,10 @@ void setup_output(Simulation& sim, YAML::Node& config) {
 }
 
 void setup_dex(Simulation& sim, YAML::Node& config) {
+    if (!get_or<bool>(config, "dex.enable", false)) {
+        return;
+    }
+
     if (sim.num_dim != 2) {
         throw std::runtime_error("Dex integration only supports 2D models!");
     }
@@ -214,6 +218,7 @@ Simulation setup_sim(YAML::Node& config) {
     if (sim.update_eos) {
         sim.update_eos(sim);
     }
+    setup_dex(sim, config);
     fill_bcs(sim);
     // TODO(cmo): Don't do this on restart
     sim.write_output(sim);
