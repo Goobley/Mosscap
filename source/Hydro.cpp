@@ -23,6 +23,14 @@ void global_cons_to_prim_impl(const Simulation& sim) {
             auto WView = QtyView(state.W, idx);
             auto QView = QtyView(state.Q, idx);
             cons_to_prim<NumDim>(eos.gamma, QView, WView);
+
+            // NOTE(cmo): For each tracer field, scale to mass density
+            using Cons = Cons<NumDim>;
+            const fp_t inv_rho = 1.0_fp / QView(I(Cons::Rho));
+            constexpr i32 n_hydro = N_HYDRO_VARS<NumDim>;
+            for (int i = n_hydro; i < n_hydro + state.num_tracers; ++i) {
+                WView(i) = QView(i) * inv_rho;
+            }
         }
     );
     Kokkos::fence();
@@ -100,6 +108,7 @@ void compute_flux_impl(const Simulation& sim) {
     const auto& fluxes = sim.fluxes;
     const auto& sz = sim.state.sz;
     const auto& eos = sim.eos;
+    int n_tracer = sim.state.num_tracers;
     int nx = sz.xc - 2 * sz.ng;
     int ny = std::max(sz.yc - 2 * sz.ng, 1);
     int nz = std::max(sz.zc - 2 * sz.ng, 1);
@@ -140,6 +149,17 @@ void compute_flux_impl(const Simulation& sim) {
                 rR_view,
                 flux_view
             );
+
+            using Cons = Cons<NumDim>;
+            constexpr i32 n_hydro = N_HYDRO_VARS<NumDim>;
+            for (int v = n_hydro; v < n_hydro + n_tracer; ++v) {
+                // NOTE(cmo): Upwind at the interface
+                if (flux_view(I(Cons::Rho)) >= 0.0_fp) {
+                    flux_view(v) = flux_view(I(Cons::Rho)) * rL_view(v);
+                } else {
+                    flux_view(v) = flux_view(I(Cons::Rho)) * rR_view(v);
+                }
+            }
         }
     );
     Kokkos::fence();

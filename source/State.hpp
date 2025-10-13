@@ -118,6 +118,7 @@ struct State {
     Boundaries boundaries; /// Boundary handling specifications
     Fp4d Q; // Conserved State
     Fp4d W; /// Primitive State
+    i32 num_tracers;
 
     KOKKOS_INLINE_FUNCTION vec3 get_pos(int i, int j=0, int k=0) const {
         vec3 result;

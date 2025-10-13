@@ -21,6 +21,7 @@ struct DexMosscapConfig {
     bool advect = false;
     bool enable = false;
     i32 max_mip_level = 0;
+    i32 field_start_idx = 0;
 };
 
 struct DexConvergence {
@@ -35,10 +36,12 @@ struct DexInterface {
     DexState state;
     DexCascState casc_state;
 
+    bool init_config(Simulation& sim, YAML::Node& config);
     bool init(Simulation& sim, YAML::Node& config);
     bool init_atmosphere(Simulation& sim, i32 max_mip_level);
     bool update_atmosphere(Simulation& sim);
     bool iterate(const DexConvergence& tol);
+    void copy_pops_to_aux_fields();
 };
 
 template <typename T, typename U, int rank, int mem_space>

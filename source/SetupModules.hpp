@@ -37,21 +37,30 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     state.loc.z = get_or<fp_t>(config, "grid.z_start", 0.0_fp);
 
     const int n_hydro = get_num_hydro_vars(sim.num_dim);
-    const int n_extra = get_or<int>(config, "simulation.n_extra_fields", 0);
+    int n_extra = get_or<int>(config, "simulation.n_extra_fields", 0);
+    if (sim.dex.interface_config.enable) {
+        int dex_tracers = sim.dex.state.adata_host.energy.extent(0);
+        if (sim.dex.state.config.conserve_charge) {
+            dex_tracers += 1;
+        }
+        sim.dex.interface_config.field_start_idx = n_extra;
+        n_extra += dex_tracers;
+    }
+    sim.state.num_tracers = n_extra;
     const int n_total = n_hydro + n_extra;
     state.Q = Fp4d("Q", n_total, sz.zc, sz.yc, sz.xc);
     state.W = Fp4d("W", n_total, sz.zc, sz.yc, sz.xc);
     sim.recon_scratch.RR = Fp4d("RR", n_total, sz.zc, sz.yc, sz.xc);
     sim.recon_scratch.RL = Fp4d("RL", n_total, sz.zc, sz.yc, sz.xc);
     // NOTE(cmo): The density flux is just rescaled for the tracer fields
-    sim.fluxes.Fx = Fp4d("Fx", n_hydro, sz.zc, sz.yc, sz.xc);
+    sim.fluxes.Fx = Fp4d("Fx", n_total, sz.zc, sz.yc, sz.xc);
     if (sim.num_dim > 1) {
-        sim.fluxes.Fy = Fp4d("Fy", n_hydro, sz.zc, sz.yc, sz.xc);
+        sim.fluxes.Fy = Fp4d("Fy", n_total, sz.zc, sz.yc, sz.xc);
     }
     if (sim.num_dim > 2) {
-        sim.fluxes.Fz = Fp4d("Fz", n_hydro, sz.zc, sz.yc, sz.xc);
+        sim.fluxes.Fz = Fp4d("Fz", n_total, sz.zc, sz.yc, sz.xc);
     }
-    sim.sources.S = Fp4d("S", n_total, sz.zc, sz.yc, sz.xc);
+    sim.sources.S = Fp4d("S", n_hydro, sz.zc, sz.yc, sz.xc);
 }
 
 void setup_boundaries(Simulation& sim, YAML::Node& config) {
@@ -185,13 +194,21 @@ void setup_output(Simulation& sim, YAML::Node& config) {
     }
 }
 
-void setup_dex(Simulation& sim, YAML::Node& config) {
+void setup_dex_config(Simulation& sim, YAML::Node& config) {
     if (!get_or<bool>(config, "dex.enable", false)) {
         return;
     }
 
     if (sim.num_dim != 2) {
         throw std::runtime_error("Dex integration only supports 2D models!");
+    }
+
+    sim.dex.init_config(sim, config);
+}
+
+void setup_dex(Simulation& sim, YAML::Node& config) {
+    if (!sim.dex.interface_config.enable) {
+        return;
     }
 
     sim.dex.init(sim, config);
@@ -206,6 +223,8 @@ Simulation setup_sim(YAML::Node& config) {
     Simulation sim{};
     sim.num_dim = num_dim;
 
+    // NOTE(cmo): This loads the model atoms etc, needed to setup the tracer fields
+    setup_dex_config(sim, config);
     setup_grid(sim, config);
     setup_boundaries(sim, config);
     setup_hydro_fns(sim, config);
@@ -218,6 +237,7 @@ Simulation setup_sim(YAML::Node& config) {
     if (sim.update_eos) {
         sim.update_eos(sim);
     }
+    // NOTE(cmo): Load the rest of dex, and the starting atmosphere
     setup_dex(sim, config);
     fill_bcs(sim);
     // TODO(cmo): Don't do this on restart

@@ -368,7 +368,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
     return true;
 }
 
-bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
+bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg) {
     auto dex_config = cfg["dex"];
     state.config = parse_dexrt_config("mosscap", dex_config);
 
@@ -392,6 +392,34 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
     GammaAtomsAndMapping gamma_atoms = extract_atoms_with_gamma_and_mapping(atomic_data.device, atomic_data.host);
     state.atoms_with_gamma = gamma_atoms.atoms;
     state.atoms_with_gamma_mapping = gamma_atoms.mapping;
+
+    interface_config.enable = true;
+}
+
+bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
+    auto dex_config = cfg["dex"];
+    // state.config = parse_dexrt_config("mosscap", dex_config);
+
+    // setup_comm(&state);
+
+    using dfp_t = Dex::fp_t;
+
+    const auto& config = state.config;
+    // std::vector<ModelAtom<f64>> crtaf_models;
+    // crtaf_models.reserve(config.atom_paths.size());
+    // for (int i = 0; i < config.atom_paths.size(); ++i) {
+    //     const auto& p = config.atom_paths[i];
+    //     const auto& model_config = config.atom_configs[i];
+    //     crtaf_models.emplace_back(parse_crtaf_model<f64>(p, model_config));
+    // }
+    // AtomicDataHostDevice<dfp_t> atomic_data = to_atomic_data<dfp_t, f64>(crtaf_models);
+    // state.adata = atomic_data.device;
+    // state.adata_host = atomic_data.host;
+    // state.have_h = atomic_data.have_h_model;
+    // state.atoms = extract_atoms(atomic_data.device, atomic_data.host);
+    // GammaAtomsAndMapping gamma_atoms = extract_atoms_with_gamma_and_mapping(atomic_data.device, atomic_data.host);
+    // state.atoms_with_gamma = gamma_atoms.atoms;
+    // state.atoms_with_gamma_mapping = gamma_atoms.mapping;
 
     i32 max_mip_level = 0;
     for (int i = 0; i <= config.max_cascade; ++i) {
@@ -1047,6 +1075,10 @@ void save_results(const DexState& state, const CascadeState& casc_state, i32 num
         nc.write(state.atmos.vturb, "vturb", {"ks"});
     }
     nc.close();
+}
+
+void DexInterface::copy_pops_to_aux_fields() {
+
 }
 
 }

@@ -283,6 +283,32 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
     sim.user_bc = [=](const Simulation& sim) {
         fill_one_bc_hse<1, num_dim>(sim, bc_params);
     };
+
+    const i32 n_extra = sim.state.num_tracers;
+    if (n_extra == 1 && get_or<bool>(config, "problem.dye", false)) {
+        constexpr i32 tracer_idx = n_hydro;
+        constexpr fp_t radius = 1e6_fp;
+        constexpr fp_t p0x = 0.0_fp;
+        constexpr fp_t p0z = 50e6_fp;
+        constexpr fp_t p1x = -3e6_fp;
+        constexpr fp_t p1z = 40e6_fp;
+
+        dex_parallel_for(
+            FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+            KOKKOS_LAMBDA (int k, int j, int i) {
+                state.Q(tracer_idx, k, j, i) = 0.0_fp;
+
+                vec3 pos = state.get_pos(i, j, k);
+
+                if (
+                    (square(pos(0) - p0x) + square(pos(1) - p0z)) <= square(radius) ||
+                    (square(pos(0) - p1x) + square(pos(1) - p1z)) <= square(radius)
+                ){
+                    state.Q(tracer_idx, k, j, i) = 1.0_fp;
+                }
+            }
+        );
+    }
 }
 
 }
