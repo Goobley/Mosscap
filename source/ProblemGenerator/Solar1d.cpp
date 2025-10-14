@@ -35,7 +35,6 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
     launch_dims[Axis] = 1;
 
     constexpr fp_t g_x = -274.0_fp;
-    fp_t dt_sub = sim.dt_sub;
 
     dex_parallel_for(
         kernel_name[Axis],
@@ -301,7 +300,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
 
     static constexpr f64 h_mass = 1.6737830080950003e-27;
     static constexpr f64 k_B = 1.380649e-23;
-    static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
+    // static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
     const f64 mean_mass = eos.avg_mass * h_mass;
     // Set up base values and interpolate run of temperature
     for (int i = 0; i < sz.xc; ++i) {
@@ -367,7 +366,6 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
         auto rho_d = rho.createDeviceCopy();
         auto eint_d = eint.createDeviceCopy();
         const auto& Q = state.Q;
-        const auto& eos = sim.eos;
         using Cons = Cons<num_dim>;
 
         dex_parallel_for(

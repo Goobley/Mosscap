@@ -2,6 +2,7 @@
 #include "Simulation.hpp"
 #include "YAKL_netcdf.h"
 #include "GitVersion.hpp"
+#include "DexInterface.hpp"
 #include <fmt/core.h>
 
 namespace Mosscap {
@@ -90,12 +91,12 @@ void write_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
     int ncid = nc.file.ncid;
     std::string program = "mosscap";
     ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "program", program.size(), program.c_str()),
+        nc_put_att_text(ncid, NC_GLOBAL, "hydro_program", program.size(), program.c_str()),
         __LINE__
     );
     std::string git_hash(GIT_HASH);
     ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "git_hash", git_hash.size(), git_hash.c_str()),
+        nc_put_att_text(ncid, NC_GLOBAL, "hydro_git_hash", git_hash.size(), git_hash.c_str()),
         __LINE__
     );
     ncwrap(
@@ -262,6 +263,10 @@ bool write_output(Simulation& sim) {
                 nc.write1(eos.T_space, "T", {"z", "y", "x"}, time_idx, time_name);
             }
         }
+    }
+
+    if (sim.dex.interface_config.enable) {
+        sim.dex.write_output(sim, nc);
     }
 
     cfg.prev_output_time = sim.time;

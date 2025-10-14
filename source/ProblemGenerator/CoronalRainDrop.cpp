@@ -20,14 +20,11 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
     const auto& bdry = state.boundaries;
     const int ng = state.sz.ng;
     const auto& eos = sim.eos;
-    const fp_t time = sim.time;
 
     constexpr const char* kernel_name[3] = {"Fill BCs x", "Fill BCs y", "Fill BCs z"};
     int dims[3] = {sz.xc, sz.yc, sz.zc};
     int launch_dims[3] = {sz.xc, sz.yc, sz.zc};
     launch_dims[Axis] = 1;
-
-    fp_t dt_sub = sim.dt_sub;
 
     dex_parallel_for(
         kernel_name[Axis],

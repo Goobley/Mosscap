@@ -118,11 +118,6 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
         w(I(Prim::Pres)) = pressure;
         // NOTE(cmo): This could blow up with EOSs that are spatially dependent
         // and not fully configured at this point.
-        CellIndex idx{
-            .i=0,
-            .j=0,
-            .k=0
-        };
         prim_to_cons<num_dim>(eos.gamma, w, state.boundaries.ys_const);
     }
 

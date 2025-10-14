@@ -47,19 +47,23 @@ int main(int argc, char** argv) {
             .set_pool_size_mb(get_or<f64>(config, "system.mem_pool_gb", 2.0) * 1024)
     );
     {
-        Simulation sim = setup_sim(config);
+        Simulation sim = setup_sim(config, config_path);
 
         fill_bcs(sim);
 
         while (sim.time < sim.max_time) {
             const f64 dt = compute_dt(sim);
+            sim.time_step(sim, dt);
+
             if (sim.dex.interface_config.enable) {
+                sim.dex.update_atmosphere(sim);
                 sim.dex.iterate(DexConvergence{
                     .convergence=1e-3_fp,
                     .max_iter=200
-                });
+                    }
+                );
             }
-            sim.time_step(sim, dt);
+
             if (sim.time >= sim.out_cfg.prev_output_time + sim.out_cfg.delta) {
                 sim.write_output(sim);
                 // TODO(cmo): This is printing very small dt due to step rounding... save dt natural too?

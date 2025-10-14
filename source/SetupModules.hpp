@@ -38,12 +38,12 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
 
     const int n_hydro = get_num_hydro_vars(sim.num_dim);
     int n_extra = get_or<int>(config, "simulation.n_extra_fields", 0);
-    if (sim.dex.interface_config.enable) {
+    if (sim.dex.interface_config.enable && sim.dex.interface_config.advect) {
         int dex_tracers = sim.dex.state.adata_host.energy.extent(0);
         if (sim.dex.state.config.conserve_charge) {
             dex_tracers += 1;
         }
-        sim.dex.interface_config.field_start_idx = n_extra;
+        sim.dex.interface_config.field_start_idx = n_hydro + n_extra;
         n_extra += dex_tracers;
     }
     sim.state.num_tracers = n_extra;
@@ -194,7 +194,7 @@ void setup_output(Simulation& sim, YAML::Node& config) {
     }
 }
 
-void setup_dex_config(Simulation& sim, YAML::Node& config) {
+void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& config_path) {
     if (!get_or<bool>(config, "dex.enable", false)) {
         return;
     }
@@ -203,7 +203,9 @@ void setup_dex_config(Simulation& sim, YAML::Node& config) {
         throw std::runtime_error("Dex integration only supports 2D models!");
     }
 
-    sim.dex.init_config(sim, config);
+    bool advect = get_or<bool>(config, "dex.advect", false);
+    sim.dex.interface_config.advect = advect;
+    sim.dex.init_config(sim, config, config_path);
 }
 
 void setup_dex(Simulation& sim, YAML::Node& config) {
@@ -212,9 +214,18 @@ void setup_dex(Simulation& sim, YAML::Node& config) {
     }
 
     sim.dex.init(sim, config);
+    sim.dex.lte_init_aux_fields(sim);
+    sim.dex.iterate(
+        DexConvergence{
+            .convergence = 1e-3_fp,
+            .max_iter = 300,
+        },
+        true
+    );
+    sim.dex.copy_pops_to_aux_fields(sim);
 }
 
-Simulation setup_sim(YAML::Node& config) {
+Simulation setup_sim(YAML::Node& config, const std::string& config_path) {
     // TODO(cmo): Do an early check if problem.name is "from_file", and have a separate path for that.
     const int num_dim = get_or<int>(config, "simulation.num_dim", 0);
     if (num_dim < 1 || num_dim > 3) {
@@ -224,7 +235,7 @@ Simulation setup_sim(YAML::Node& config) {
     sim.num_dim = num_dim;
 
     // NOTE(cmo): This loads the model atoms etc, needed to setup the tracer fields
-    setup_dex_config(sim, config);
+    setup_dex_config(sim, config, config_path);
     setup_grid(sim, config);
     setup_boundaries(sim, config);
     setup_hydro_fns(sim, config);

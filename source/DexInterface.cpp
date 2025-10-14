@@ -78,10 +78,6 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
     constexpr u32 sentinel = std::numeric_limits<u32>::max();
     yakl::Array<u32, 1, yakl::memDevice> active_tiles("active tiles", block_map.morton_traversal_order.extent(0));
 
-    if (interface_config.advect) {
-        throw std::runtime_error("Not set up for advection yet: need to copy the fields back and forth");
-    }
-
     i32 num_active_tiles = 0;
     dex_parallel_reduce(
         "Compute active tiles",
@@ -108,6 +104,9 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
                         y = eos.y_space(idx.k, idx.j, idx.i);
                     }
                     auto temp = temperature_si(w(I(Prim::Pres)), n_baryon, y);
+                    if (z == block_size && x == block_size) {
+                        printf("temp: %e, %d, %d\n", temp, x, z);
+                    }
                     if (temp <= cutoff_temperature) {
                         num_active_tiles += 1;
                         active_tiles(tile_idx) = code;
@@ -119,7 +118,9 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
         },
         Kokkos::Sum<i32>(num_active_tiles)
     );
+    fmt::println("num_active_tiles: {}", num_active_tiles);
 
+    block_map.lookup.entries = -1;
     block_map.num_active_tiles = num_active_tiles;
     block_map.active_tiles = decltype(block_map.active_tiles)("active tiles", num_active_tiles);
     KView<u32*> active_tiles_view(active_tiles.data(), active_tiles.size());
@@ -199,10 +200,21 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
     allocate_cell_count_based_terms(state, num_active_cells);
 
     // TODO(cmo): We can reduce the amount of work performed here.
-    casc_state.init(state, state.config.max_cascade);
+    // casc_state.init(state, state.config.max_cascade);
+    const bool sparse_calc = state.config.sparse_calculation;
+    CascadeStorage c0 = state.c0_size;
+    std::vector<yakl::Array<i32, 2, yakl::memDevice>> active_probes;
+    if (sparse_calc) {
+        active_probes = compute_active_probe_lists(state, state.config.max_cascade);
+    }
+    casc_state.probes_to_compute.init(c0, sparse_calc, active_probes);
+    casc_state.mip_chain.init(state, state.mr_block_map.buffer_len(), c0.wave_batch);
+
+    if (interface_config.advect) {
+        copy_pops_from_aux_fields(sim);
+    }
 
     return true;
-
 }
 
 bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
@@ -368,9 +380,9 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
     return true;
 }
 
-bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg) {
+bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::string& config_path) {
     auto dex_config = cfg["dex"];
-    state.config = parse_dexrt_config("mosscap", dex_config);
+    state.config = parse_dexrt_config(config_path, dex_config);
 
     setup_comm(&state);
 
@@ -394,6 +406,7 @@ bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg) {
     state.atoms_with_gamma_mapping = gamma_atoms.mapping;
 
     interface_config.enable = true;
+    return true;
 }
 
 bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
@@ -473,8 +486,6 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
     allocate_cell_count_based_terms(state, num_active_cells);
     casc_state.init(state, state.config.max_cascade);
 
-    interface_config.enable = true;
-
     return true;
 }
 
@@ -518,8 +529,7 @@ static void finalise_wavelength_batch(const DexState& state, int la_start, int l
     yakl::fence();
 }
 
-void save_results(const DexState& state, const CascadeState& casc_state, i32 num_iter, bool dump_atmos);
-bool DexInterface::iterate(const DexConvergence& tol) {
+bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
     JasUnpack(state, config);
 
     const bool conserve_charge = config.conserve_charge;
@@ -540,7 +550,7 @@ bool DexInterface::iterate(const DexConvergence& tol) {
     wave_dist.init(state.mpi_state, waves.extent(0), state.c0_size.wave_batch);
 
     int i = 0;
-    if (actually_conserve_charge) {
+    if ((first_iter || !interface_config.advect) && actually_conserve_charge) {
         // TODO(cmo): Make all of these parameters configurable
         state.println("-- Iterating LTE n_e/pressure --");
         fp_t lte_max_change = FP(1.0);
@@ -573,12 +583,7 @@ bool DexInterface::iterate(const DexConvergence& tol) {
         state.println("Ran for {} iterations", lte_i);
     }
 
-    auto prev_name = state.config.output_path;
-    state.config.output_path = "pre_iteration_dex_state.nc";
-    save_results(state, casc_state, 0, true);
-    state.config.output_path = prev_name;
-
-    state.println("-- Non-LTE Iterations ({} wavelengths) --", state.adata_host.wavelength.extent(0));
+    // state.println("-- Non-LTE Iterations ({} wavelengths) --", state.adata_host.wavelength.extent(0));
     NgAccelerator ng;
     if (config.ng.enable) {
         ng.init(
@@ -591,7 +596,7 @@ bool DexInterface::iterate(const DexConvergence& tol) {
         );
         ng.accelerate(state, FP(1.0));
     }
-    bool first_iter = true;
+    bool first_inner_iter = true;
     bool accelerated = false;
     fp_t max_change = 1.0_fp;
     while (((max_change > tol.convergence || i < (initial_lambda_iterations+1)) && i < max_iters) || accelerated) {
@@ -607,7 +612,7 @@ bool DexInterface::iterate(const DexConvergence& tol) {
             yakl::fence();
         }
 
-        bool print_worst_wphi = first_iter;
+        bool print_worst_wphi = first_inner_iter;
         compute_profile_normalisation(state, casc_state, print_worst_wphi);
         state.J = FP(0.0);
         if (config.store_J_on_cpu) {
@@ -665,9 +670,12 @@ bool DexInterface::iterate(const DexConvergence& tol) {
             }
         }
         i += 1;
+        first_inner_iter = false;
     }
 
-    save_results(state, casc_state, i, false);
+    if (first_iter) {
+        config.conserve_pressure = false;
+    }
 
     return true;
 }
@@ -697,7 +705,7 @@ void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file
     precision = "f32";
 #endif
     ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "precision", precision.size(), precision.c_str()),
+        nc_put_att_text(ncid, NC_GLOBAL, "rt_precision", precision.size(), precision.c_str()),
         __LINE__
     );
     std::string method(RcConfigurationNames[int(RC_CONFIG)]);
@@ -974,20 +982,28 @@ void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file
     );
 }
 
-void save_results(const DexState& state, const CascadeState& casc_state, i32 num_iter, bool dump_atmos) {
+void save_results(const DexState& state, yakl::SimpleNetCDF& nc, bool single_file) {
     const auto& config = state.config;
     const auto& out_cfg = config.output;
     if (state.mpi_state.rank != 0) {
         return;
     }
 
-    yakl::SimpleNetCDF nc;
-    nc.create(config.output_path, yakl::NETCDF_MODE_REPLACE);
-    state.println("Saving output to {}...", config.output_path);
-    add_netcdf_attributes(state, nc, num_iter);
+    i32 time_idx = 0;
+    if (single_file) {
+        // NOTE(cmo): This is called after mosscap has already extended the time axis
+        time_idx = nc.getDimSize("time") - 1;
+        time_idx = std::max(time_idx, 0);
+    }
     const auto& block_map = state.mr_block_map.block_map;
 
     bool sparse_J = state.config.sparse_calculation && (state.J.extent(1) == state.atmos.temperature.extent(0));
+    auto convert_name = [&](const std::string& name) {
+        if (single_file) {
+            return fmt::format("{}_{}", name, time_idx);
+        }
+        return name;
+    };
 
     auto maybe_rehydrate_and_write = [&](
         auto arr,
@@ -996,11 +1012,11 @@ void save_results(const DexState& state, const CascadeState& casc_state, i32 num
     ) {
         auto& dim_names = leading_dim_names;
         if (out_cfg.sparse) {
-            dim_names.insert(dim_names.end(), {"ks"});
+            dim_names.insert(dim_names.end(), {convert_name("ks")});
             nc.write(arr, name, dim_names);
         } else {
             auto hydrated = rehydrate_sparse_quantity(block_map, arr);
-            dim_names.insert(dim_names.end(), {"z", "x"});
+            dim_names.insert(dim_names.end(), {"z_dex", "x_dex"});
             nc.write(hydrated, name, dim_names);
         }
     };
@@ -1008,77 +1024,186 @@ void save_results(const DexState& state, const CascadeState& casc_state, i32 num
     if (out_cfg.J) {
         if (config.store_J_on_cpu) {
             if (sparse_J) {
-                maybe_rehydrate_and_write(state.J_cpu, "J", {"wavelength"});
+                maybe_rehydrate_and_write(state.J_cpu, convert_name("J"), {"wavelength"});
             } else {
                 auto J_full = state.J_cpu.reshape(state.J_cpu.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
-                nc.write(J_full, "J", {"wavelength", "z", "x"});
+                nc.write(J_full, convert_name("J"), {"wavelength", "z_dex", "x_dex"});
             }
         } else {
             if (sparse_J) {
-                maybe_rehydrate_and_write(state.J, "J", {"wavelength"});
+                maybe_rehydrate_and_write(state.J, convert_name("J"), {"wavelength"});
             } else {
                 auto J_full = state.J.reshape(state.J.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
-                nc.write(J_full, "J", {"wavelength", "z", "x"});
+                nc.write(J_full, convert_name("J"), {"wavelength", "z_dex", "x_dex"});
             }
         }
-        nc.write(state.max_block_mip, "max_mip_block", {"wavelength_batch", "tile_z", "tile_x"});
+        nc.write(state.max_block_mip, convert_name("max_mip_block"), {"wavelength_batch", "tile_z", "tile_x"});
     }
 
     if (out_cfg.wavelength && state.adata.wavelength.initialized()) {
         nc.write(state.adata.wavelength, "wavelength", {"wavelength"});
     }
     if (out_cfg.pops && state.pops.initialized()) {
-        maybe_rehydrate_and_write(state.pops, "pops", {"level"});
+        maybe_rehydrate_and_write(state.pops, convert_name("pops"), {"level"});
     }
     if (out_cfg.lte_pops) {
         auto lte_pops = state.pops.createDeviceObject();
         compute_lte_pops(&state, lte_pops);
         yakl::fence();
-        maybe_rehydrate_and_write(lte_pops, "lte_pops", {"level"});
+        maybe_rehydrate_and_write(lte_pops, convert_name("lte_pops"), {"level"});
     }
     if (out_cfg.ne && state.atmos.ne.initialized()) {
-        maybe_rehydrate_and_write(state.atmos.ne, "ne", {});
+        maybe_rehydrate_and_write(state.atmos.ne, convert_name("ne"), {});
     }
     if (out_cfg.nh_tot && state.atmos.nh_tot.initialized()) {
-        maybe_rehydrate_and_write(state.atmos.nh_tot, "nh_tot", {});
+        maybe_rehydrate_and_write(state.atmos.nh_tot, convert_name("nh_tot"), {});
     }
-    if (out_cfg.psi_star && casc_state.psi_star.initialized()) {
-        nc.write(casc_state.psi_star, "psi_star", {"casc_shape"});
-    }
+    // if (out_cfg.psi_star && casc_state.psi_star.initialized()) {
+    //     nc.write(casc_state.psi_star, convert_name("psi_star"), {"casc_shape"});
+    // }
     if (out_cfg.active) {
         // NOTE(cmo): Currently active is always written dense
         const auto& active_char = reify_active_c0(block_map);
-        nc.write(active_char, "active", {"z", "x"});
+        nc.write(active_char, convert_name("active"), {"z_dex", "x_dex"});
     }
-    for (int casc : out_cfg.cascades) {
-        // NOTE(cmo): The validity of these + necessary warning were checked/output in the config parsing step
-        std::string name = fmt::format("I_C{}", casc);
-        std::string shape = fmt::format("casc_shape_{}", casc);
-        nc.write(casc_state.i_cascades[casc], name, {shape});
-        if constexpr (STORE_TAU_CASCADES) {
-            name = fmt::format("tau_C{}", casc);
-            nc.write(casc_state.tau_cascades[casc], name, {shape});
-        }
-    }
+    // for (int casc : out_cfg.cascades) {
+    //     // NOTE(cmo): The validity of these + necessary warning were checked/output in the config parsing step
+    //     std::string name = fmt::format("I_C{}", casc);
+    //     std::string shape = fmt::format("casc_shape_{}", casc);
+    //     nc.write(casc_state.i_cascades[casc], name, {shape});
+    //     if constexpr (STORE_TAU_CASCADES) {
+    //         name = fmt::format("tau_C{}", casc);
+    //         nc.write(casc_state.tau_cascades[casc], name, {shape});
+    //     }
+    // }
     if (out_cfg.sparse) {
-        nc.write(block_map.active_tiles, "morton_tiles", {"num_active_tiles"});
+        nc.write(block_map.active_tiles, convert_name("morton_tiles"), {convert_name("num_active_tiles")});
     }
-    if (dump_atmos) {
-        nc.write(state.atmos.temperature, "temperature", {"ks"});
-        nc.write(state.atmos.pressure, "pressure", {"ks"});
-        nc.write(state.atmos.nh_tot, "nh_tot", {"ks"});
-        nc.write(state.atmos.nh0, "nh0", {"ks"});
-        nc.write(state.atmos.ne, "ne", {"ks"});
-        nc.write(state.atmos.vx, "vx", {"ks"});
-        nc.write(state.atmos.vy, "vy", {"ks"});
-        nc.write(state.atmos.vz, "vz", {"ks"});
-        nc.write(state.atmos.vturb, "vturb", {"ks"});
-    }
-    nc.close();
 }
 
-void DexInterface::copy_pops_to_aux_fields() {
+void DexInterface::write_output(const Simulation& sim, yakl::SimpleNetCDF& nc) {
+    const auto& cfg = sim.out_cfg;
+    if (cfg.prev_output_time < 0.0_fp || !cfg.single_file) {
+        add_netcdf_attributes(state, nc, num_iter);
+    }
+    save_results(state, nc, cfg.single_file);
+}
 
+void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
+    if (!interface_config.advect || !interface_config.enable) {
+        return;
+    }
+
+    JasUnpack(state, mr_block_map, atmos, pops);
+    const auto& block_map = mr_block_map.block_map;
+    const auto& Q = sim.state.Q;
+
+    const i32 start_idx = interface_config.field_start_idx;
+    dex_parallel_for(
+        "Pops -> Tracers",
+        FlatLoop<2>(block_map.loop_bounds()),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(mr_block_map);
+            const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+
+            Q(start_idx, 0, coord.z, coord.x) = atmos.ne(ks);
+            for (int v = start_idx + 1; v < Q.extent(0); ++v) {
+                Q(v, 0, coord.z, coord.x) = pops(v - (start_idx + 1), ks);
+            }
+        }
+    );
+    Kokkos::fence();
+}
+
+void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
+    if (!interface_config.advect || !interface_config.enable) {
+        return;
+    }
+
+    JasUnpack(state, mr_block_map, atmos, pops);
+    const auto& block_map = mr_block_map.block_map;
+    const auto& Q = sim.state.Q;
+
+    const i32 start_idx = interface_config.field_start_idx;
+    dex_parallel_for(
+        "Tracers -> Pops",
+        FlatLoop<2>(block_map.loop_bounds()),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(mr_block_map);
+            const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+
+            atmos.ne(ks) = Q(start_idx, 0, coord.z, coord.x);
+            for (int v = start_idx + 1; v < Q.extent(0); ++v) {
+                pops(v - (start_idx + 1), ks) = Q(v, 0, coord.z, coord.x);
+            }
+            // TODO(cmo): May need to renormalise per species here
+        }
+    );
+    Kokkos::fence();
+}
+
+void DexInterface::lte_init_aux_fields(const Simulation& sim) {
+    if (!interface_config.advect || !interface_config.enable) {
+        return;
+    }
+
+    constexpr fp_t m_p = ConstantsF64::u;
+    constexpr i32 num_dim = 2;
+
+    const auto& Q = sim.state.Q;
+    const auto& sz = sim.state.sz;
+    const auto& eos = sim.eos;
+
+    const i32 tracer_start = interface_config.field_start_idx;
+    for (int ia = 0; ia < state.atoms.size(); ++ia) {
+        const auto& atom = state.atoms[ia];
+        const auto flat_pops = std::remove_cvref_t<decltype(Q)>(
+            "flat_tracer_pops",
+            &Q(tracer_start + 1, 0, 0, 0),
+            atom.energy.size(),
+            Q.extent(1),
+            Q.extent(2),
+            Q.extent(3)
+        ).reshape(atom.energy.size(), Q.extent(1)*Q.extent(2)*Q.extent(3));
+
+        dex_parallel_for(
+            "LTE tracers",
+            FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+            KOKKOS_LAMBDA (i32 k, i32 j, i32 i) {
+                constexpr i32 n_hydro = N_HYDRO_VARS<num_dim>;
+                CellIndex idx{.i = i, .j = j, .k = k};
+                yakl::SArray<fp_t, 1, n_hydro> w;
+                QtyView q(Q, idx);
+                cons_to_prim<num_dim>(eos.gamma, q, w);
+                using Prim = Prim<num_dim>;
+
+                const i64 flat_idx = i + j * sz.xc + k * sz.yc * sz.xc;
+
+                const fp_t pressure = w(I(Prim::Pres));
+                const fp_t nh = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
+                fp_t y = eos.y;
+                if (!eos.is_constant) {
+                    y = eos.y_space(idx.k, idx.j, idx.i);
+                }
+                const fp_t ne = nh * y;
+                const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, y);
+
+                Q(tracer_start, k, j, i) = ne;
+                lte_pops(
+                    atom.energy,
+                    atom.g,
+                    atom.stage,
+                    temperature,
+                    ne,
+                    nh,
+                    flat_pops,
+                    flat_idx
+                );
+            }
+        );
+    }
 }
 
 }

@@ -22,7 +22,6 @@ MOSSCAP_NEW_PROBLEM(kelvin_helmholtz) {
     const auto& eos = sim.eos;
     const auto& sz = state.sz;
 
-    const u64 seed = 123456UL;
     const int axis = get_or<int>(config, "problem.axis", 1);
     std::string source_name = fmt::format("sources.gravity.{}", axis == 0 ? "x" : "y");
     set_if_not_present<fp_t>(config, source_name, -0.1_fp);
