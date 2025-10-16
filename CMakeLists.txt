@@ -65,7 +65,7 @@ list(APPEND DEX_SOURCE_FILES
     "DexRT/source/NgAcceleration.cpp"
     "DexRT/source/ChargeConservation.cpp"
     "DexRT/source/Populations.cpp"
-
+    "DexRT/source/InitialPops.cpp"
 )
 list(APPEND MOSSCAP_SOURCE_FILES
     "source/main.cpp"

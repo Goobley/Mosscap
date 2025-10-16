@@ -42,6 +42,7 @@ struct DexInterface {
     bool init_atmosphere(Simulation& sim, i32 max_mip_level);
     bool update_atmosphere(Simulation& sim);
     bool iterate(const DexConvergence& tol, bool first_iter=false);
+    void copy_nhtot_to_rho(const Simulation& sim);
     void copy_pops_to_aux_fields(const Simulation&);
     void copy_pops_from_aux_fields(const Simulation&);
     void lte_init_aux_fields(const Simulation&);

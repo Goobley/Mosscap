@@ -323,10 +323,11 @@ void select_hydro_fns(Simulation& sim) {
 }
 
 void compute_hydro_fluxes(const Simulation& sim) {
-    global_cons_to_prim(sim);
     if (sim.update_eos) {
         sim.update_eos(sim);
     }
+    global_cons_to_prim(sim);
+
     sim.flux_fns.recon_x(sim);
     sim.flux_fns.flux_x(sim);
 

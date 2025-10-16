@@ -17,9 +17,9 @@ enum class EosType {
     Ideal = 0,
     AnalyticLteH,
     TabulatedLteH,
-    DexrtEos,
+    DexPressure,
 };
-constexpr const char* EosTypeName[] = {"ideal", "analyticlteh", "tabulatedlteh"};
+constexpr const char* EosTypeName[] = {"ideal", "analyticlteh", "tabulatedlteh", "dexpressure"};
 constexpr int NumEosType = sizeof(EosTypeName) / sizeof(EosTypeName[0]);
 
 struct Simulation;

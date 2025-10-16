@@ -272,7 +272,6 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
             prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
         }
     );
-    sim.max_time = get_or<fp_t>(config, "timestep.max_time", 400.0_fp);
     setup_gravity(sim, config);
     BcParams bc_params {
         .g_y = g

@@ -11,6 +11,7 @@ GCC_INCLUDE_PATH=$(g++ --print-file-name=include)
       # We disable warning 174 (Expression has no effect) to avoid warnings
       # related to JasUse, which is in turn necessary to avoid the error related
       # to "first variable use in constexpr-if environment".
+      # -DMOSSCAP_CXX_FLAGS="-O3 --generate-line-info -ftz=true -diag-suppress=174 -DKOKKOS_ENABLE_DEBUG -DMOSSCAP_DEBUG" \
 cmake  \
       -DMOSSCAP_ARCH="CUDA"              \
       -DYAKL_AUTO_PROFILE="On"         \

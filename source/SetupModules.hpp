@@ -222,6 +222,10 @@ void setup_dex(Simulation& sim, YAML::Node& config) {
         },
         true
     );
+    // NOTE(cmo): The first step conserves pressure, but from then on, we simply
+    // load nhtot from rho and conserve charge
+    sim.dex.state.config.conserve_pressure = false;
+    sim.dex.copy_nhtot_to_rho(sim);
     sim.dex.copy_pops_to_aux_fields(sim);
 }
 
@@ -244,13 +248,13 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path) {
     setup_output(sim, config);
     setup_problem(sim, config);
 
-    // Write the header + ICs
+    // NOTE(cmo): Load the rest of dex, and the starting atmosphere
+    setup_dex(sim, config);
     if (sim.update_eos) {
         sim.update_eos(sim);
     }
-    // NOTE(cmo): Load the rest of dex, and the starting atmosphere
-    setup_dex(sim, config);
     fill_bcs(sim);
+    // Write the header + ICs
     // TODO(cmo): Don't do this on restart
     sim.write_output(sim);
 

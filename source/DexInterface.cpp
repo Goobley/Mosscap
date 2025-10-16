@@ -17,6 +17,7 @@
 #include "../DexRT/source/ProfileNormalisation.hpp"
 #include "../DexRT/source/DynamicFormalSolution.hpp"
 #include "../DexRT/source/MiscSparse.hpp"
+#include "../DexRT/source/InitialPops.hpp"
 
 // TODO(cmo): Figure out how to deal with 3D down the line.
 int get_dexrt_dimensionality() {
@@ -51,6 +52,7 @@ static void allocate_J(DexState& state) {
 static void allocate_cell_count_based_terms(DexState& state, i64 num_active_cells) {
     const int n_level_total = state.adata.energy.extent(0);
     state.pops = decltype(state.pops)("pops", n_level_total, num_active_cells);
+    state.Gamma.clear();
     for (int ia = 0; ia < state.adata_host.num_level.extent(0); ++ia) {
         const int n_level = state.adata_host.num_level(ia);
         state.Gamma.emplace_back(
@@ -70,6 +72,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
     auto& block_map = state.mr_block_map.block_map;
     const i32 num_x = block_map.num_x_tiles() * block_size;
     const i32 num_z = block_map.num_z_tiles() * block_size;
+    const auto& sz = sim.state.sz;
 
     const auto& Q = sim.state.Q;
     const auto& eos = sim.eos;
@@ -94,7 +97,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
 
             for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
-                    CellIndex idx{.i = x, .j = z, .k = 0};
+                    CellIndex idx{.i = x + sz.ng, .j = z + sz.ng, .k = 0};
                     const auto q = QtyView(Q, idx);
                     cons_to_prim<num_dim>(eos.gamma, q, w);
 
@@ -104,9 +107,6 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
                         y = eos.y_space(idx.k, idx.j, idx.i);
                     }
                     auto temp = temperature_si(w(I(Prim::Pres)), n_baryon, y);
-                    if (z == block_size && x == block_size) {
-                        printf("temp: %e, %d, %d\n", temp, x, z);
-                    }
                     if (temp <= cutoff_temperature) {
                         num_active_tiles += 1;
                         active_tiles(tile_idx) = code;
@@ -171,7 +171,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
 
             constexpr i32 n_hydro = N_HYDRO_VARS<num_dim>;
-            CellIndex idx{.i = coord.x, .j = coord.z, .k = 0};
+            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
             cons_to_prim<num_dim>(eos.gamma, q, w);
@@ -213,6 +213,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
     if (interface_config.advect) {
         copy_pops_from_aux_fields(sim);
     }
+    fmt::println("Update atmosphere at {:.3f} s", sim.time);
 
     return true;
 }
@@ -276,7 +277,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
 
             for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
-                    CellIndex idx{.i = x, .j = z, .k = 0};
+                    CellIndex idx{.i = x + sz.ng, .j = z + sz.ng, .k = 0};
                     const auto q = QtyView(Q, idx);
                     cons_to_prim<num_dim>(eos.gamma, q, w);
 
@@ -352,7 +353,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
 
             constexpr i32 n_hydro = N_HYDRO_VARS<num_dim>;
-            CellIndex idx{.i = coord.x, .j = coord.z, .k = 0};
+            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
             cons_to_prim<num_dim>(eos.gamma, q, w);
@@ -572,15 +573,17 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
             // meaningfully better after the second iteration
             fp_t nr_update = nr_post_update(&state, NrPostUpdateOptions{
                 .ignore_change_below_ntot_frac = FP(1e-7),
-                .conserve_pressure = false
+                .conserve_pressure = actually_conserve_pressure,
+                .total_abund = FP(1.0),
             });
             lte_max_change = nr_update;
-            if (actually_conserve_pressure) {
-                fp_t nh_tot_update = simple_conserve_pressure(&state);
-                lte_max_change = std::max(nh_tot_update, lte_max_change);
-            }
+            // if (actually_conserve_pressure) {
+            //     fp_t nh_tot_update = simple_conserve_pressure(&state);
+            //     lte_max_change = std::max(nh_tot_update, lte_max_change);
+            // }
         }
         state.println("Ran for {} iterations", lte_i);
+        set_initial_pops_special(&state);
     }
 
     // state.println("-- Non-LTE Iterations ({} wavelengths) --", state.adata_host.wavelength.extent(0));
@@ -645,20 +648,17 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
                 .ignore_change_below_ntot_frac=std::min(FP(1e-6), tol.convergence)
             }
         );
-        if (i > 0 && actually_conserve_charge) {
+        if (actually_conserve_charge) {
             fp_t nr_update = nr_post_update(
                 &state,
                 NrPostUpdateOptions{
                     .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence),
-                    .conserve_pressure = CONSERVE_PRESSURE_NR && actually_conserve_pressure
+                    .conserve_pressure = actually_conserve_pressure,
+                    .total_abund = FP(1.0)
                 }
             );
             wave_dist.update_ne(&state);
             max_change = std::max(nr_update, max_change);
-            if (!CONSERVE_PRESSURE_NR && actually_conserve_pressure) {
-                fp_t nh_tot_update = simple_conserve_pressure(&state);
-                max_change = std::max(nh_tot_update, max_change);
-            }
             if (actually_conserve_pressure) {
                 wave_dist.update_nh_tot(&state);
             }
@@ -676,12 +676,13 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
     if (first_iter) {
         config.conserve_pressure = false;
     }
+    num_iter = i;
 
     return true;
 }
 
 /// Add Dex's metadata to the file using attributes. The netcdf layer needs extending to do this, so I'm just throwing it in manually.
-void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file, i32 num_iter) {
+void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file) {
     const auto ncwrap = [&] (int ierr, int line) {
         if (ierr != NC_NOERR) {
             state.println("NetCDF Error writing attributes at main.cpp:{}", line);
@@ -902,10 +903,10 @@ void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file
         nc_put_att_text(ncid, NC_GLOBAL, "timing", timer_data.size(), timer_data.c_str()),
         __LINE__
     );
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "num_iter", NC_INT, 1, &num_iter),
-        __LINE__
-    );
+    // ncwrap(
+    //     nc_put_att_int(ncid, NC_GLOBAL, "num_iter", NC_INT, 1, &num_iter),
+    //     __LINE__
+    // );
 
     std::string output_format = state.config.output.sparse ? "sparse" : "full";
     ncwrap(
@@ -982,7 +983,7 @@ void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file
     );
 }
 
-void save_results(const DexState& state, yakl::SimpleNetCDF& nc, bool single_file) {
+void save_results(const DexState& state, yakl::SimpleNetCDF& nc, bool single_file, i32 num_iter) {
     const auto& config = state.config;
     const auto& out_cfg = config.output;
     if (state.mpi_state.rank != 0) {
@@ -996,6 +997,12 @@ void save_results(const DexState& state, yakl::SimpleNetCDF& nc, bool single_fil
         time_idx = std::max(time_idx, 0);
     }
     const auto& block_map = state.mr_block_map.block_map;
+
+    if (single_file) {
+        nc.write1(num_iter, "dex_num_iter", time_idx, "time");
+    } else {
+        nc.write(num_iter, "dex_num_iter");
+    }
 
     bool sparse_J = state.config.sparse_calculation && (state.J.extent(1) == state.atmos.temperature.extent(0));
     auto convert_name = [&](const std::string& name) {
@@ -1057,6 +1064,7 @@ void save_results(const DexState& state, yakl::SimpleNetCDF& nc, bool single_fil
     }
     if (out_cfg.nh_tot && state.atmos.nh_tot.initialized()) {
         maybe_rehydrate_and_write(state.atmos.nh_tot, convert_name("nh_tot"), {});
+        maybe_rehydrate_and_write(state.atmos.temperature, convert_name("temperature"), {});
     }
     // if (out_cfg.psi_star && casc_state.psi_star.initialized()) {
     //     nc.write(casc_state.psi_star, convert_name("psi_star"), {"casc_shape"});
@@ -1084,9 +1092,39 @@ void save_results(const DexState& state, yakl::SimpleNetCDF& nc, bool single_fil
 void DexInterface::write_output(const Simulation& sim, yakl::SimpleNetCDF& nc) {
     const auto& cfg = sim.out_cfg;
     if (cfg.prev_output_time < 0.0_fp || !cfg.single_file) {
-        add_netcdf_attributes(state, nc, num_iter);
+        add_netcdf_attributes(state, nc);
     }
-    save_results(state, nc, cfg.single_file);
+    save_results(state, nc, cfg.single_file, num_iter);
+}
+
+void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
+    if (!interface_config.enable) {
+        return;
+    }
+
+    JasUnpack(state, mr_block_map, atmos);
+    const auto& block_map = mr_block_map.block_map;
+    const auto& Q = sim.state.Q;
+    const auto& sz = sim.state.sz;
+
+    constexpr fp_t m_p = ConstantsF64::u;
+    const auto& eos = sim.eos;
+    constexpr i32 num_dim = 2;
+    using Cons = Cons<num_dim>;
+
+    dex_parallel_for(
+        "nhtot -> rho",
+        FlatLoop<2>(block_map.loop_bounds()),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(mr_block_map);
+            const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
+
+            Q(I(Cons::Rho), idx.k, idx.j, idx.i) = atmos.nh_tot(ks) * eos.avg_mass * m_p;
+        }
+    );
+    Kokkos::fence();
 }
 
 void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
@@ -1097,6 +1135,7 @@ void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
     JasUnpack(state, mr_block_map, atmos, pops);
     const auto& block_map = mr_block_map.block_map;
     const auto& Q = sim.state.Q;
+    const auto& sz = sim.state.sz;
 
     const i32 start_idx = interface_config.field_start_idx;
     dex_parallel_for(
@@ -1106,10 +1145,11 @@ void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
             IdxGen idx_gen(mr_block_map);
             const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
 
-            Q(start_idx, 0, coord.z, coord.x) = atmos.ne(ks);
+            Q(start_idx, idx.k, idx.j, idx.i) = atmos.ne(ks);
             for (int v = start_idx + 1; v < Q.extent(0); ++v) {
-                Q(v, 0, coord.z, coord.x) = pops(v - (start_idx + 1), ks);
+                Q(v, idx.k, idx.j, idx.i) = pops(v - (start_idx + 1), ks);
             }
         }
     );
@@ -1124,6 +1164,7 @@ void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
     JasUnpack(state, mr_block_map, atmos, pops);
     const auto& block_map = mr_block_map.block_map;
     const auto& Q = sim.state.Q;
+    const auto& sz = sim.state.sz;
 
     const i32 start_idx = interface_config.field_start_idx;
     dex_parallel_for(
@@ -1133,14 +1174,46 @@ void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
             IdxGen idx_gen(mr_block_map);
             const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
 
-            atmos.ne(ks) = Q(start_idx, 0, coord.z, coord.x);
+            atmos.ne(ks) = Q(start_idx, idx.k, idx.j, idx.i);
             for (int v = start_idx + 1; v < Q.extent(0); ++v) {
-                pops(v - (start_idx + 1), ks) = Q(v, 0, coord.z, coord.x);
+                pops(v - (start_idx + 1), ks) = Q(v, idx.k, idx.j, idx.i);
             }
-            // TODO(cmo): May need to renormalise per species here
         }
     );
+    Kokkos::fence();
+
+    using dfp_t = Dex::fp_t;
+    for (int ia = 0; ia < state.atoms.size(); ++ia) {
+        const dfp_t abundance = state.adata_host.abundance(ia);
+        const i32 Z = state.adata_host.Z(ia);
+        const auto& nh_tot = state.atmos.nh_tot;
+        const i32 pops_start = state.adata_host.level_start(ia);
+        const i32 num_level = state.adata_host.num_level(ia);
+
+        dex_parallel_for(
+            "Rescale pops",
+            block_map.loop_bounds(),
+            KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+                IdxGen idx_gen(mr_block_map);
+                const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+
+                const dfp_t n_total_k = abundance * nh_tot(ks);
+                dfp_t n_sum = FP(0.0);
+                for (int i = 0; i < num_level; ++i) {
+                    n_sum += pops(pops_start + i, ks);
+                }
+                const dfp_t ratio = n_total_k / n_sum;
+                for (int i = 0; i < num_level; ++i) {
+                    pops(pops_start + i, ks) *= ratio;
+                }
+                if (Z == 1) {
+                    atmos.ne(ks) *= ratio;
+                }
+            }
+        );
+    }
     Kokkos::fence();
 }
 
