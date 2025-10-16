@@ -24,6 +24,7 @@ static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl) {
     const auto& sz = sim.state.sz;
     const fp_t inv_T_peak = 1.0_fp / rl.T_peak;
     const fp_t inv_timescale = 1.0_fp / rl.tau_rad;
+    constexpr fp_t pi = 3.14159265358979312_fp;
 
     dex_parallel_for(
         "Apply rad loss",
@@ -40,7 +41,7 @@ static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl) {
             const fp_t temperature = eos.gamma * w(I(Prim::Pres)) / w(I(Prim::Rho));
             // fp_t loss = (1.0_fp - square(std::tanh(std::log10(temperature * inv_T_peak) * (0.5_fp * M_PI) * 5.0_fp))) / rl.tau_rad;
             // loss *= square(w(I(Prim::Rho)));
-            fp_t loss = 1.0_fp / square(std::cosh(std::log10(temperature * inv_T_peak)) * (1.0_fp / 0.04_fp * M_PIf)) * inv_timescale;
+            fp_t loss = 1.0_fp / square(std::cosh(std::log10(temperature * inv_T_peak)) * (1.0_fp / 0.04_fp * pi)) * inv_timescale;
             S(I(Cons::Ene), k, j, i) += -loss;
         }
     );
