@@ -7,55 +7,86 @@
 
 namespace Mosscap {
 
-template <int NumDim = 1>
+enum class FluidType {
+    Hydro = 0,
+    Mhd,
+};
+constexpr const char* FluidTypeName[] = {
+    "hydro",
+    "mhd",
+};
+constexpr int NumFluidType = sizeof(FluidTypeName) / sizeof(FluidTypeName[0]);
+
+
+template <int NumDim = 1, FluidType Fluid = FluidType::Hydro>
 struct Prim {
     static constexpr i32 Rho = 0;
     static constexpr i32 Vx = 1;
-    static constexpr i32 Vy = NumDim > 1 ? 2 : 1024;
-    static constexpr i32 Vz = NumDim > 2 ? 3 : 1024;
-    static constexpr i32 Pres = 1 + NumDim;
+    static constexpr i32 Vy = (Fluid != FluidType::Hydro || NumDim > 1) ? 2 : 1024;
+    static constexpr i32 Vz = (Fluid != FluidType::Hydro || NumDim > 2) ? 3 : 1024;
+    static constexpr i32 Pres = 1 + NumDim + 2 * (Fluid != FluidType::Hydro);
+    static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
+    static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
+    static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
 };
 
-template <int NumDim = 1>
+template <int NumDim = 1, FluidType Fluid = FluidType::Hydro>
 struct Cons {
     static constexpr i32 Rho = 0;
     static constexpr i32 MomX = 1;
-    static constexpr i32 MomY = NumDim > 1 ? 2 : 1024;
-    static constexpr i32 MomZ = NumDim > 2 ? 3 : 1024;
-    static constexpr i32 Ene = 1 + NumDim;
+    static constexpr i32 MomY = (Fluid != FluidType::Hydro || NumDim > 1) ? 2 : 1024;
+    static constexpr i32 MomZ = (Fluid != FluidType::Hydro || NumDim > 2) ? 3 : 1024;
+    static constexpr i32 Ene = 1 + NumDim + 2 * (Fluid != FluidType::Hydro);
+    static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
+    static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
+    static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
 };
 
-template <int NumDim>
-constexpr int N_HYDRO_VARS = 2 + NumDim;
+template <int NumDim, FluidType Fluid = FluidType::Hydro>
+constexpr int N_HYDRO_VARS = (Fluid == FluidType::Hydro) ? 2 + NumDim : 8;
 
-constexpr int get_num_hydro_vars(int num_dim)  {
-    return 2 + num_dim;
+constexpr int get_num_hydro_vars(int num_dim, FluidType fluid = FluidType::Hydro)  {
+    return (fluid == FluidType::Hydro) ? 2 + num_dim : 8;
 }
+
+template <int NumDim, FluidType fluid>
+struct FluidTraits {
+    static constexpr bool is_mhd = (fluid != FluidType::Hydro);
+    static constexpr int num_dim = NumDim;
+    static constexpr int num_vars = N_HYDRO_VARS<NumDim, fluid>;
+    static constexpr FluidType fluid_type = fluid;
+    typedef Prim<NumDim, fluid> prim;
+    typedef Cons<NumDim, fluid> cons;
+};
 
 template <typename E>
 constexpr int I(E e) {
     return static_cast<int>(e);
 }
 
-template <int Axis, int NumDim>
+/// @brief
+/// @tparam f FluidTraits
+/// @tparam Axis int
+/// @return
+template <int Axis, typename f>
 constexpr int Velocity() {
     if constexpr (Axis == 0) {
-        return I(Prim<NumDim>::Vx);
+        return I(f::prim::Vx);
     } else if constexpr (Axis == 1) {
-        return I(Prim<NumDim>::Vy);
+        return I(f::prim::Vy);
     } else if constexpr (Axis == 2) {
-        return I(Prim<NumDim>::Vz);
+        return I(f::prim::Vz);
     }
 }
 
-template <int Axis, int NumDim>
+template <int Axis, typename f>
 constexpr int Momentum() {
     if constexpr (Axis == 0) {
-        return I(Cons<NumDim>::MomX);
+        return I(f::cons::MomX);
     } else if constexpr (Axis == 1) {
-        return I(Cons<NumDim>::MomY);
+        return I(f::cons::MomY);
     } else if constexpr (Axis == 2) {
-        return I(Cons<NumDim>::MomZ);
+        return I(f::cons::MomZ);
     }
 }
 
