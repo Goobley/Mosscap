@@ -8,7 +8,7 @@
 
 namespace Mosscap {
 
-template <int Axis, int NumDim>
+template <int Axis, typename FTraits>
 inline void fill_one_bc_impl(const State& state) {
     static_assert(Axis < 3, "What are you doing?");
     const auto& sz = state.sz;
@@ -24,8 +24,8 @@ inline void fill_one_bc_impl(const State& state) {
         kernel_name[Axis],
         FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Cons = Cons<NumDim>;
-            constexpr int IM = Momentum<Axis, NumDim>();
+            using Cons = FTraits::cons;
+            constexpr int IM = Momentum<Axis, FTraits>();
             int coord[3] = {ii, ji, ki};
             const int pencil_idx = coord[Axis];
             int cflip = (2 * ng - 1) - coord[Axis];
@@ -118,27 +118,43 @@ inline void fill_one_bc_impl(const State& state) {
     Kokkos::fence();
 }
 
-template <int NumDim>
+template <typename FTraits>
 inline void fill_bcs_impl(const State& state) {
-    fill_one_bc_impl<0, NumDim>(state);
+    constexpr int NumDim = FTraits::num_dim;
+    fill_one_bc_impl<0, FTraits>(state);
     if constexpr (NumDim > 1) {
-        fill_one_bc_impl<1, NumDim>(state);
+        fill_one_bc_impl<1, FTraits>(state);
     }
     if constexpr (NumDim > 2) {
-        fill_one_bc_impl<2, NumDim>(state);
+        fill_one_bc_impl<2, FTraits>(state);
+    }
+}
+
+template <int NumDim>
+inline void fill_bcs_fluid_dispatch(const Simulation& sim) {
+    switch (sim.fluid_type) {
+        case FluidType::Hydro: {
+            fill_bcs_impl<FluidTraits<NumDim, FluidType::Hydro>>(sim.state);
+        } break;
+        case FluidType::Mhd: {
+            fill_bcs_impl<FluidTraits<NumDim, FluidType::Mhd>>(sim.state);
+        } break;
+        default: {
+            KOKKOS_ASSERT(false && "Unknown fluid type");
+        }
     }
 }
 
 inline void fill_bcs(const Simulation& sim) {
     switch (sim.num_dim) {
         case 1: {
-            fill_bcs_impl<1>(sim.state);
+            fill_bcs_fluid_dispatch<1>(sim);
         } break;
         case 2: {
-            fill_bcs_impl<2>(sim.state);
+            fill_bcs_fluid_dispatch<2>(sim);
         } break;
         case 3: {
-            fill_bcs_impl<3>(sim.state);
+            fill_bcs_fluid_dispatch<3>(sim);
         } break;
         default:
             KOKKOS_ASSERT(false && "Weird num dim");

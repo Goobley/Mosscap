@@ -37,6 +37,7 @@ struct SourceTerm {
 
 struct Simulation {
     int num_dim;
+    FluidType fluid_type;
     i64 current_step;
     fp_t max_cfl;
     f64 time;

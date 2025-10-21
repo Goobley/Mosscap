@@ -36,7 +36,11 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     state.loc.y = get_or<fp_t>(config, "grid.y_start", 0.0_fp);
     state.loc.z = get_or<fp_t>(config, "grid.z_start", 0.0_fp);
 
-    const int n_hydro = get_num_hydro_vars(sim.num_dim);
+    const std::string fluid_string = get_or<std::string>(config, "simulation.fluid_type", "hydro");
+    FluidType fluid_type = find_associated_enum<FluidType>(FluidTypeName, NumFluidType, fluid_string);
+    sim.fluid_type = fluid_type;
+
+    const int n_hydro = get_num_hydro_vars(sim.num_dim, fluid_type);
     int n_extra = get_or<int>(config, "simulation.n_extra_fields", 0);
     if (sim.dex.interface_config.enable && sim.dex.interface_config.advect) {
         int dex_tracers = sim.dex.state.adata_host.energy.extent(0);

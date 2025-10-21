@@ -64,10 +64,8 @@ constexpr int I(E e) {
     return static_cast<int>(e);
 }
 
-/// @brief
 /// @tparam f FluidTraits
 /// @tparam Axis int
-/// @return
 template <int Axis, typename f>
 constexpr int Velocity() {
     if constexpr (Axis == 0) {
@@ -87,6 +85,17 @@ constexpr int Momentum() {
         return I(f::cons::MomY);
     } else if constexpr (Axis == 2) {
         return I(f::cons::MomZ);
+    }
+}
+
+template <int Axis, typename f>
+constexpr int MagneticField() {
+    if constexpr (Axis == 0) {
+        return I(f::cons::Bx);
+    } else if constexpr (Axis == 1) {
+        return I(f::cons::By);
+    } else if constexpr (Axis == 2) {
+        return I(f::cons::Bz);
     }
 }
 
@@ -120,12 +129,12 @@ struct Boundaries {
 
     /// Storage for constant boundaries -- may be longer than actual content due
     /// to dimensionality, make sure to loop over the correct number!
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> xs_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> xe_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> ys_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> ye_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> zs_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3>> ze_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> xs_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> xe_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> ys_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> ye_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> zs_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> ze_const;
 };
 
 
@@ -144,6 +153,7 @@ struct GridLoc {
 
 struct State {
     GridSize sz; /// Grid dimensions + number of ghosts
+    fp_t mu0 = 4.0e-7_fp * 3.14159265358979312_fp; /// Value of mu0 used in model
     fp_t dx; /// Spatial grid step (constant)
     GridLoc loc; /// Logical grid position (bottom left corner of cell 0, 0, 0)
     Boundaries boundaries; /// Boundary handling specifications
