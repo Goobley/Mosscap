@@ -11,9 +11,9 @@ struct GravityVals {
     fp_t z;
 };
 
-template <int NumDim>
+template <typename FTraits>
 void gravity_kernel(const Simulation& sim, const GravityVals& grav) {
-    using Cons = Cons<NumDim>;
+    using Cons = FTraits::cons;
 
     const auto& Q = sim.state.Q;
     const auto& S = sim.sources.S;
@@ -25,6 +25,7 @@ void gravity_kernel(const Simulation& sim, const GravityVals& grav) {
         KOKKOS_LAMBDA (int k, int j, int i) {
             S(I(Cons::MomX), k, j, i) += Q(I(Cons::Rho), k, j, i) * grav.x;
             fp_t energy_update = Q(I(Cons::MomX), k, j, i) * grav.x;
+            constexpr i32 NumDim = FTraits::num_dim;
             if constexpr (NumDim > 1) {
                 S(I(Cons::MomY), k, j, i) += Q(I(Cons::Rho), k, j, i) * grav.y;
                 energy_update += Q(I(Cons::MomY), k, j, i) * grav.y;
@@ -49,12 +50,24 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
 
     auto apply_gravity = [=](const Simulation& sim) {
         const int num_dim = sim.num_dim;
-        if (num_dim == 1) {
-            gravity_kernel<1>(sim, grav);
-        } else if (num_dim == 2) {
-            gravity_kernel<2>(sim, grav);
+        if (sim.fluid_type == FluidType::Hydro) {
+            if (num_dim == 1) {
+                gravity_kernel<FluidTraits<1, FluidType::Hydro>>(sim, grav);
+            } else if (num_dim == 2) {
+                gravity_kernel<FluidTraits<2, FluidType::Hydro>>(sim, grav);
+            } else {
+                gravity_kernel<FluidTraits<3, FluidType::Hydro>>(sim, grav);
+            }
+        } else if (sim.fluid_type == FluidType::Mhd) {
+            if (num_dim == 1) {
+                gravity_kernel<FluidTraits<1, FluidType::Mhd>>(sim, grav);
+            } else if (num_dim == 2) {
+                gravity_kernel<FluidTraits<2, FluidType::Mhd>>(sim, grav);
+            } else {
+                gravity_kernel<FluidTraits<3, FluidType::Mhd>>(sim, grav);
+            }
         } else {
-            gravity_kernel<3>(sim, grav);
+            throw std::runtime_error("Unknown fluid type");
         }
     };
 

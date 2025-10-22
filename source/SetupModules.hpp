@@ -2,6 +2,7 @@
 #define MOSSCAP_SETUP_MODULES_HPP
 
 #include "Simulation.hpp"
+#include "DivBCleaning.hpp"
 #include "yaml-cpp/yaml.h"
 
 namespace Mosscap {
@@ -87,6 +88,7 @@ void setup_boundaries(Simulation& sim, YAML::Node& config) {
     }
 
     // TODO(cmo): Check if any are constant, and load the values if so.
+    // TODO(cmo): Make MHD consistent
     auto check_and_load_constant = [&](
         const BoundaryType boundary,
         const decltype(bound.xs_const)& arr,
@@ -248,6 +250,7 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path) {
     setup_boundaries(sim, config);
     setup_hydro_fns(sim, config);
     setup_timestepper(sim, config);
+    setup_divb_cleaning(sim, config);
     setup_eos(sim, config);
     setup_output(sim, config);
     setup_problem(sim, config);

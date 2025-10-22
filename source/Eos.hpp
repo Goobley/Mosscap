@@ -78,7 +78,7 @@ KOKKOS_INLINE_FUNCTION fp_t fast_wave_speed(const fp_t gamma, const fp_t mu0, co
     if constexpr (FTraits::is_mhd) {
         constexpr int IB1 = MagneticField<Axis, FTraits>();
         const fp_t irhomu = irho / mu0;
-        const fp_t ca2 = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz))) * irhomu;
+        const fp_t ca2 = (square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)))) * irhomu;
         const fp_t c_axis2 = square(w(IB1)) * irhomu;
         // NOTE(cmo): This is the positive-definite form used in Athena++. It
         // expands correctly, but looks a bit weird.
@@ -155,11 +155,11 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
 
     constexpr int IV1 = Velocity<Axis, FTraits>();
     constexpr int IV2 = Velocity<(Axis + 1) % 3, FTraits>();
-    constexpr int IV3 = Velocity<(Axis + 1) % 3, FTraits>();
+    constexpr int IV3 = Velocity<(Axis + 2) % 3, FTraits>();
     constexpr int IM1 = Momentum<Axis, FTraits>();
     constexpr int IB1 = MagneticField<Axis, FTraits>();
     constexpr int IB2 = MagneticField<(Axis + 1) % 3, FTraits>();
-    constexpr int IB3 = MagneticField<(Axis + 1) % 3, FTraits>();
+    constexpr int IB3 = MagneticField<(Axis + 2) % 3, FTraits>();
 
     const fp_t mass_flux = w(I(Prim::Rho)) * w(IV1);
     fp_t e_kin = 0.0_fp;
@@ -191,8 +191,8 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
 
         // Induction
         f(IB1) = 0.0_fp;
-        f(IB2) = w(IV1) * w(IB2) - w(IB1) * w(IV2);
-        f(IB3) = w(IV1) * w(IB3) - w(IB1) * w(IV3);
+        f(IB2) = w(IV1) * w(IB2) - w(IV2) * w(IB1);
+        f(IB3) = w(IV1) * w(IB3) - w(IV3) * w(IB1);
     }
 
     f(IM1) += p_tot;

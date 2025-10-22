@@ -24,7 +24,7 @@ struct Prim {
     static constexpr i32 Vx = 1;
     static constexpr i32 Vy = (Fluid != FluidType::Hydro || NumDim > 1) ? 2 : 1024;
     static constexpr i32 Vz = (Fluid != FluidType::Hydro || NumDim > 2) ? 3 : 1024;
-    static constexpr i32 Pres = 1 + NumDim + 2 * (Fluid != FluidType::Hydro);
+    static constexpr i32 Pres = (Fluid == FluidType::Hydro) ? 1 + NumDim : 4;
     static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
     static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
     static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
@@ -36,7 +36,7 @@ struct Cons {
     static constexpr i32 MomX = 1;
     static constexpr i32 MomY = (Fluid != FluidType::Hydro || NumDim > 1) ? 2 : 1024;
     static constexpr i32 MomZ = (Fluid != FluidType::Hydro || NumDim > 2) ? 3 : 1024;
-    static constexpr i32 Ene = 1 + NumDim + 2 * (Fluid != FluidType::Hydro);
+    static constexpr i32 Ene = (Fluid == FluidType::Hydro) ? 1 + NumDim : 4;
     static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
     static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
     static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;

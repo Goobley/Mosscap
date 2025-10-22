@@ -8,15 +8,17 @@ static constexpr int num_dim = 2;
 
 namespace Mosscap {
 
+using Fluid = FluidTraits<num_dim, FluidType::Hydro>;
+
 struct RadLossCoeffs {
     fp_t T_peak;
     fp_t tau_rad;
 };
 
-template <int NumDim>
+template <typename FluidTraits>
 static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl) {
-    using Cons = Cons<NumDim>;
-    using Prim = Prim<NumDim>;
+    using Cons = Fluid::cons;
+    using Prim = Fluid::prim;
 
     const auto& eos = sim.eos;
     const auto& W = sim.state.W;
@@ -57,8 +59,8 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
             "{} only handles {}d problems", PROBLEM_NAME, num_dim
         ));
     }
-    using Prim = Prim<num_dim>;
-    constexpr int n_hydro = N_HYDRO_VARS<num_dim>;
+    using Prim = Fluid::prim;
+    constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;
     const auto& sz = state.sz;
@@ -107,7 +109,7 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
+            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
         }
     );
 
@@ -119,7 +121,7 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
         w(I(Prim::Pres)) = pressure;
         // NOTE(cmo): This could blow up with EOSs that are spatially dependent
         // and not fully configured at this point.
-        prim_to_cons<num_dim>(eos.gamma, w, state.boundaries.ys_const);
+        prim_to_cons<Fluid>(eos.gamma, state.mu0, w, state.boundaries.ys_const);
     }
 
     bool enable_rad_loss = get_or<bool>(config, "problem.enable_rad_loss", false);
@@ -135,11 +137,11 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
             .fn = [=](const Simulation& sim) {
                 const int num_dim = sim.num_dim;
                 if (num_dim == 1) {
-                    rad_loss_kernel<1>(sim, rad_loss);
+                    rad_loss_kernel<FluidTraits<1, FluidType::Hydro>>(sim, rad_loss);
                 } else if (num_dim == 2) {
-                    rad_loss_kernel<2>(sim, rad_loss);
+                    rad_loss_kernel<FluidTraits<2, FluidType::Hydro>>(sim, rad_loss);
                 } else {
-                    rad_loss_kernel<3>(sim, rad_loss);
+                    rad_loss_kernel<FluidTraits<3, FluidType::Hydro>>(sim, rad_loss);
                 }
             }
         });

@@ -8,11 +8,13 @@ static constexpr int num_dim = 2;
 
 namespace Mosscap {
 
+using Fluid = FluidTraits<num_dim, FluidType::Hydro>;
+
 struct BcParams {
     fp_t g_y;
 };
 
-template <int Axis, int NumDim>
+template <int Axis, typename FTraits>
 static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
     static_assert(Axis < 3, "What are you doing?");
     const auto& state = sim.state;
@@ -30,8 +32,8 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
         kernel_name[Axis],
         FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Cons = Cons<NumDim>;
-            constexpr int IM = Momentum<Axis, NumDim>();
+            using Cons = FTraits::cons;
+            constexpr int IM = Momentum<Axis, FTraits>();
             int coord[3] = {ii, ji, ki};
             for (int a = ng - 1; a > -1; --a) {
                 coord[Axis] = a;
@@ -74,9 +76,9 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                 BoundaryType bound = (coord[Axis] < ng) ? start_bound : end_bound;
 
                 if (bound == BoundaryType::UserFn) {
-                    using Prim = Prim<NumDim>;
-                    yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
-                    cons_to_prim<NumDim>(eos.gamma, Q_prev, w);
+                    using Prim = FTraits::prim;
+                    yakl::SArray<fp_t, 1, FTraits::num_vars> w;
+                    cons_to_prim<FTraits>(eos.gamma, state.mu0, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
                     fp_t p = w(I(Prim::Pres)) - 0.5_fp * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * driver.g_y * state.dx;
                     // add that contribution to rho and eint
@@ -105,8 +107,8 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
         kernel_name[Axis],
         FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Cons = Cons<NumDim>;
-            constexpr int IM = Momentum<Axis, NumDim>();
+            using Cons = FTraits::cons;
+            constexpr int IM = Momentum<Axis, FTraits>();
             int coord[3] = {ii, ji, ki};
             for (int a = 2 * sz.ng - 1; a > sz.ng - 1; --a) {
                 coord[Axis] = a;
@@ -149,9 +151,9 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                 BoundaryType bound = (coord[Axis] < ng) ? start_bound : end_bound;
 
                 if (bound == BoundaryType::UserFn) {
-                    using Prim = Prim<NumDim>;
-                    yakl::SArray<fp_t, 1, N_HYDRO_VARS<NumDim>> w;
-                    cons_to_prim<NumDim>(eos.gamma, Q_prev, w);
+                    using Prim = FTraits::prim;
+                    yakl::SArray<fp_t, 1, FTraits::num_vars> w;
+                    cons_to_prim<FTraits>(eos.gamma, state.mu0, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
                     fp_t p = w(I(Prim::Pres)) + 0.5_fp * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * driver.g_y * state.dx;
                     // const fp_t dP_dz = h_mass * gravity;
@@ -184,8 +186,8 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
 
 MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
     MOSSCAP_PROBLEM_PREAMBLE(coronal_rain_drop_2d);
-    using Prim = Prim<num_dim>;
-    constexpr int n_hydro = N_HYDRO_VARS<num_dim>;
+    using Prim = Fluid::prim;
+    constexpr int n_hydro = Fluid::num_vars;
     if (sim.num_dim != num_dim) {
         throw std::runtime_error(fmt::format(
             "{} only handles {}d problems", PROBLEM_NAME, num_dim
@@ -269,7 +271,7 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
+            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
         }
     );
     setup_gravity(sim, config);
@@ -277,7 +279,7 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
         .g_y = g
     };
     sim.user_bc = [=](const Simulation& sim) {
-        fill_one_bc_hse<1, num_dim>(sim, bc_params);
+        fill_one_bc_hse<1, Fluid>(sim, bc_params);
     };
 
     const i32 n_extra = sim.state.num_tracers;

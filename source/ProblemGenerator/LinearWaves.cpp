@@ -6,10 +6,10 @@
 
 namespace Mosscap {
 
-template <int NumDim>
+template <typename FTraits>
 void linear_waves_impl(Simulation& sim, fp_t amp, fp_t vflow) {
-    using Prim = Prim<NumDim>;
-    constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
+    using Prim = FTraits::prim;
+    constexpr int n_hydro = FTraits::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;
     const auto& sz = state.sz;
@@ -31,7 +31,7 @@ void linear_waves_impl(Simulation& sim, fp_t amp, fp_t vflow) {
             w(I(Prim::Rho)) = 1.0_fp + amp * sx;
             w(I(Prim::Vx)) = 1.0_fp + amp * sx;
             w(I(Prim::Pres)) = 1.0_fp / eos.gamma;
-            prim_to_cons<NumDim>(eos.gamma, w, QtyView(state.Q, idx));
+            prim_to_cons<FTraits>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
         }
     );
 }
@@ -61,11 +61,11 @@ MOSSCAP_NEW_PROBLEM(linear_waves) {
     }
 
     if (sim.num_dim == 1) {
-        linear_waves_impl<1>(sim, amp, vflow);
+        linear_waves_impl<FluidTraits<1, FluidType::Hydro>>(sim, amp, vflow);
     } else if (sim.num_dim == 2) {
-        linear_waves_impl<2>(sim, amp, vflow);
+        linear_waves_impl<FluidTraits<2, FluidType::Hydro>>(sim, amp, vflow);
     } else {
-        linear_waves_impl<3>(sim, amp, vflow);
+        linear_waves_impl<FluidTraits<3, FluidType::Hydro>>(sim, amp, vflow);
     }
 }
 

@@ -3,8 +3,26 @@
 #include "Hydro.hpp"
 #include "Boundaries.hpp"
 #include "SourceTerms.hpp"
+#include "DivBCleaning.hpp"
+
+#include <map>
 
 namespace Mosscap {
+
+template <TimeStepScheme scheme>
+std::function<void(Simulation&, fp_t)> select_fluidtraits_impl(const Simulation& sim) {
+    using Stepper = TimeStepper<scheme>;
+    std::function<void(Simulation&, fp_t)> test = Stepper::template time_step<FluidTraits<1, FluidType::Hydro>>;
+    std::map<std::pair<int, FluidType>, std::function<void(Simulation&, fp_t)>> impls = {
+        {{1, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<1, FluidType::Hydro>>},
+        {{2, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<2, FluidType::Hydro>>},
+        {{3, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::Hydro>>},
+        {{1, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<1, FluidType::Mhd>>},
+        {{2, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<2, FluidType::Mhd>>},
+        {{3, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::Mhd>>}
+    };
+    return impls[std::make_pair(sim.num_dim, sim.fluid_type)];
+}
 
 template <int NumDim, typename Lambda>
 void integrate_flux(const std::string& step_name, const GridSize& sz, const Fluxes& flux, const Lambda& updater) {
@@ -37,9 +55,9 @@ void integrate_flux(const std::string& step_name, const GridSize& sz, const Flux
 // NOTE(cmo): Due to C++ explicit specialisation rules, the time_step function
 // must be fully defined before the associated init.
 template <>
-template <int NumDim>
+template <typename FTraits>
 void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
-    constexpr i32 n_hydro = N_HYDRO_VARS<NumDim>;
+    constexpr i32 n_hydro = FTraits::num_vars;
     const auto& state = sim.state;
     const auto& Q = state.Q;
     const auto& Q_old = sim.ts_storage.Q_old[0];
@@ -53,7 +71,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "RK2 Step 0",
         state.sz,
         flux,
@@ -66,6 +84,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += q_update + source;
     });
     Kokkos::fence();
+    clean_divb(sim);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -73,7 +92,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "RK2 Step 1",
         state.sz,
         flux,
@@ -86,6 +105,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = 0.5_fp * (Q_old(var, k, j, i) + state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
+    clean_divb(sim);
 
     fill_bcs(sim);
     sim.time += dt;
@@ -103,20 +123,15 @@ bool TimeStepper<TimeStepScheme::Rk2>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    std::vector<std::function<void(Simulation&, fp_t)>> dimensioned_schemes = {
-        TimeStepper<TimeStepScheme::Rk2>::time_step<1>,
-        TimeStepper<TimeStepScheme::Rk2>::time_step<2>,
-        TimeStepper<TimeStepScheme::Rk2>::time_step<3>
-    };
-    sim.time_step = dimensioned_schemes.at(sim.num_dim - 1);
+    sim.time_step = select_fluidtraits_impl<TimeStepScheme::Rk2>(sim);
 
     return true;
 }
 
 template <>
-template <int NumDim>
+template <typename FTraits>
 void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
-    constexpr i32 n_hydro = N_HYDRO_VARS<NumDim>;
+    constexpr i32 n_hydro = FTraits::num_vars;
     const auto& state = sim.state;
     const auto& Q = state.Q;
     const auto& Q_old = sim.ts_storage.Q_old[0];
@@ -130,7 +145,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "SSPRK3 Step 0",
         state.sz,
         flux,
@@ -143,6 +158,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += q_update + source;
     });
     Kokkos::fence();
+    clean_divb(sim);
 
     sim.dt_sub = 0.25_fp * dt;
     zero_source_terms(sim);
@@ -150,7 +166,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "SSPRK3 Step 1",
         state.sz,
         flux,
@@ -163,6 +179,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = 0.75_fp * Q_old(var, k, j, i) + 0.25_fp * (state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
+    clean_divb(sim);
 
     sim.dt_sub = (2.0_fp / 3.0_fp) * dt;
     zero_source_terms(sim);
@@ -170,7 +187,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "SSPRK3 Step 2",
         state.sz,
         flux,
@@ -183,6 +200,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = (1.0_fp / 3.0_fp) * Q_old(var, k, j, i) + (2.0_fp / 3.0_fp) * (state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
+    clean_divb(sim);
 
     fill_bcs(sim);
     sim.time += dt;
@@ -200,20 +218,15 @@ bool TimeStepper<TimeStepScheme::SspRk3>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    std::vector<std::function<void(Simulation&, fp_t)>> dimensioned_schemes = {
-        TimeStepper<TimeStepScheme::SspRk3>::time_step<1>,
-        TimeStepper<TimeStepScheme::SspRk3>::time_step<2>,
-        TimeStepper<TimeStepScheme::SspRk3>::time_step<3>
-    };
-    sim.time_step = dimensioned_schemes.at(sim.num_dim - 1);
+    sim.time_step = select_fluidtraits_impl<TimeStepScheme::SspRk3>(sim);
 
     return true;
 }
 
 template <>
-template <int NumDim>
+template <typename FTraits>
 void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
-    constexpr i32 n_hydro = N_HYDRO_VARS<NumDim>;
+    constexpr i32 n_hydro = FTraits::num_vars;
     const auto& state = sim.state;
     const auto& Q = state.Q;
     const auto& Q_old = sim.ts_storage.Q_old[0];
@@ -227,7 +240,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "SSPRK4 Step 0",
         state.sz,
         flux,
@@ -240,6 +253,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
+    clean_divb(sim);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -247,7 +261,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "SSPRK4 Step 1",
         state.sz,
         flux,
@@ -260,6 +274,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
+    clean_divb(sim);
 
     sim.dt_sub = (1.0_fp / 6.0_fp) * dt;
     zero_source_terms(sim);
@@ -267,7 +282,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "SSPRK4 Step 2",
         state.sz,
         flux,
@@ -280,6 +295,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = (2.0_fp / 3.0_fp) * Q_old(var, k, j, i) + (1.0_fp / 3.0_fp) * state.Q(var, k, j, i) + (1.0_fp / 6.0_fp) * (q_update + source);
     });
     Kokkos::fence();
+    clean_divb(sim);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -287,7 +303,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
-    integrate_flux<NumDim>(
+    integrate_flux<FTraits::num_dim>(
         "SSPRK4 Step 3",
         state.sz,
         flux,
@@ -300,6 +316,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
+    clean_divb(sim);
 
 
     fill_bcs(sim);
@@ -318,12 +335,7 @@ bool TimeStepper<TimeStepScheme::SspRk4>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    std::vector<std::function<void(Simulation&, fp_t)>> dimensioned_schemes = {
-        TimeStepper<TimeStepScheme::SspRk4>::time_step<1>,
-        TimeStepper<TimeStepScheme::SspRk4>::time_step<2>,
-        TimeStepper<TimeStepScheme::SspRk4>::time_step<3>
-    };
-    sim.time_step = dimensioned_schemes.at(sim.num_dim - 1);
+    sim.time_step = select_fluidtraits_impl<TimeStepScheme::SspRk4>(sim);
     return true;
 }
 

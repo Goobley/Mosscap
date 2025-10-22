@@ -38,12 +38,14 @@ if (${YAKL_AUTO_FENCE})
 endif()
 
 list (APPEND MOSSCAP_PROBLEMS
+    "source/ProblemGenerator/BrioWuShockTube.cpp"
     "source/ProblemGenerator/CircularExplosion.cpp"
     "source/ProblemGenerator/CoronalRainDrop.cpp"
     "source/ProblemGenerator/DoubleShockTube.cpp"
     "source/ProblemGenerator/HillierSnowKelvinHelmholtz.cpp"
     "source/ProblemGenerator/KelvinHelmholtz.cpp"
     "source/ProblemGenerator/LinearWaves.cpp"
+    "source/ProblemGenerator/OrszagTangVortex.cpp"
     "source/ProblemGenerator/Quadrants3.cpp"
     "source/ProblemGenerator/ShockTube2d.cpp"
     "source/ProblemGenerator/Solar1d.cpp"
@@ -74,6 +76,7 @@ list(APPEND MOSSCAP_SOURCE_FILES
     "source/Eos.cpp"
     "source/Output.cpp"
     "source/DexInterface.cpp"
+    "source/DivBCleaning.cpp"
     ${MOSSCAP_SOURCE_TERMS}
     ${MOSSCAP_PROBLEMS}
     ${DEX_SOURCE_FILES}

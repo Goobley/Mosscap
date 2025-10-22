@@ -51,6 +51,7 @@ struct Simulation {
     Sources sources;
     TimeStepperStorage ts_storage;
     std::function<f64(const Simulation&)> compute_dt;
+    std::function<void(const Simulation&)> clean_divb;
     std::function<void(const Simulation&)> update_eos;
     std::function<void(Simulation&, fp_t)> time_step;
     std::function<void(const Simulation&)> user_bc;

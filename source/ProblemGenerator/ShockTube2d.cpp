@@ -7,10 +7,12 @@ static constexpr int num_dim = 2;
 
 namespace Mosscap {
 
+using Fluid = FluidTraits<num_dim, FluidType::Hydro>;
+
 MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
     MOSSCAP_PROBLEM_PREAMBLE(shock_tube_2d);
-    using Prim = Prim<num_dim>;
-    constexpr int n_hydro = N_HYDRO_VARS<num_dim>;
+    using Prim = Fluid::prim;
+    constexpr int n_hydro = Fluid::num_vars;
     if (sim.num_dim != num_dim) {
         throw std::runtime_error(fmt::format(
             "{} only handles {}d problems", PROBLEM_NAME, num_dim
@@ -42,7 +44,7 @@ MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
+            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
         }
     );
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.2_fp);

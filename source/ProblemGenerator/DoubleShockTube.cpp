@@ -6,8 +6,9 @@ namespace Mosscap {
 
 template <int NumDim>
 void double_shock_tube_impl(Simulation& sim, int axis) {
-    using Prim = Prim<NumDim>;
-    constexpr int n_hydro = N_HYDRO_VARS<NumDim>;
+    using Fluid = FluidTraits<NumDim, FluidType::Hydro>;
+    using Prim = Fluid::prim;
+    constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;
     const auto& sz = state.sz;
@@ -36,7 +37,7 @@ void double_shock_tube_impl(Simulation& sim, int axis) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<NumDim>(eos.gamma, w, QtyView(state.Q, idx));
+            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
         }
     );
 }

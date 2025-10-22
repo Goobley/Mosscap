@@ -26,7 +26,7 @@ struct TimeStepperStorage {
 template <TimeStepScheme scheme>
 struct TimeStepper {
     static bool init(Simulation& sim);
-    template <int NumDim>
+    template <typename FTraits>
     static void time_step(Simulation& sim, fp_t dt);
 };
 

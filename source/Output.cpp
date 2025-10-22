@@ -251,11 +251,15 @@ bool write_output(Simulation& sim) {
         }
         if (cfg.variables.fluxes) {
             nc.write1(sim.fluxes.Fx, "Fx", {"var", "z", "y", "x"}, time_idx, time_name);
-            nc.write1(sim.fluxes.Fy, "Fy", {"var", "z", "y", "x"}, time_idx, time_name);
-            nc.write1(sim.fluxes.Fz, "Fz", {"var", "z", "y", "x"}, time_idx, time_name);
+            if (sim.num_dim > 1) {
+                nc.write1(sim.fluxes.Fy, "Fy", {"var", "z", "y", "x"}, time_idx, time_name);
+            }
+            if (sim.num_dim > 2) {
+                nc.write1(sim.fluxes.Fz, "Fz", {"var", "z", "y", "x"}, time_idx, time_name);
+            }
         }
         if (cfg.variables.source) {
-            nc.write1(sim.sources.S, "S", {"var", "z", "y", "x"}, time_idx, time_name);
+            nc.write1(sim.sources.S, "S", {"conserved_var", "z", "y", "x"}, time_idx, time_name);
         }
         if (!eos.is_constant) {
             nc.write1(eos.y_space, "ion_frac", {"z", "y", "x"}, time_idx, time_name);

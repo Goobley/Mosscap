@@ -3,6 +3,7 @@
 
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
+using Fluid = Mosscap::FluidTraits<num_dim, Mosscap::FluidType::Hydro>;
 
 namespace Mosscap {
 
@@ -15,7 +16,7 @@ MOSSCAP_NEW_PROBLEM(circular_explosion) {
         ));
     }
     using Prim = Prim<num_dim>;
-    constexpr int n_hydro = N_HYDRO_VARS<num_dim>;
+    constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;
     const auto& sz = state.sz;
@@ -41,7 +42,7 @@ MOSSCAP_NEW_PROBLEM(circular_explosion) {
                 .j = j,
                 .k = k
             };
-            prim_to_cons<num_dim>(eos.gamma, w, QtyView(state.Q, idx));
+            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
         }
     );
 }

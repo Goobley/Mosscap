@@ -26,6 +26,8 @@ int get_dexrt_dimensionality() {
 
 namespace Mosscap {
 
+using Fluid = FluidTraits<2, FluidType::Hydro>;
+
 // NOTE(cmo): Direct transplant from dexrt
 static void allocate_J(DexState& state) {
     JasUnpack(state, config, mr_block_map, c0_size, adata);
@@ -76,6 +78,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
 
     const auto& Q = sim.state.Q;
     const auto& eos = sim.eos;
+    const fp_t mu0 = sim.state.mu0;
     auto cutoff_temperature = state.config.threshold_temperature;
 
     constexpr u32 sentinel = std::numeric_limits<u32>::max();
@@ -99,7 +102,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
                     CellIndex idx{.i = x + sz.ng, .j = z + sz.ng, .k = 0};
                     const auto q = QtyView(Q, idx);
-                    cons_to_prim<num_dim>(eos.gamma, q, w);
+                    cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
 
                     fp_t n_baryon = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
                     fp_t y = eos.y;
@@ -174,7 +177,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
-            cons_to_prim<num_dim>(eos.gamma, q, w);
+            cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
             using Prim = Prim<num_dim>;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
@@ -226,6 +229,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
     const auto& sz = sim.state.sz;
     const auto& Q = sim.state.Q;
     const auto& eos = sim.eos;
+    const fp_t mu0 = sim.state.mu0;
     auto cutoff_temperature = state.config.threshold_temperature;
 
     constexpr i32 block_size = BLOCK_SIZE;
@@ -279,7 +283,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
                     CellIndex idx{.i = x + sz.ng, .j = z + sz.ng, .k = 0};
                     const auto q = QtyView(Q, idx);
-                    cons_to_prim<num_dim>(eos.gamma, q, w);
+                    cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
 
                     fp_t n_baryon = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
                     fp_t y = eos.y;
@@ -356,7 +360,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
-            cons_to_prim<num_dim>(eos.gamma, q, w);
+            cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
             using Prim = Prim<num_dim>;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
@@ -1228,6 +1232,7 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
     const auto& Q = sim.state.Q;
     const auto& sz = sim.state.sz;
     const auto& eos = sim.eos;
+    const fp_t mu0 = sim.state.mu0;
 
     const i32 tracer_start = interface_config.field_start_idx;
     for (int ia = 0; ia < state.atoms.size(); ++ia) {
@@ -1249,7 +1254,7 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
                 CellIndex idx{.i = i, .j = j, .k = k};
                 yakl::SArray<fp_t, 1, n_hydro> w;
                 QtyView q(Q, idx);
-                cons_to_prim<num_dim>(eos.gamma, q, w);
+                cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
                 using Prim = Prim<num_dim>;
 
                 const i64 flat_idx = i + j * sz.xc + k * sz.yc * sz.xc;
