@@ -8,10 +8,21 @@ namespace YAML { class Node; }
 namespace Mosscap {
     struct Simulation;
 
-    enum class DivBCleaningSchemes {
-        Linde = 0
+    enum class DivBCleaningScheme {
+        Linde = 0,
+        Janhunen,
+        LindeJanhunen,
+        Projection
     };
+    constexpr const char* DivBCleaningName[] = {
+        "linde",
+        "janhunen",
+        "lindejanhunen",
+        "projection"
+    };
+    constexpr int NumDivBCleaningScheme = sizeof(DivBCleaningName) / sizeof(DivBCleaningName[0]);
 
+    Fp3d compute_divb(const Simulation& sim, fp_t* max_divb);
     void clean_divb(const Simulation& sim);
     void setup_divb_cleaning(Simulation& sim, YAML::Node& config);
 }

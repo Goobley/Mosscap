@@ -231,7 +231,7 @@ bool write_output(Simulation& sim) {
             nc.write(sim.fluxes.Fz, "Fz", {"var", "z", "y", "x"});
         }
         if (cfg.variables.source) {
-            nc.write(sim.sources.S, "S", {"var", "z", "y", "x"});
+            nc.write(sim.sources.S, "S", {"conserved_var", "z", "y", "x"});
         }
         if (!eos.is_constant) {
             nc.write(eos.y_space, "ion_frac", {"z", "y", "x"});

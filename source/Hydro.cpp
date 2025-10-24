@@ -212,23 +212,44 @@ template <typename FTraits, typename WType>
 KOKKOS_INLINE_FUNCTION void dt_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& running_dt) {
     using Prim = FTraits::prim;
     constexpr i32 NumDim = FTraits::num_dim;
+    // fp_t cs = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
+    // fp_t vel2 = square(w(I(Prim::Vx)));
+    // if (NumDim > 1) {
+    //     vel2 += square(w(I(Prim::Vy)));
+    //     if constexpr (FTraits::is_mhd) {
+    //         cs = std::max(cs, fast_wave_speed<FTraits, 1>(eos.gamma, mu0, w));
+    //     }
+    // }
+    // if (NumDim > 2) {
+    //     vel2 += square(w(I(Prim::Vz)));
+    //     if constexpr (FTraits::is_mhd) {
+    //         cs = std::max(cs, fast_wave_speed<FTraits, 2>(eos.gamma, mu0, w));
+    //     }
+    // }
+    // const fp_t vel = std::sqrt(vel2);
+    // const fp_t dt_local = dx / (cs + vel);
     fp_t cs = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
-    fp_t vel2 = square(w(I(Prim::Vx)));
-    if (NumDim > 1) {
-        vel2 += square(w(I(Prim::Vy)));
+    fp_t vel = std::abs(w(I(Prim::Vx)));
+    // fp_t dt_local = dx / (cs + vel);
+    fp_t inv_dt = (cs + vel) / dx;
+    if constexpr (NumDim > 1) {
+        vel = std::abs(w(I(Prim::Vy)));
         if constexpr (FTraits::is_mhd) {
-            cs = std::max(cs, fast_wave_speed<FTraits, 1>(eos.gamma, mu0, w));
+            cs = fast_wave_speed<FTraits, 1>(eos.gamma, mu0, w);
         }
+        // dt_local = std::min(dt_local, dx / (cs + vel));
+        inv_dt += (cs + vel) / dx;
     }
-    if (NumDim > 2) {
-        vel2 += square(w(I(Prim::Vz)));
+    if constexpr (NumDim > 2) {
+        vel = std::abs(w(I(Prim::Vz)));
         if constexpr (FTraits::is_mhd) {
-            cs = std::max(cs, fast_wave_speed<FTraits, 2>(eos.gamma, mu0, w));
+            cs = fast_wave_speed<FTraits, 2>(eos.gamma, mu0, w);
         }
+        // dt_local = std::min(dt_local, dx / (cs + vel));
+        inv_dt += (cs + vel) / dx;
     }
-    const fp_t vel = std::sqrt(vel2);
-    const fp_t dt_local = dx / (cs + vel);
-    running_dt = std::min(dt_local, running_dt);
+    // running_dt = std::min(dt_local, running_dt);
+    running_dt = std::min(1.0_fp / inv_dt, running_dt);
 }
 
 template <typename FTraits>

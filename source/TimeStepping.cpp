@@ -163,6 +163,11 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     sim.dt_sub = 0.25_fp * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
+    if (FTraits::is_mhd) {
+        fp_t max_divb = 0.0_fp;
+        compute_divb(sim, &max_divb);
+        fmt::println("DivB post {}", max_divb);
+    }
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
@@ -184,6 +189,11 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     sim.dt_sub = (2.0_fp / 3.0_fp) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
+    if (FTraits::is_mhd) {
+        fp_t max_divb = 0.0_fp;
+        compute_divb(sim, &max_divb);
+        fmt::println("DivB post {}", max_divb);
+    }
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
@@ -203,6 +213,11 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     clean_divb(sim);
 
     fill_bcs(sim);
+    if (FTraits::is_mhd) {
+        fp_t max_divb = 0.0_fp;
+        compute_divb(sim, &max_divb);
+        fmt::println("DivB post final {}", max_divb);
+    }
     sim.time += dt;
     sim.current_step += 1;
 }

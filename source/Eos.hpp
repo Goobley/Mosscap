@@ -76,13 +76,24 @@ KOKKOS_INLINE_FUNCTION fp_t fast_wave_speed(const fp_t gamma, const fp_t mu0, co
 
     fp_t cfast2 = cs2;
     if constexpr (FTraits::is_mhd) {
+        // constexpr int IB1 = MagneticField<Axis, FTraits>();
+        // const fp_t irhomu = irho / mu0;
+        // const fp_t ca2 = (square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)))) * irhomu;
+        // const fp_t c_axis2 = square(w(IB1)) * irhomu;
+        // // NOTE(cmo): This is the positive-definite form used in Athena++. It
+        // // expands correctly, but looks a bit weird.
+        // // cfast2 = 0.5_fp * ((cs2 + ca2) + std::sqrt(square(ca2 - cs2) + 4.0_fp * cs2 * (ca2 - c_axis2)));
+        // cfast2 = 0.5_fp * ((cs2 + ca2) + std::sqrt(square(ca2 + cs2) - 4.0_fp * cs2 * c_axis2));
+
         constexpr int IB1 = MagneticField<Axis, FTraits>();
-        const fp_t irhomu = irho / mu0;
-        const fp_t ca2 = (square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)))) * irhomu;
-        const fp_t c_axis2 = square(w(IB1)) * irhomu;
-        // NOTE(cmo): This is the positive-definite form used in Athena++. It
-        // expands correctly, but looks a bit weird.
-        cfast2 = 0.5_fp * ((cs2 + ca2) + std::sqrt(square(ca2 - cs2) + 4.0_fp * cs2 * (ca2 - c_axis2)));
+        constexpr int IB2 = MagneticField<(Axis + 1) % 3, FTraits>();
+        constexpr int IB3 = MagneticField<(Axis + 2) % 3, FTraits>();
+        // Athena impl directly
+        const fp_t asq = gamma * w(I(Prim::Pres));
+        const fp_t ct2 = square(w(IB2)) + square(w((IB3)));
+        const fp_t qsq = square(w(IB1)) + ct2 + asq;
+        const fp_t tmp = square(w(IB1)) + ct2 - asq;
+        cfast2 = (0.5_fp * (qsq + std::sqrt(square(tmp) + 4.0_fp * asq * ct2) * irho));
     }
     return std::sqrt(cfast2);
 }
@@ -107,9 +118,9 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const
     const fp_t e_kin = 0.5_fp * q(I(Cons::Rho)) * v2_sum;
     fp_t e_mag = 0.0_fp;
     if constexpr (FTraits::is_mhd) {
-        w(I(Prim::Bx)) = q(I(Prim::Bx));
-        w(I(Prim::By)) = q(I(Prim::By));
-        w(I(Prim::Bz)) = q(I(Prim::Bz));
+        w(I(Prim::Bx)) = q(I(Cons::Bx));
+        w(I(Prim::By)) = q(I(Cons::By));
+        w(I(Prim::Bz)) = q(I(Cons::Bz));
         e_mag = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
         e_mag /= (2.0_fp * mu0);
     }
@@ -136,9 +147,9 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
     }
     fp_t e_mag = 0.0_fp;
     if constexpr (FTraits::is_mhd) {
-        q(I(Cons::Bx)) = w(I(Cons::Bx));
-        q(I(Cons::By)) = w(I(Cons::By));
-        q(I(Cons::Bz)) = w(I(Cons::Bz));
+        q(I(Cons::Bx)) = w(I(Prim::Bx));
+        q(I(Cons::By)) = w(I(Prim::By));
+        q(I(Cons::Bz)) = w(I(Prim::Bz));
         e_mag = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
         e_mag /= (2.0_fp * mu0);
     }

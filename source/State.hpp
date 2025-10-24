@@ -91,11 +91,11 @@ constexpr int Momentum() {
 template <int Axis, typename f>
 constexpr int MagneticField() {
     if constexpr (Axis == 0) {
-        return I(f::cons::Bx);
+        return I(f::prim::Bx);
     } else if constexpr (Axis == 1) {
-        return I(f::cons::By);
+        return I(f::prim::By);
     } else if constexpr (Axis == 2) {
-        return I(f::cons::Bz);
+        return I(f::prim::Bz);
     }
 }
 
