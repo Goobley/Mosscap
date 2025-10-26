@@ -16,7 +16,7 @@ void clean_divb(const Simulation& sim) {
 template <typename FTraits, bool extended>
 void glm_source(const Simulation& sim, fp_t glm_alpha) {
     const auto& state = sim.state;
-    JasUnpack(state, sz, Q);
+    JasUnpack(state, sz, Q, mu0);
     const auto& S = sim.sources.S;
     int nx = sz.xc - 2;
     int ny = std::max(sz.yc - 2, 1);
@@ -24,7 +24,10 @@ void glm_source(const Simulation& sim, fp_t glm_alpha) {
 
     const fp_t c_h = sim.state.glm_ch;
     const fp_t dt_sub = sim.dt_sub;
+    const fp_t inv_dt_sub = 1.0_fp / sim.dt_sub;
     const fp_t coeff = std::exp(-glm_alpha * c_h * dt_sub / state.dx);
+    const fp_t inv_2dx = 1.0_fp / (2.0_fp * state.dx);
+    const fp_t inv_mu0 = 1.0_fp / mu0;
 
     dex_parallel_for(
         "GLM MHD Source",
@@ -33,12 +36,47 @@ void glm_source(const Simulation& sim, fp_t glm_alpha) {
             const int k = nz == 1 ? ki : ki + 1;
             const int j = ny == 1 ? ji : ji + 1;
             const int i = ii + 1;
-            using Prim = FTraits::prim;
+            using Cons = FTraits::cons;
 
-            // NOTE(cmo): Implement as source term, even though it's technically multiplicative damping
-            const fp_t psi_target = Q(I(Prim::Psi), k, j, i) * coeff;
-            S(I(Prim::Psi), k, j, i) += (psi_target - Q(I(Prim::Psi), k, j, i)) / dt_sub;
             // Q(I(Prim::Psi), k, j, i) *= coeff;
+            // NOTE(cmo): Implement as source term, even though it's technically multiplicative damping
+            const fp_t psi_target = Q(I(Cons::Psi), k, j, i) * coeff;
+            S(I(Cons::Psi), k, j, i) += (psi_target - Q(I(Cons::Psi), k, j, i)) * inv_dt_sub;
+
+            JasUse(inv_2dx, inv_mu0);
+            if constexpr (extended) {
+                fp_t Bim1 = Q(I(Cons::Bx), k, j, i-1);
+                fp_t Bi = Q(I(Cons::Bx), k, j, i+1);
+                fp_t divB_i = (Bi - Bim1) * inv_2dx;
+                if constexpr (FTraits::num_dim > 1) {
+                    Bim1 = Q(I(Cons::By), k, j-1, i);
+                    Bi = Q(I(Cons::By), k, j+1, i);
+                    divB_i += (Bi - Bim1) * inv_2dx;
+                }
+                if constexpr (FTraits::num_dim > 2) {
+                    Bim1 = Q(I(Cons::Bz), k-1, j, i);
+                    Bi = Q(I(Cons::Bz), k+1, j, i);
+                    divB_i += (Bi - Bim1) * inv_2dx;
+                }
+                S(I(Cons::MomX), k, j, i) -= divB_i * Q(I(Cons::Bx), k, j, i) * inv_mu0;
+                if constexpr (FTraits::num_dim > 1) {
+                    S(I(Cons::MomY), k, j, i) -= divB_i * Q(I(Cons::By), k, j, i) * inv_mu0;
+                }
+                if constexpr (FTraits::num_dim > 2) {
+                    S(I(Cons::MomZ), k, j, i) -= divB_i * Q(I(Cons::Bz), k, j, i) * inv_mu0;
+                }
+
+                fp_t grad_psi = (Q(I(Cons::Psi), k, j, i + 1) - Q(I(Cons::Psi), k, j, i - 1)) * inv_2dx;
+                S(I(Cons::Ene), k, j, i) -= Q(I(Cons::Bx), k, j, i) * grad_psi;
+                if constexpr (FTraits::num_dim > 1) {
+                    grad_psi = (Q(I(Cons::Psi), k, j + 1, i) - Q(I(Cons::Psi), k, j - 1, i)) * inv_2dx;
+                    S(I(Cons::Ene), k, j, i) -= Q(I(Cons::By), k, j, i) * grad_psi;
+                }
+                if constexpr (FTraits::num_dim > 2) {
+                    grad_psi = (Q(I(Cons::Psi), k + 1, j, i) - Q(I(Cons::Psi), k - 1, j, i)) * inv_2dx;
+                    S(I(Cons::Ene), k, j, i) -= Q(I(Cons::Bz), k, j, i) * grad_psi;
+                }
+            }
         }
     );
 
@@ -602,10 +640,7 @@ void setup_divb_cleaning(Simulation& sim, YAML::Node& config) {
         }
     } else if (sim.fluid_type == FluidType::GlmMhd) {
         fp_t glm_alpha = get_or<fp_t>(config, "simulation.glm_alpha", 0.1_fp);
-        bool glm_extended = get_or<fp_t>(config, "simulation.glm_extended_source", false);
-        if (glm_extended) {
-            throw std::runtime_error("GLM MHD Extended source not implemented yet");
-        }
+        bool glm_extended = get_or<bool>(config, "simulation.glm_extended_source", false);
 
         if (sim.num_dim == 1) {
             auto glm_fn = select_glm_fn<FluidTraits<1, FluidType::GlmMhd>>(glm_extended);

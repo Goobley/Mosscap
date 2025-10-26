@@ -47,7 +47,7 @@ MOSSCAP_NEW_PROBLEM(orszag_tang_vortex) {
         ));
     }
 
-    if (sim.fluid_type == FluidType::Mhd) {
+    if (sim.fluid_type == FluidType::Hydro) {
         throw std::runtime_error("This is an MHD problem.");
     }
     sim.state.mu0 = 1.0_fp;
