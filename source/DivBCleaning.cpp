@@ -25,7 +25,6 @@ void glm_source(const Simulation& sim, fp_t glm_alpha) {
     const fp_t c_h = sim.state.glm_ch;
     const fp_t dt_sub = sim.dt_sub;
     const fp_t coeff = std::exp(-glm_alpha * c_h * dt_sub / state.dx);
-    fmt::println("ch {}, coeff {}", c_h, coeff);
 
     dex_parallel_for(
         "GLM MHD Source",
@@ -37,9 +36,9 @@ void glm_source(const Simulation& sim, fp_t glm_alpha) {
             using Prim = FTraits::prim;
 
             // NOTE(cmo): Implement as source term, even though it's technically multiplicative damping
-            // const fp_t psi_target = Q(I(Prim::Psi), k, j, i) * coeff;
-            // S(I(Prim::Psi), k, j, i) += (psi_target - Q(I(Prim::Psi), k, j, i)) / dt_sub;
-            Q(I(Prim::Psi), k, j, i) *= coeff;
+            const fp_t psi_target = Q(I(Prim::Psi), k, j, i) * coeff;
+            S(I(Prim::Psi), k, j, i) += (psi_target - Q(I(Prim::Psi), k, j, i)) / dt_sub;
+            // Q(I(Prim::Psi), k, j, i) *= coeff;
         }
     );
 

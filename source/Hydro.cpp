@@ -5,10 +5,69 @@
 
 namespace Mosscap {
 
+template <typename FTraits, typename WType>
+KOKKOS_INLINE_FUNCTION void glm_ch_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& max_ch) {
+    static_assert(FTraits::fluid_type == FluidType::GlmMhd, "Only needed by GLM MHD");
+
+    using Prim = FTraits::prim;
+    constexpr i32 NumDim = FTraits::num_dim;
+
+    fp_t cf = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
+    fp_t vel = std::abs(w(I(Prim::Vx)));
+    // NOTE(cmo): Absolute values of the outermost edges of the Riemann fan
+    max_ch = std::max(max_ch, std::abs(vel - cf));
+    max_ch = std::max(max_ch, std::abs(vel + cf));
+    if constexpr (NumDim > 1) {
+        vel = std::abs(w(I(Prim::Vy)));
+        cf = fast_wave_speed<FTraits, 1>(eos.gamma, mu0, w);
+        max_ch = std::max(max_ch, std::abs(vel - cf));
+        max_ch = std::max(max_ch, std::abs(vel + cf));
+    }
+    if constexpr (NumDim > 2) {
+        vel = std::abs(w(I(Prim::Vz)));
+        cf = fast_wave_speed<FTraits, 2>(eos.gamma, mu0, w);
+        max_ch = std::max(max_ch, std::abs(vel - cf));
+        max_ch = std::max(max_ch, std::abs(vel + cf));
+    }
+}
+
+template <typename FTraits>
+fp_t compute_glm_ch_impl(const Simulation& sim) {
+    const auto& state = sim.state;
+    const auto& eos = sim.eos;
+
+    fp_t ch_max = 0.0_fp;
+    dex_parallel_reduce(
+        "GLM c_h reduction",
+        FlatLoop<3>(state.sz.zc, state.sz.yc, state.sz.xc),
+        KOKKOS_LAMBDA (int k, int j, int i, fp_t& running_ch) {
+            yakl::SArray<fp_t, 1, FTraits::num_vars> w;
+            CellIndex idx {
+                .i = i,
+                .j = j,
+                .k = k
+            };
+            cons_to_prim<FTraits>(eos.gamma, state.mu0, QtyView(state.Q, idx), w);
+            glm_ch_reducer<FTraits>(eos, state.mu0, w, state.dx, running_ch);
+        },
+        Kokkos::Max<fp_t>(ch_max)
+    );
+    return ch_max;
+}
+
+
 void update_glm_ch(Simulation& sim) {
+    if (sim.fluid_type != FluidType::GlmMhd) {
+        return;
+    }
     // Max wave propagation speed for divB cleaning
-    sim.state.glm_ch = sim.max_cfl * sim.state.dx / sim.dt;
-    fmt::println("{} * {} / {} = {}", sim.max_cfl, sim.state.dx, sim.dt, sim.state.glm_ch);
+    if (sim.num_dim == 1) {
+        sim.state.glm_ch = compute_glm_ch_impl<FluidTraits<1, FluidType::GlmMhd>>(sim);
+    } else if (sim.num_dim == 2) {
+        sim.state.glm_ch = compute_glm_ch_impl<FluidTraits<2, FluidType::GlmMhd>>(sim);
+    } else if (sim.num_dim == 3) {
+        sim.state.glm_ch = compute_glm_ch_impl<FluidTraits<3, FluidType::GlmMhd>>(sim);
+    }
 }
 
 template <typename FTraits>
@@ -218,32 +277,6 @@ make_flux_impl() {
         compute_flux_impl<rs, Axis, FTraits>
     };
 }
-
-// template <typename FTraits, typename WType>
-// KOKKOS_INLINE_FUNCTION void glm_ch_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& max_ch) {
-//     static_assert(FTraits::fluid_type == FluidType::GlmMhd, "Only needed by GLM MHD");
-
-//     using Prim = FTraits::prim;
-//     constexpr i32 NumDim = FTraits::num_dim;
-
-//     fp_t cf = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
-//     fp_t vel = std::abs(w(I(Prim::Vx)));
-//     // NOTE(cmo): Absolute values of the outermost edges of the Riemann fan
-//     max_ch = std::max(max_ch, std::abs(vel - cf));
-//     max_ch = std::max(max_ch, std::abs(vel + cf));
-//     if constexpr (NumDim > 1) {
-//         vel = std::abs(w(I(Prim::Vy)));
-//         cf = fast_wave_speed<FTraits, 1>(eos.gamma, mu0, w);
-//         max_ch = std::max(max_ch, std::abs(vel - cf));
-//         max_ch = std::max(max_ch, std::abs(vel + cf));
-//     }
-//     if constexpr (NumDim > 2) {
-//         vel = std::abs(w(I(Prim::Vz)));
-//         cf = fast_wave_speed<FTraits, 2>(eos.gamma, mu0, w);
-//         max_ch = std::max(max_ch, std::abs(vel - cf));
-//         max_ch = std::max(max_ch, std::abs(vel + cf));
-//     }
-// }
 
 template <typename FTraits, typename WType>
 KOKKOS_INLINE_FUNCTION void dt_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& running_dt) {
