@@ -48,6 +48,7 @@ int main(int argc, char** argv) {
     );
     {
         Simulation sim = setup_sim(config, config_path);
+        fmt::println("Set up with {} conserved vars", sim.state.Q.extent(0));
 
         fill_bcs(sim);
 

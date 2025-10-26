@@ -5,8 +5,9 @@
 namespace Mosscap {
 
 constexpr int num_dim = 2;
+template <FluidType fluid_type>
 void initial_conditions(Simulation& sim) {
-    using Fluid = FluidTraits<num_dim, FluidType::Mhd>;
+    using Fluid = FluidTraits<num_dim, fluid_type>;
     using Prim = Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
@@ -46,13 +47,17 @@ MOSSCAP_NEW_PROBLEM(orszag_tang_vortex) {
         ));
     }
 
-    if (sim.fluid_type != FluidType::Mhd) {
+    if (sim.fluid_type == FluidType::Mhd) {
         throw std::runtime_error("This is an MHD problem.");
     }
     sim.state.mu0 = 1.0_fp;
 
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.05_fp);
-    initial_conditions(sim);
+    if (sim.fluid_type == FluidType::Mhd) {
+        initial_conditions<FluidType::Mhd>(sim);
+    } else {
+        initial_conditions<FluidType::GlmMhd>(sim);
+    }
 }
 
 }

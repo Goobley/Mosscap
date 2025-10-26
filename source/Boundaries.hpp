@@ -139,6 +139,9 @@ inline void fill_bcs_fluid_dispatch(const Simulation& sim) {
         case FluidType::Mhd: {
             fill_bcs_impl<FluidTraits<NumDim, FluidType::Mhd>>(sim.state);
         } break;
+        case FluidType::GlmMhd: {
+            fill_bcs_impl<FluidTraits<NumDim, FluidType::GlmMhd>>(sim.state);
+        } break;
         default: {
             KOKKOS_ASSERT(false && "Unknown fluid type");
         }

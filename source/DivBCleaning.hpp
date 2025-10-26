@@ -12,12 +12,14 @@ namespace Mosscap {
         Linde = 0,
         Janhunen,
         LindeJanhunen,
+        Powell8Wave,
         Projection
     };
     constexpr const char* DivBCleaningName[] = {
         "linde",
         "janhunen",
         "lindejanhunen",
+        "powell8wave",
         "projection"
     };
     constexpr int NumDivBCleaningScheme = sizeof(DivBCleaningName) / sizeof(DivBCleaningName[0]);

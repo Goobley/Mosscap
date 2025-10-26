@@ -76,24 +76,13 @@ KOKKOS_INLINE_FUNCTION fp_t fast_wave_speed(const fp_t gamma, const fp_t mu0, co
 
     fp_t cfast2 = cs2;
     if constexpr (FTraits::is_mhd) {
-        // constexpr int IB1 = MagneticField<Axis, FTraits>();
-        // const fp_t irhomu = irho / mu0;
-        // const fp_t ca2 = (square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)))) * irhomu;
-        // const fp_t c_axis2 = square(w(IB1)) * irhomu;
-        // // NOTE(cmo): This is the positive-definite form used in Athena++. It
-        // // expands correctly, but looks a bit weird.
-        // // cfast2 = 0.5_fp * ((cs2 + ca2) + std::sqrt(square(ca2 - cs2) + 4.0_fp * cs2 * (ca2 - c_axis2)));
-        // cfast2 = 0.5_fp * ((cs2 + ca2) + std::sqrt(square(ca2 + cs2) - 4.0_fp * cs2 * c_axis2));
-
         constexpr int IB1 = MagneticField<Axis, FTraits>();
-        constexpr int IB2 = MagneticField<(Axis + 1) % 3, FTraits>();
-        constexpr int IB3 = MagneticField<(Axis + 2) % 3, FTraits>();
-        // Athena impl directly
-        const fp_t asq = gamma * w(I(Prim::Pres));
-        const fp_t ct2 = square(w(IB2)) + square(w((IB3)));
-        const fp_t qsq = square(w(IB1)) + ct2 + asq;
-        const fp_t tmp = square(w(IB1)) + ct2 - asq;
-        cfast2 = (0.5_fp * (qsq + std::sqrt(square(tmp) + 4.0_fp * asq * ct2) * irho));
+        const fp_t irhomu = irho / mu0;
+        const fp_t ca2 = (square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)))) * irhomu;
+        const fp_t c_axis2 = square(w(IB1)) * irhomu;
+        // NOTE(cmo): This is the positive-definite form used in Athena++. It
+        // expands correctly, but looks a bit weird.
+        cfast2 = 0.5_fp * ((cs2 + ca2) + std::sqrt(square(ca2 - cs2) + 4.0_fp * cs2 * (ca2 - c_axis2)));
     }
     return std::sqrt(cfast2);
 }
@@ -123,6 +112,9 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const
         w(I(Prim::Bz)) = q(I(Cons::Bz));
         e_mag = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
         e_mag /= (2.0_fp * mu0);
+        if constexpr (FTraits::fluid_type == FluidType::GlmMhd) {
+            w(I(Prim::Psi)) = q(I(Cons::Psi));
+        }
     }
     // NOTE(cmo): Will probably need to bring EosView back in some capacity to handle ionisation energy
     w(I(Prim::Pres)) = (gamma - 1.0_fp) * ((q(I(Cons::Ene)) - e_kin - e_mag));
@@ -152,6 +144,9 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
         q(I(Cons::Bz)) = w(I(Prim::Bz));
         e_mag = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
         e_mag /= (2.0_fp * mu0);
+        if constexpr (FTraits::fluid_type == FluidType::GlmMhd) {
+            q(I(Cons::Psi)) = w(I(Prim::Psi));
+        }
     }
     const fp_t e_kin = 0.5_fp * w(I(Prim::Rho)) * v2_sum;
     const fp_t e_int = w(I(Prim::Pres)) / (gamma - 1.0_fp);
@@ -159,7 +154,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
 }
 
 template <typename FTraits, int Axis, typename WType, typename FType>
-KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const WType& w, const FType& f) {
+KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const fp_t c_h, const WType& w, const FType& f) {
     using Prim = FTraits::prim;
     using Cons = FTraits::cons;
     constexpr int NumDim = FTraits::is_mhd ? 3 : FTraits::num_dim;
@@ -204,6 +199,11 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
         f(IB1) = 0.0_fp;
         f(IB2) = w(IV1) * w(IB2) - w(IV2) * w(IB1);
         f(IB3) = w(IV1) * w(IB3) - w(IV3) * w(IB1);
+
+        if constexpr (FTraits::fluid_type == FluidType::GlmMhd) {
+            f(IB1) = w(I(Prim::Psi));
+            f(I(Prim::Psi)) = square(c_h) * w(IB1);
+        }
     }
 
     f(IM1) += p_tot;

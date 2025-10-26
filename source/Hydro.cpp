@@ -5,6 +5,12 @@
 
 namespace Mosscap {
 
+void update_glm_ch(Simulation& sim) {
+    // Max wave propagation speed for divB cleaning
+    sim.state.glm_ch = sim.max_cfl * sim.state.dx / sim.dt;
+    fmt::println("{} * {} / {} = {}", sim.max_cfl, sim.state.dx, sim.dt, sim.state.glm_ch);
+}
+
 template <typename FTraits>
 void global_cons_to_prim_impl(const Simulation& sim) {
     const auto& state = sim.state;
@@ -44,6 +50,9 @@ void global_cons_to_prim_fluid_dispatch(const Simulation& sim) {
         } break;
         case FluidType::Mhd: {
             global_cons_to_prim_impl<FluidTraits<NumDim, FluidType::Mhd>>(sim);
+        } break;
+        case FluidType::GlmMhd: {
+            global_cons_to_prim_impl<FluidTraits<NumDim, FluidType::GlmMhd>>(sim);
         } break;
         default: {
             KOKKOS_ASSERT(false && "Unknown fluid type");
@@ -124,6 +133,7 @@ void compute_flux_impl(const Simulation& sim) {
     const auto& fluxes = sim.fluxes;
     const auto& sz = sim.state.sz;
     const auto& eos = sim.eos;
+    const fp_t glm_ch = sim.state.glm_ch;
     const fp_t mu0 = sim.state.mu0;
     int n_tracer = sim.state.num_tracers;
     int nx = sz.xc - 2 * sz.ng;
@@ -163,6 +173,7 @@ void compute_flux_impl(const Simulation& sim) {
             riemann_flux<rsolver, Axis, FTraits>(
                 eos,
                 mu0,
+                glm_ch,
                 rL_view,
                 rR_view,
                 flux_view
@@ -207,6 +218,32 @@ make_flux_impl() {
         compute_flux_impl<rs, Axis, FTraits>
     };
 }
+
+// template <typename FTraits, typename WType>
+// KOKKOS_INLINE_FUNCTION void glm_ch_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& max_ch) {
+//     static_assert(FTraits::fluid_type == FluidType::GlmMhd, "Only needed by GLM MHD");
+
+//     using Prim = FTraits::prim;
+//     constexpr i32 NumDim = FTraits::num_dim;
+
+//     fp_t cf = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
+//     fp_t vel = std::abs(w(I(Prim::Vx)));
+//     // NOTE(cmo): Absolute values of the outermost edges of the Riemann fan
+//     max_ch = std::max(max_ch, std::abs(vel - cf));
+//     max_ch = std::max(max_ch, std::abs(vel + cf));
+//     if constexpr (NumDim > 1) {
+//         vel = std::abs(w(I(Prim::Vy)));
+//         cf = fast_wave_speed<FTraits, 1>(eos.gamma, mu0, w);
+//         max_ch = std::max(max_ch, std::abs(vel - cf));
+//         max_ch = std::max(max_ch, std::abs(vel + cf));
+//     }
+//     if constexpr (NumDim > 2) {
+//         vel = std::abs(w(I(Prim::Vz)));
+//         cf = fast_wave_speed<FTraits, 2>(eos.gamma, mu0, w);
+//         max_ch = std::max(max_ch, std::abs(vel - cf));
+//         max_ch = std::max(max_ch, std::abs(vel + cf));
+//     }
+// }
 
 template <typename FTraits, typename WType>
 KOKKOS_INLINE_FUNCTION void dt_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& running_dt) {
@@ -364,7 +401,20 @@ void select_hydro_fns(Simulation& sim) {
         make_flux_impl<RiemannSolver::Rusanov, 1, FluidTraits<3, FluidType::Mhd>>(),
         make_flux_impl<RiemannSolver::Hll,     1, FluidTraits<3, FluidType::Mhd>>(),
         make_flux_impl<RiemannSolver::Rusanov, 2, FluidTraits<3, FluidType::Mhd>>(),
-        make_flux_impl<RiemannSolver::Hll,     2, FluidTraits<3, FluidType::Mhd>>()
+        make_flux_impl<RiemannSolver::Hll,     2, FluidTraits<3, FluidType::Mhd>>(),
+
+        make_flux_impl<RiemannSolver::Rusanov, 0, FluidTraits<1, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Hll,     0, FluidTraits<1, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Rusanov, 0, FluidTraits<2, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Hll,     0, FluidTraits<2, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Rusanov, 0, FluidTraits<3, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Hll,     0, FluidTraits<3, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Rusanov, 1, FluidTraits<2, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Hll,     1, FluidTraits<2, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Rusanov, 1, FluidTraits<3, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Hll,     1, FluidTraits<3, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Rusanov, 2, FluidTraits<3, FluidType::GlmMhd>>(),
+        make_flux_impl<RiemannSolver::Hll,     2, FluidTraits<3, FluidType::GlmMhd>>()
     };
     sim.flux_fns.flux_x = flux_fns[std::make_tuple(schemes.riemann_solver, 0, sim.fluid_type, sim.num_dim)];
     if (sim.num_dim > 1) {
@@ -380,7 +430,10 @@ void select_hydro_fns(Simulation& sim) {
         {{3, FluidType::Hydro}, compute_dt_impl<FluidTraits<3, FluidType::Hydro>>},
         {{1, FluidType::Mhd}, compute_dt_impl<FluidTraits<1, FluidType::Mhd>>},
         {{2, FluidType::Mhd}, compute_dt_impl<FluidTraits<2, FluidType::Mhd>>},
-        {{3, FluidType::Mhd}, compute_dt_impl<FluidTraits<3, FluidType::Mhd>>}
+        {{3, FluidType::Mhd}, compute_dt_impl<FluidTraits<3, FluidType::Mhd>>},
+        {{1, FluidType::GlmMhd}, compute_dt_impl<FluidTraits<1, FluidType::GlmMhd>>},
+        {{2, FluidType::GlmMhd}, compute_dt_impl<FluidTraits<2, FluidType::GlmMhd>>},
+        {{3, FluidType::GlmMhd}, compute_dt_impl<FluidTraits<3, FluidType::GlmMhd>>}
     };
     sim.compute_dt = cfl_fns[std::make_pair(sim.num_dim, sim.fluid_type)];
 }

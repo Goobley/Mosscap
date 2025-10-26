@@ -4,6 +4,7 @@
 #include "Boundaries.hpp"
 #include "SourceTerms.hpp"
 #include "DivBCleaning.hpp"
+#include "GlmMhd.hpp"
 
 #include <map>
 
@@ -19,7 +20,10 @@ std::function<void(Simulation&, fp_t)> select_fluidtraits_impl(const Simulation&
         {{3, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::Hydro>>},
         {{1, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<1, FluidType::Mhd>>},
         {{2, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<2, FluidType::Mhd>>},
-        {{3, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::Mhd>>}
+        {{3, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::Mhd>>},
+        {{1, FluidType::GlmMhd}, TimeStepper<scheme>::template time_step<FluidTraits<1, FluidType::GlmMhd>>},
+        {{2, FluidType::GlmMhd}, TimeStepper<scheme>::template time_step<FluidTraits<2, FluidType::GlmMhd>>},
+        {{3, FluidType::GlmMhd}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::GlmMhd>>}
     };
     return impls[std::make_pair(sim.num_dim, sim.fluid_type)];
 }
@@ -66,6 +70,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     sim.dt = dt;
     sim.dt_sub = dt;
 
+    update_glm_ch(sim);
     zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
@@ -140,6 +145,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     sim.dt = dt;
     sim.dt_sub = dt;
 
+    update_glm_ch(sim);
     zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
@@ -216,7 +222,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     if (FTraits::is_mhd) {
         fp_t max_divb = 0.0_fp;
         compute_divb(sim, &max_divb);
-        fmt::println("DivB post final {}", max_divb);
+        fmt::println("DivB post final {} @ {}", max_divb, sim.time + dt);
     }
     sim.time += dt;
     sim.current_step += 1;
@@ -250,6 +256,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     sim.dt = dt;
 
     sim.dt_sub = 0.5_fp * dt;
+    update_glm_ch(sim);
     zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);

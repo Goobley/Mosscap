@@ -10,10 +10,12 @@ namespace Mosscap {
 enum class FluidType {
     Hydro = 0,
     Mhd,
+    GlmMhd
 };
 constexpr const char* FluidTypeName[] = {
     "hydro",
     "mhd",
+    "glmmhd"
 };
 constexpr int NumFluidType = sizeof(FluidTypeName) / sizeof(FluidTypeName[0]);
 
@@ -28,6 +30,7 @@ struct Prim {
     static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
     static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
     static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
+    static constexpr i32 Psi = (Fluid != FluidType::GlmMhd) ? 3072 : 8;
 };
 
 template <int NumDim = 1, FluidType Fluid = FluidType::Hydro>
@@ -40,13 +43,14 @@ struct Cons {
     static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
     static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
     static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
+    static constexpr i32 Psi = (Fluid != FluidType::GlmMhd) ? 3072 : 8;
 };
 
 template <int NumDim, FluidType Fluid = FluidType::Hydro>
-constexpr int N_HYDRO_VARS = (Fluid == FluidType::Hydro) ? 2 + NumDim : 8;
+constexpr int N_HYDRO_VARS = (Fluid == FluidType::Hydro) ? 2 + NumDim : (Fluid == FluidType::GlmMhd) ? 9 : 8;
 
 constexpr int get_num_hydro_vars(int num_dim, FluidType fluid = FluidType::Hydro)  {
-    return (fluid == FluidType::Hydro) ? 2 + num_dim : 8;
+    return (fluid == FluidType::Hydro) ? 2 + num_dim : (fluid == FluidType::GlmMhd) ? 9 : 8;
 }
 
 template <int NumDim, FluidType fluid>
@@ -154,6 +158,7 @@ struct GridLoc {
 struct State {
     GridSize sz; /// Grid dimensions + number of ghosts
     fp_t mu0 = 4.0e-7_fp * 3.14159265358979312_fp; /// Value of mu0 used in model
+    fp_t glm_ch; /// Hyperbolic wave speed in GLM MHD
     fp_t dx; /// Spatial grid step (constant)
     GridLoc loc; /// Logical grid position (bottom left corner of cell 0, 0, 0)
     Boundaries boundaries; /// Boundary handling specifications

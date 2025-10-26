@@ -66,6 +66,14 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
             } else {
                 gravity_kernel<FluidTraits<3, FluidType::Mhd>>(sim, grav);
             }
+        } else if (sim.fluid_type == FluidType::GlmMhd) {
+            if (num_dim == 1) {
+                gravity_kernel<FluidTraits<1, FluidType::GlmMhd>>(sim, grav);
+            } else if (num_dim == 2) {
+                gravity_kernel<FluidTraits<2, FluidType::GlmMhd>>(sim, grav);
+            } else {
+                gravity_kernel<FluidTraits<3, FluidType::GlmMhd>>(sim, grav);
+            }
         } else {
             throw std::runtime_error("Unknown fluid type");
         }
