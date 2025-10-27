@@ -8,8 +8,6 @@ static constexpr int num_dim = 2;
 
 namespace Mosscap {
 
-using Fluid = FluidTraits<num_dim, FluidType::Hydro>;
-
 struct BcParams {
     fp_t g_y;
 };
@@ -92,7 +90,13 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                     //     Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     // }
                     // TODO(cmo): This isn't technically correct in the 2D case as there could be x-momentum too
-                    Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp)+ square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    if constexpr (FTraits::is_mhd) {
+                        Q_view(I(Cons::Bx)) = Q_edge(I(Cons::Bx));
+                        Q_view(I(Cons::By)) = Q_edge(I(Cons::By));
+                        Q_view(I(Cons::Bz)) = Q_edge(I(Cons::Bz));
+                        Q_view(I(Cons::Ene)) += (square(Q_view(I(Cons::Bx))) + square(Q_view(I(Cons::By))) + square(Q_view(I(Cons::Bz)))) / (2.0_fp * state.mu0);
+                    }
 
                     // const fp_t prev_mom2 = square(Q_view(IM));
                     // Q_view(IM) = -(Q_flip(IM) / Q_flip(I(Cons::Rho))) * Q_view(I(Cons::Rho));
@@ -168,6 +172,12 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                     //     Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     // }
                     Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    if constexpr (FTraits::is_mhd) {
+                        Q_view(I(Cons::Bx)) = Q_edge(I(Cons::Bx));
+                        Q_view(I(Cons::By)) = Q_edge(I(Cons::By));
+                        Q_view(I(Cons::Bz)) = Q_edge(I(Cons::Bz));
+                        Q_view(I(Cons::Ene)) += (square(Q_view(I(Cons::Bx))) + square(Q_view(I(Cons::By))) + square(Q_view(I(Cons::Bz)))) / (2.0_fp * state.mu0);
+                    }
                     // for (int var = 0; var < state.Q.extent(0); ++var) {
                     //     Q_view(var) = Q_edge(var);
                     // }
@@ -184,16 +194,10 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
     Kokkos::fence();
 }
 
-MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
-    MOSSCAP_PROBLEM_PREAMBLE(coronal_rain_drop_2d);
+template <typename Fluid>
+static void initial_conditions(Simulation& sim, YAML::Node& config) {
     using Prim = Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
-    if (sim.num_dim != num_dim) {
-        throw std::runtime_error(fmt::format(
-            "{} only handles {}d problems", PROBLEM_NAME, num_dim
-        ));
-    }
-
     typedef yakl::Array<f64, 1, yakl::memHost> F64Host;
     const auto& state = sim.state;
     const auto& sz = state.sz;
@@ -252,6 +256,7 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
     const auto rho_z = rho.createDeviceCopy();
     const auto p_z = pressure.createDeviceCopy();
 
+    const fp_t b0 = get_or<fp_t>(config, "problem.b0", 10e-4_fp); // 10 G
     dex_parallel_for(
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
@@ -265,6 +270,11 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
             vec3 p = state.get_pos(i, j, k);
             const fp_t gauss_factor = std::exp(-(square(p(0) - x0) + square(p(1) - z0)) / square(delta));
             w(I(Prim::Rho)) += rho_b0 * gauss_factor;
+
+            JasUse(b0);
+            if constexpr (Fluid::is_mhd) {
+                w(I(Prim::By)) = b0;
+            }
 
             CellIndex idx {
                 .i = i,
@@ -307,6 +317,27 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
             }
         );
     }
+
+}
+
+MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
+    MOSSCAP_PROBLEM_PREAMBLE(coronal_rain_drop_2d);
+    if (sim.num_dim != num_dim) {
+        throw std::runtime_error(fmt::format(
+            "{} only handles {}d problems", PROBLEM_NAME, num_dim
+        ));
+    }
+
+    if (sim.fluid_type == FluidType::Hydro) {
+        initial_conditions<FluidTraits<num_dim, FluidType::Hydro>>(sim, config);
+    } else if (sim.fluid_type == FluidType::Mhd) {
+        initial_conditions<FluidTraits<num_dim, FluidType::Mhd>>(sim, config);
+    } else if (sim.fluid_type == FluidType::GlmMhd) {
+        initial_conditions<FluidTraits<num_dim, FluidType::GlmMhd>>(sim, config);
+    } else {
+        throw std::runtime_error("Unknown fluid type");
+    }
+
 }
 
 }

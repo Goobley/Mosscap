@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
                 fmt::println("* t = {:.03f} s, dt = {:.03e} s, iter = {}, wall time = {:.03e} s", sim.time, dt, sim.current_step, run_time.count());
                 prev_print = current_time;
             }
-            if (current_time - start_time > 30s) {
+            if (current_time - prev_print > 30s) {
                 std::chrono::duration<f64> run_time(current_time - start_time);
                 fmt::println("t = {:.03f} s, dt = {:.03e} s, iter = {}, wall time = {:.03e} s", sim.time, dt, sim.current_step, run_time.count());
                 prev_print = current_time;
