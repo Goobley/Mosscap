@@ -46,6 +46,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/HillierSnowKelvinHelmholtz.cpp"
     "source/ProblemGenerator/KelvinHelmholtz.cpp"
     "source/ProblemGenerator/LinearWaves.cpp"
+    "source/ProblemGenerator/MhdRotor.cpp"
     "source/ProblemGenerator/OrszagTangVortex.cpp"
     "source/ProblemGenerator/Quadrants3.cpp"
     "source/ProblemGenerator/ShockTube2d.cpp"
