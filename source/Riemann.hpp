@@ -59,7 +59,10 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
     const fp_t cfL = fast_wave_speed<FTraits, Axis>(eos.gamma, mu0, wL);
     const fp_t cfR = fast_wave_speed<FTraits, Axis>(eos.gamma, mu0, wR);
 
-    // constexpr fp_t tiny = 1e-20_fp;
+    // NOTE(cmo): We use this tiny value to kill the contribution from one side
+    // and select the two edges of the fan when needed.
+    constexpr fp_t tiny = 1e-30_fp;
+    // Davis wave speed estimates
     // const fp_t sL = std::min(-tiny, std::min(wL(IV) - cfL, wR(IV) - cfR));
     // const fp_t sR = std::max(tiny, std::max(wL(IV) + cfL, wR(IV) + cfR));
     // const fp_t sL = std::min(wL(IV) - cfL, wR(IV) - cfR);
@@ -69,14 +72,13 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
     const fp_t sqrt_rho_L = std::sqrt(wL(I(Prim::Rho)));
     const fp_t sqrt_rho_R = std::sqrt(wR(I(Prim::Rho)));
     const fp_t ubar = (sqrt_rho_L * wL(IV) + sqrt_rho_R * wR(IV)) / (sqrt_rho_L + sqrt_rho_R);
-    // const fp_t ubar = 0.5_fp * (wL(IV) + wR(IV));
     const fp_t eta2 = 0.5_fp * (sqrt_rho_L * sqrt_rho_R) / square(sqrt_rho_L + sqrt_rho_R);
     const fp_t dbar2 = (sqrt_rho_L * square(cfL)  + sqrt_rho_R * square(cfR)) / (sqrt_rho_L + sqrt_rho_R) + eta2 * square(wR(IV) - wL(IV));
     const fp_t dbar = std::sqrt(dbar2);
-    // // const fp_t sL = std::min(-tiny, ubar - dbar);
-    // // const fp_t sR = std::max(tiny, ubar + dbar);
-    fp_t sL = ubar - dbar;
-    fp_t sR = ubar + dbar;
+    const fp_t sL = std::min(-tiny, ubar - dbar);
+    const fp_t sR = std::max(tiny, ubar + dbar);
+    // fp_t sL = ubar - dbar;
+    // fp_t sR = ubar + dbar;
     const fp_t sM = 1.0_fp / (sR - sL);
 
     yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
@@ -85,19 +87,19 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
     prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wL, fL);
     prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wR, fR);
 
-    if (sR <= 0.0_fp) {
-        #pragma unroll
-        for (int i = 0; i < n_hydro; ++i) {
-            flux(i) = fR(i);
-        }
-        return;
-    } else if (sL >= 0.0_fp) {
-        #pragma unroll
-        for (int i = 0; i < n_hydro; ++i) {
-            flux(i) = fL(i);
-        }
-        return;
-    }
+    // if (sR <= 0.0_fp) {
+    //     #pragma unroll
+    //     for (int i = 0; i < n_hydro; ++i) {
+    //         flux(i) = fR(i);
+    //     }
+    //     return;
+    // } else if (sL >= 0.0_fp) {
+    //     #pragma unroll
+    //     for (int i = 0; i < n_hydro; ++i) {
+    //         flux(i) = fL(i);
+    //     }
+    //     return;
+    // }
 
     #pragma unroll
     for (int i = 0; i < n_hydro; ++i) {

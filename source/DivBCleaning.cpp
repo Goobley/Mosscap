@@ -2,14 +2,18 @@
 #include "Simulation.hpp"
 #include "MosscapConfig.hpp"
 #include "SourceTerms.hpp"
+#include "Boundaries.hpp"
 
 namespace Mosscap {
+
+// NOTE(cmo): Neither Linde nor Projection methods really work
 
 void clean_divb(const Simulation& sim) {
     // NOTE(cmo): Leaving this in case we decide to have other methods that need
     // it, such as projection.
     if (sim.clean_divb) {
         sim.clean_divb(sim);
+        fill_bcs(sim);
     }
 }
 
@@ -67,167 +71,126 @@ void glm_source(const Simulation& sim, fp_t glm_alpha) {
                 }
 
                 fp_t grad_psi = (Q(I(Cons::Psi), k, j, i + 1) - Q(I(Cons::Psi), k, j, i - 1)) * inv_2dx;
-                S(I(Cons::Ene), k, j, i) -= Q(I(Cons::Bx), k, j, i) * grad_psi;
+                S(I(Cons::Ene), k, j, i) -= Q(I(Cons::Bx), k, j, i) * grad_psi * inv_mu0;
                 if constexpr (FTraits::num_dim > 1) {
                     grad_psi = (Q(I(Cons::Psi), k, j + 1, i) - Q(I(Cons::Psi), k, j - 1, i)) * inv_2dx;
-                    S(I(Cons::Ene), k, j, i) -= Q(I(Cons::By), k, j, i) * grad_psi;
+                    S(I(Cons::Ene), k, j, i) -= Q(I(Cons::By), k, j, i) * grad_psi * inv_mu0;
                 }
                 if constexpr (FTraits::num_dim > 2) {
                     grad_psi = (Q(I(Cons::Psi), k + 1, j, i) - Q(I(Cons::Psi), k - 1, j, i)) * inv_2dx;
-                    S(I(Cons::Ene), k, j, i) -= Q(I(Cons::Bz), k, j, i) * grad_psi;
+                    S(I(Cons::Ene), k, j, i) -= Q(I(Cons::Bz), k, j, i) * grad_psi * inv_mu0;
                 }
             }
         }
     );
-
 }
 
 template <typename FTraits>
-fp_t compute_max_residual(const Simulation& sim, Fp3d divB, Fp3d phi) {
+Fp3d cg_poisson(const Simulation& sim, Fp3d divB, int max_iters) {
     const auto& state = sim.state;
     JasUnpack(state, sz, Q);
-    int nx = sz.xc - 2;
-    int ny = std::max(sz.yc - 2, 1);
-    int nz = std::max(sz.zc - 2, 1);
-    constexpr fp_t dim_factor = (2.0_fp * fp_t(FTraits::num_dim));
-    const fp_t inv_dx2 = 1.0_fp / square(state.dx);
-
-    fp_t resid2 = 0.0_fp;
-    dex_parallel_reduce(
-        "phi residual",
-        FlatLoop<3>(nz, ny, nx),
-        KOKKOS_LAMBDA (int ki, int ji, int ii, fp_t& running_max) {
-            const int k = nz == 1 ? ki : ki + 1;
-            const int j = ny == 1 ? ji : ji + 1;
-            const int i = ii + 1;
-            fp_t d2phi = phi(k, j, i + 1) + phi(k, j, i - 1);
-            if constexpr (FTraits::num_dim > 1) {
-                d2phi += phi(k, j + 1, i) + phi(k, j - 1, i);
-            }
-            if constexpr (FTraits::num_dim > 2) {
-                d2phi += phi(k + 1, j, i) + phi(k - 1, j, i);
-            }
-            d2phi -= dim_factor * phi(k, j, i);
-            d2phi *= inv_dx2;
-            running_max = std::max(running_max, square(d2phi - divB(k, j, i)));
-        },
-        Kokkos::Max<fp_t>(resid2)
-    );
-    return std::sqrt(resid2);
-}
-
-template <typename FTraits>
-Fp3d rbgs_poisson(const Simulation& sim, Fp3d divB, int max_iters) {
-    // NOTE(cmo): This is very crude
-    const auto& state = sim.state;
-    JasUnpack(state, sz, Q);
-    int nx = sz.xc - 2;
-    int ny = std::max(sz.yc - 2, 1);
-    int nz = std::max(sz.zc - 2, 1);
+    int nx = sz.xc - 4;
+    int ny = std::max(sz.yc - 4, 1);
+    int nz = std::max(sz.zc - 4, 1);
     Fp3d phi("phi", divB.extent(0), divB.extent(1), divB.extent(2));
     phi = 0.0_fp;
-    constexpr fp_t denom = 1.0_fp / (2.0_fp * fp_t(FTraits::num_dim));
+
+    auto dot = [nx, ny, nz](const Fp3d& a, const Fp3d& b) {
+        fp_t result;
+        dex_parallel_reduce(
+            "dot",
+            FlatLoop<3>(nz, ny, nx),
+            KOKKOS_LAMBDA (int ki, int ji, int ii, fp_t& running_dot) {
+                const int k = nz == 1 ? ki : ki + 2;
+                const int j = ny == 1 ? ji : ji + 2;
+                const int i = ii + 2;
+
+                running_dot += a(k, j, i) * b(k, j, i);
+            },
+            Kokkos::Sum<fp_t>(result)
+        );
+        return result;
+    };
+
+    Fp3d resid("residual", divB.extent(0), divB.extent(1), divB.extent(2));
+    divB.deep_copy_to(resid);
+    Fp3d p("search dir", divB.extent(0), divB.extent(1), divB.extent(2));
+    divB.deep_copy_to(p);
+    Fp3d Ap("A*p", divB.extent(0), divB.extent(1), divB.extent(2));
     Kokkos::fence();
-    for (int iter = 0; iter < max_iters; ++iter) {
+    fp_t norm_resid_old = dot(resid, resid);
+
+    int iter;
+    for (iter = 0; iter < max_iters; ++iter) {
         dex_parallel_for(
-            "rbgs_red",
+            "A * p",
             FlatLoop<3>(nz, ny, nx),
             KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                const int k = nz == 1 ? ki : ki + 1;
-                const int j = ny == 1 ? ji : ji + 1;
-                const int i = ii + 1;
-                if (((i + j + k) & 1) == 0) {
-                    fp_t sum = phi(k, j, i + 1) + phi(k, j, i - 1);
-                    if constexpr (FTraits::num_dim > 1) {
-                        sum += phi(k, j + 1, i) + phi(k, j - 1, i);
-                    }
-                    if constexpr (FTraits::num_dim > 2) {
-                        sum += phi(k + 1, j, i) + phi(k - 1, j, i);
-                    }
-                    phi(k, j, i) = (sum - square(state.dx) * divB(k, j, i)) * denom;
+                const int k = nz == 1 ? ki : ki + 2;
+                const int j = ny == 1 ? ji : ji + 2;
+                const int i = ii + 2;
+
+                fp_t sum = p(k, j, i + 1) + p(k, j, i - 1);
+                if constexpr (FTraits::num_dim > 1) {
+                    sum += p(k, j + 1, i) + p(k, j - 1, i);
                 }
+                if constexpr (FTraits::num_dim > 2) {
+                    sum += p(k + 1, j, i) + p(k - 1, j, i);
+                }
+                sum -= 2.0_fp * FTraits::num_dim * p(k, j, i);
+                sum /= (2.0 * square(state.dx));
+                Ap(k, j, i) = sum;
             }
         );
         Kokkos::fence();
 
+        fp_t alpha = norm_resid_old / dot(p, Ap);
         dex_parallel_for(
-            "rbgs black",
+            "cg update",
             FlatLoop<3>(nz, ny, nx),
             KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                const int k = nz == 1 ? ki : ki + 1;
-                const int j = ny == 1 ? ji : ji + 1;
-                const int i = ii + 1;
-                if (((i + j + k) & 1) == 1) {
-                    fp_t sum = phi(k, j, i + 1) + phi(k, j, i - 1);
-                    if constexpr (FTraits::num_dim > 1) {
-                        sum += phi(k, j + 1, i) + phi(k, j - 1, i);
-                    }
-                    if constexpr (FTraits::num_dim > 2) {
-                        sum += phi(k + 1, j, i) + phi(k - 1, j, i);
-                    }
-                    phi(k, j, i) = (sum - square(state.dx) * divB(k, j, i)) * denom;
-                }
+                const int k = nz == 1 ? ki : ki + 2;
+                const int j = ny == 1 ? ji : ji + 2;
+                const int i = ii + 2;
+                phi(k, j, i) += alpha * p(k, j, i);
+                resid(k, j, i) -= alpha * Ap(k, j, i);
             }
         );
         Kokkos::fence();
+        fp_t norm_resid_new = dot(resid, resid);
+        const fp_t resid_ratio = norm_resid_new / norm_resid_old;
+        dex_parallel_for(
+            "cg update search dir",
+            FlatLoop<3>(nz, ny, nx),
+            KOKKOS_LAMBDA (int ki, int ji, int ii) {
+                const int k = nz == 1 ? ki : ki + 2;
+                const int j = ny == 1 ? ji : ji + 2;
+                const int i = ii + 2;
+                p(k, j, i) = resid(k, j, i) + resid_ratio * p(k, j, i);
+            }
+        );
+        Kokkos::fence();
+        norm_resid_old = norm_resid_new;
+        if (std::sqrt(norm_resid_old) < 1e-1_fp) {
+            break;
+        }
     }
-    const fp_t resid = compute_max_residual<FTraits>(sim, divB, phi);
-    fmt::println("Residual {}", resid);
     return phi;
 }
 
-template <typename FTraits>
-Fp3d jacobi_poisson(const Simulation& sim, Fp3d divB, int max_iters) {
-    // NOTE(cmo): This is very crude
-    const auto& state = sim.state;
-    JasUnpack(state, sz, Q);
-    int nx = sz.xc - 2;
-    int ny = std::max(sz.yc - 2, 1);
-    int nz = std::max(sz.zc - 2, 1);
-    Fp3d phi("phi", divB.extent(0), divB.extent(1), divB.extent(2));
-    Fp3d phi2("phi2", divB.extent(0), divB.extent(1), divB.extent(2));
-    phi = 0.0_fp;
-    phi2 = 0.0_fp;
-    Kokkos::fence();
 
-    constexpr fp_t denom = 1.0_fp / (2.0_fp * fp_t(FTraits::num_dim));
-    Kokkos::fence();
-    for (int iter = 0; iter < max_iters; ++iter) {
-        dex_parallel_for(
-            "jacobi projection",
-            FlatLoop<3>(nz, ny, nx),
-            KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                const int k = nz == 1 ? ki : ki + 1;
-                const int j = ny == 1 ? ji : ji + 1;
-                const int i = ii + 1;
-                fp_t sum = phi(k, j, i + 1) + phi(k, j, i - 1);
-                if constexpr (FTraits::num_dim > 1) {
-                    sum += phi(k, j + 1, i) + phi(k, j - 1, i);
-                }
-                if constexpr (FTraits::num_dim > 2) {
-                    sum += phi(k + 1, j, i) + phi(k - 1, j, i);
-                }
-                phi2(k, j, i) = (sum - square(state.dx) * divB(k, j, i)) * denom;
-            }
-        );
-        Kokkos::fence();
-
-        std::swap(phi, phi2);
-    }
-    const fp_t resid = compute_max_residual<FTraits>(sim, divB, phi);
-    fmt::println("Residual {}", resid);
-    return phi2;
-}
-
-
-template <typename FTraits>
+template <typename FTraits, int Order = 1>
 void apply_grad_phi(const Simulation& sim, Fp3d phi) {
+    static_assert(Order == 1 || Order == 2, "Gradient only set up for first or second order");
     const auto& state = sim.state;
     JasUnpack(state, sz, Q);
     int nx = sz.xc - 2 * sz.ng;
     int ny = std::max(sz.yc - 2 * sz.ng, 1);
     int nz = std::max(sz.zc - 2 * sz.ng, 1);
-    const fp_t space_factor = 1.0_fp / (2.0_fp * state.dx );
+    fp_t space_factor = 1.0_fp / (2.0_fp * state.dx );
+    if constexpr (Order == 2) {
+        space_factor = 1.0_fp / state.dx;
+    }
     const fp_t mu0 = sim.state.mu0;
 
     dex_parallel_for(
@@ -238,17 +201,29 @@ void apply_grad_phi(const Simulation& sim, Fp3d phi) {
             const int k = nz == 1 ? ki : ki + sz.ng;
             const int j = ny == 1 ? ji : ji + sz.ng;
             const int i = ii + sz.ng;
-            const fp_t grad_phi_x = (phi(k, j, i + 1) - phi(k, j, i - 1)) * space_factor;
+            fp_t grad_phi_x = (phi(k, j, i + 1) - phi(k, j, i - 1)) * space_factor;
+            if constexpr (Order == 2) {
+                grad_phi_x *= (2.0_fp / 3.0_fp);
+                grad_phi_x -= ((phi(k, j, i + 2) - phi(k, j, i - 2))) * (1.0_fp / 12.0_fp) * space_factor;
+            }
             fp_t prev_e_mag = square(Q(I(Cons::Bx), k, j, i));
             Q(I(Cons::Bx), k, j, i) -= grad_phi_x;
 
             if constexpr (FTraits::num_dim > 1) {
-                const fp_t grad_phi_y = (phi(k, j + 1, i) - phi(k, j - 1, i)) * space_factor;
+                fp_t grad_phi_y = (phi(k, j + 1, i) - phi(k, j - 1, i)) * space_factor;
+                if constexpr (Order == 2) {
+                    grad_phi_y *= (2.0_fp / 3.0_fp);
+                    grad_phi_y -= ((phi(k, j + 2, i) - phi(k, j - 2, i))) * (1.0_fp / 12.0_fp) * space_factor;
+                }
                 prev_e_mag += square(Q(I(Cons::By), k, j, i));
                 Q(I(Cons::By), k, j, i) -= grad_phi_y;
             }
             if constexpr (FTraits::num_dim > 2) {
-                const fp_t grad_phi_z = (phi(k + 1, j, i) - phi(k - 1, j, i)) * space_factor;
+                fp_t grad_phi_z = (phi(k + 1, j, i) - phi(k - 1, j, i)) * space_factor;
+                if constexpr (Order == 2) {
+                    grad_phi_z *= (2.0_fp / 3.0_fp);
+                    grad_phi_z -= ((phi(k + 2, j, i) - phi(k - 2, j, i))) * (1.0_fp / 12.0_fp) * space_factor;
+                }
                 prev_e_mag += square(Q(I(Cons::Bz), k, j, i));
                 Q(I(Cons::Bz), k, j, i) -= grad_phi_z;
             }
@@ -260,40 +235,24 @@ void apply_grad_phi(const Simulation& sim, Fp3d phi) {
     Kokkos::fence();
 }
 
-template <typename FTraits>
+template <typename FTraits, int Order=1>
 void magnetic_field_projection_gs(const Simulation& sim) {
-    int num_rb_iter = 1000;
+    int num_rb_iter = 5000;
 
     fp_t max_divb = 0.0_fp;
-    Fp3d divB = compute_divb_impl<FTraits>(sim, &max_divb);
-    fmt::println("DivB pre {}", max_divb);
-
-    yakl::SimpleNetCDF nc;
-    if (std::abs(sim.time - 0.030076_fp) < 1e-6_fp) {
-        nc.create("projection.nc", yakl::NETCDF_MODE_REPLACE);
-        nc.write(sim.state.Q, "Qpre", {"var", "z", "y", "x"});
-        nc.write(sim.dt, "dt");
-        nc.write(sim.dt_sub, "dt_sub");
-        nc.write(divB, "divbpre", {"z", "y", "x"});
-        num_rb_iter = 1000;
-    }
+    Fp3d divB = compute_divb_impl<FTraits, Order>(sim, &max_divb);
 
     // Fp3d phi = rbgs_poisson<FTraits>(sim, divB, num_rb_iter);
-    Fp3d phi = jacobi_poisson<FTraits>(sim, divB, num_rb_iter);
-    fmt::println("phi computed");
-    apply_grad_phi<FTraits>(sim, phi);
+    // Fp3d phi = jacobi_poisson<FTraits>(sim, divB, num_rb_iter);
+    Fp3d phi = cg_poisson<FTraits>(sim, divB, num_rb_iter);
+    apply_grad_phi<FTraits, Order>(sim, phi);
 
-    divB = compute_divb_impl<FTraits>(sim, &max_divb);
-    if (std::abs(sim.time - 0.030076_fp) < 1e-6_fp) {
-        nc.write(sim.state.Q, "Qpost", {"var", "z", "y", "x"});
-        nc.write(phi, "phi", {"z", "y", "x"});
-        nc.write(divB, "divbpost", {"z", "y", "x"});
-    }
-    fmt::println("DivB post {} @ {}", max_divb, sim.time);
+    fill_bcs(sim);
+    divB = compute_divb_impl<FTraits, Order>(sim, &max_divb);
 }
 
 template <typename FTraits, int Order = 1>
-Fp3d compute_divb_impl(const Simulation& sim, fp_t* max_divb_out) {
+Fp3d compute_divb_impl(const Simulation& sim, fp_t* max_divb_out=nullptr) {
     const auto& state = sim.state;
     JasUnpack(state, sz, Q);
     Fp3d divB("divB", Q.extent(1), Q.extent(2), Q.extent(3));
@@ -344,7 +303,13 @@ Fp3d compute_divb_impl(const Simulation& sim, fp_t* max_divb_out) {
             }
 
             divB(k, j, i) = div;
-            max_divb = std::max(div, max_divb);
+            const bool in_domain =
+                ((i >= sz.ng) && i < (sz.xc - sz.ng)) &&
+                (ny == 1 || ((j >= sz.ng) && i < (sz.yc - sz.ng))) &&
+                (nz == 1 || ((k >= sz.ng) && i < (sz.zc - sz.ng)));
+            if (in_domain) {
+                max_divb = std::max(div, max_divb);
+            }
         },
         Kokkos::Max<fp_t>(max_divb)
     );
@@ -382,6 +347,29 @@ Fp3d compute_divb(const Simulation& sim, fp_t* max_divb_out) {
 }
 
 template <typename FTraits>
+KOKKOS_INLINE_FUNCTION fp_t compute_divB_upwind(const Fp4d& Q, const Fluxes& fluxes, fp_t inv_dx, int k, int j, int i) {
+    using Cons = FTraits::cons;
+    // NOTE(cmo): Closer to pluto implementation
+    // Cell left interface at idx i, right interface at i+1
+    // Upwind b for the normal component of divergence (i.e. second derivative?)
+    // Note: pluto does this whilst it still has access to the LR state.
+    fp_t Bim1 = fluxes.Fx(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::Bx), k, j, i-1) : Q(I(Cons::Bx), k, j, i);
+    fp_t Bi = fluxes.Fx(I(Cons::Rho), k, j, i+1) > 0.0_fp ? Q(I(Cons::Bx), k, j, i) : Q(I(Cons::Bx), k, j, i+1);
+    fp_t divB_i = (Bi - Bim1) * inv_dx;
+    if constexpr (FTraits::num_dim > 1) {
+        Bim1 = fluxes.Fy(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::By), k, j-1, i) : Q(I(Cons::By), k, j, i);
+        Bi = fluxes.Fy(I(Cons::Rho), k, j+1, i) > 0.0_fp ? Q(I(Cons::By), k, j, i) : Q(I(Cons::By), k, j+1, i);
+        divB_i += (Bi - Bim1) * inv_dx;
+    }
+    if constexpr (FTraits::num_dim > 2) {
+        Bim1 = fluxes.Fz(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::Bz), k-1, j, i) : Q(I(Cons::Bz), k, j, i);
+        Bi = fluxes.Fz(I(Cons::Rho), k+1, j, i) > 0.0_fp ? Q(I(Cons::Bz), k, j, i) : Q(I(Cons::Bz), k+1, j, i);
+        divB_i += (Bi - Bim1) * inv_dx;
+    }
+    return divB_i;
+}
+
+template <typename FTraits>
 void janhunen_cleaning(const Simulation& sim, fp_t divB_diff) {
     const auto& state = sim.state;
     JasUnpack(state, sz, Q, W);
@@ -389,9 +377,11 @@ void janhunen_cleaning(const Simulation& sim, fp_t divB_diff) {
     const auto& fluxes = sim.fluxes;
     const fp_t inv_dx = 1.0_fp / state.dx;
 
-    // fp_t max_divb = 0.0_fp;
-    // Fp3d divB = compute_divb_impl<FTraits>(sim, &max_divb);
-    // fmt::println("DivB pre {}", max_divb);
+    constexpr bool divB_central = false;
+    Fp3d divB;
+    if constexpr (divB_central) {
+        divB = compute_divb_impl<FTraits>(sim);
+    }
 
     int nx = sz.xc - 4;
     int ny = std::max(sz.yc - 4, 1);
@@ -406,22 +396,12 @@ void janhunen_cleaning(const Simulation& sim, fp_t divB_diff) {
             using Cons = FTraits::cons;
             using Prim = FTraits::prim;
 
-            // NOTE(cmo): Closer to pluto implementation to see if that helps
-            // Cell left interface at idx i, right interface at i+1
-            // Upwind b for the normal component of divergence (i.e. second derivative?)
-            // Note: pluto does this whilst it still has access to the LR state.
-            fp_t Bim1 = fluxes.Fx(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::Bx), k, j, i-1) : Q(I(Cons::Bx), k, j, i);
-            fp_t Bi = fluxes.Fx(I(Cons::Rho), k, j, i+1) > 0.0_fp ? Q(I(Cons::Bx), k, j, i) : Q(I(Cons::Bx), k, j, i+1);
-            fp_t divB_i = (Bi - Bim1) * inv_dx;
-            if constexpr (FTraits::num_dim > 1) {
-                Bim1 = fluxes.Fy(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::By), k, j-1, i) : Q(I(Cons::By), k, j, i);
-                Bi = fluxes.Fy(I(Cons::Rho), k, j+1, i) > 0.0_fp ? Q(I(Cons::By), k, j, i) : Q(I(Cons::By), k, j+1, i);
-                divB_i += (Bi - Bim1) * inv_dx;
-            }
-            if constexpr (FTraits::num_dim > 2) {
-                Bim1 = fluxes.Fz(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::Bz), k-1, j, i) : Q(I(Cons::Bz), k, j, i);
-                Bi = fluxes.Fz(I(Cons::Rho), k+1, j, i) > 0.0_fp ? Q(I(Cons::Bz), k, j, i) : Q(I(Cons::Bz), k+1, j, i);
-                divB_i += (Bi - Bim1) * inv_dx;
+            fp_t divB_i;
+            JasUse(divB, divB_central, fluxes, Q, inv_dx);
+            if constexpr (divB_central) {
+                divB_i = divB(k, j, i);
+            } else {
+                divB_i = compute_divB_upwind<FTraits>(Q, fluxes, inv_dx, k, j, i);
             }
 
             S(I(Cons::Bx), k, j, i) -= W(I(Prim::Vx), k, j, i)  * divB_i;
@@ -446,6 +426,12 @@ void powell_cleaning(const Simulation& sim, fp_t divB_diff) {
     fp_t inv_mu0 = 1.0_fp / state.mu0;
     fp_t inv_dx = 1.0_fp / state.dx;
 
+    constexpr bool divB_central = false;
+    Fp3d divB;
+    if constexpr (divB_central) {
+        divB = compute_divb_impl<FTraits>(sim);
+    }
+
     int nx = sz.xc - 4;
     int ny = std::max(sz.yc - 4, 1);
     int nz = std::max(sz.zc - 4, 1);
@@ -459,22 +445,12 @@ void powell_cleaning(const Simulation& sim, fp_t divB_diff) {
             using Cons = FTraits::cons;
             using Prim = FTraits::prim;
 
-            // NOTE(cmo): Closer to pluto implementation to see if that helps
-            // Cell left interface at idx i, right interface at i+1
-            // Upwind b for the normal component of divergence (i.e. second derivative?)
-            // Note: pluto does this whilst it still has access to the LR state.
-            fp_t Bim1 = fluxes.Fx(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::Bx), k, j, i-1) : Q(I(Cons::Bx), k, j, i);
-            fp_t Bi = fluxes.Fx(I(Cons::Rho), k, j, i+1) > 0.0_fp ? Q(I(Cons::Bx), k, j, i) : Q(I(Cons::Bx), k, j, i+1);
-            fp_t divB_i = (Bi - Bim1) * inv_dx;
-            if constexpr (FTraits::num_dim > 1) {
-                Bim1 = fluxes.Fy(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::By), k, j-1, i) : Q(I(Cons::By), k, j, i);
-                Bi = fluxes.Fy(I(Cons::Rho), k, j+1, i) > 0.0_fp ? Q(I(Cons::By), k, j, i) : Q(I(Cons::By), k, j+1, i);
-                divB_i += (Bi - Bim1) * inv_dx;
-            }
-            if constexpr (FTraits::num_dim > 2) {
-                Bim1 = fluxes.Fz(I(Cons::Rho), k, j, i) > 0.0_fp ? Q(I(Cons::Bz), k-1, j, i) : Q(I(Cons::Bz), k, j, i);
-                Bi = fluxes.Fz(I(Cons::Rho), k+1, j, i) > 0.0_fp ? Q(I(Cons::Bz), k, j, i) : Q(I(Cons::Bz), k+1, j, i);
-                divB_i += (Bi - Bim1) * inv_dx;
+            fp_t divB_i;
+            JasUse(divB, divB_central, fluxes, Q, inv_dx);
+            if constexpr (divB_central) {
+                divB_i = divB(k, j, i);
+            } else {
+                divB_i = compute_divB_upwind<FTraits>(Q, fluxes, inv_dx, k, j, i);
             }
 
             S(I(Cons::MomX), k, j, i) -= W(I(Prim::Bx), k, j, i)  * divB_i * inv_mu0;
@@ -501,18 +477,19 @@ void linde_cleaning(const Simulation& sim, fp_t divB_diff) {
     const auto& state = sim.state;
     JasUnpack(state, sz, Q);
     const auto& S = sim.sources.S;
+    const auto& fluxes = sim.fluxes;
 
-    fp_t max_divb = 0.0_fp;
-    Fp3d divB = compute_divb_impl<FTraits>(sim, &max_divb);
-    fmt::println("DivB pre {}", max_divb);
+    constexpr bool divB_central = false;
+    Fp3d divB;
+    if constexpr (divB_central) {
+        divB = compute_divb_impl<FTraits>(sim);
+    }
 
     const fp_t inv_mu0 = 1.0_fp / state.mu0;
     // NOTE(cmo): This routine is not responsible for integrating the source
     // terms, so we need to divide by dt, unlike amrvac.
     const fp_t dt_sub = sim.dt_sub;
-    // const fp_t eta = divB_diff * square(sim.state.dx) / fp_t(sim.num_dim) / sim.dt_sub;
     const fp_t eta = divB_diff * square(state.dx) / fp_t(sim.num_dim) / sim.dt_sub;
-    // const fp_t eta_dt = divB_diff * square(sim.state.dx) / fp_t(sim.num_dim);
     // NOTE(cmo): Shrink one cell further to handle gradient calculation -- hence needing at least 2 ghost cells
     const fp_t space_factor = 1.0_fp / (2.0_fp * state.dx);
     int nx = sz.xc - 4;
@@ -527,35 +504,48 @@ void linde_cleaning(const Simulation& sim, fp_t divB_diff) {
             const int i = ii + 2;
             using Cons = FTraits::cons;
 
-            const fp_t grad_divB_x = (divB(k, j, i + 1) - divB(k, j, i - 1)) * space_factor;
+            fp_t grad_divB_x;
+            JasUse(divB_central, fluxes, divB, Q, space_factor);
+            if constexpr (divB_central) {
+                grad_divB_x = (divB(k, j, i + 1) - divB(k, j, i - 1)) * space_factor;
+            } else {
+                fp_t divB_ip = compute_divB_upwind<FTraits>(Q, fluxes, 2.0_fp * space_factor, k, j, i+1);
+                fp_t divB_im = compute_divB_upwind<FTraits>(Q, fluxes, 2.0_fp * space_factor, k, j, i-1);
+                grad_divB_x  = (divB_ip - divB_im) * space_factor;
+            }
             const fp_t Bx = Q(I(Cons::Bx), k, j, i);
             S(I(Cons::Bx), k, j, i) += grad_divB_x * eta;
             S(I(Cons::Ene), k, j, i) += Bx * grad_divB_x * eta * inv_mu0;
 
             if constexpr (FTraits::num_dim > 1) {
                 const fp_t By = Q(I(Cons::By), k, j, i);
-                const fp_t grad_divB_y = (divB(k, j + 1, i) - divB(k, j - 1, i)) * space_factor;
+                fp_t grad_divB_y;
+                if constexpr (divB_central) {
+                    grad_divB_y = (divB(k, j + 1, i) - divB(k, j - 1, i)) * space_factor;
+                } else {
+                    fp_t divB_ip = compute_divB_upwind<FTraits>(Q, fluxes, 2.0_fp * space_factor, k, j+1, i);
+                    fp_t divB_im = compute_divB_upwind<FTraits>(Q, fluxes, 2.0_fp * space_factor, k, j-1, i);
+                    grad_divB_y  = (divB_ip - divB_im) * space_factor;
+                }
                 S(I(Cons::By), k, j, i) += grad_divB_y * eta;
                 S(I(Cons::Ene), k, j, i) += By * grad_divB_y * eta * inv_mu0;
             }
             if constexpr (FTraits::num_dim > 2) {
                 const fp_t Bz = Q(I(Cons::Bz), k, j, i);
-                const fp_t grad_divB_z = (divB(k + 1, j, i) - divB(k - 1, j, i)) * space_factor;
+                fp_t grad_divB_z;
+                if constexpr (divB_central) {
+                    grad_divB_z = (divB(k + 1, j, i) - divB(k - 1, j, i)) * space_factor;
+                } else {
+                    fp_t divB_ip = compute_divB_upwind<FTraits>(Q, fluxes, 2.0_fp * space_factor, k+1, j, i);
+                    fp_t divB_im = compute_divB_upwind<FTraits>(Q, fluxes, 2.0_fp * space_factor, k-1, j, i);
+                    grad_divB_z  = (divB_ip - divB_im) * space_factor;
+                }
                 S(I(Cons::Bz), k, j, i) += grad_divB_z * eta;
                 S(I(Cons::Ene), k, j, i) += Bz * grad_divB_z * eta * inv_mu0;
             }
         }
     );
     Kokkos::fence();
-
-    if (std::abs(sim.time - 0.3_fp) < 1e-6_fp) {
-        yakl::SimpleNetCDF nc;
-        nc.create("simple_out.nc", yakl::NETCDF_MODE_REPLACE);
-        nc.write(state.Q, "Q", {"var", "z", "y", "x"});
-        nc.write(S, "S", {"var", "z", "y", "x"});
-        nc.write(sim.dt, "dt");
-        nc.write(sim.dt_sub, "dt_sub");
-    }
 }
 
 template <typename FTraits>
@@ -597,10 +587,10 @@ void setup_divb_cleaning(Simulation& sim, YAML::Node& config) {
         if (source_term_index(sim, source_name) != sim.compute_source_terms.size()) {
             throw std::runtime_error(fmt::format("Source \"{}\" already registered.", source_name));
         }
-        std::string cleaning_type = get_or<std::string>(config, "simulation.divb_cleaning_scheme", "linde");
+        std::string cleaning_type = get_or<std::string>(config, "simulation.divb_cleaning_scheme", "powell8wave");
         DivBCleaningScheme scheme = find_associated_enum<DivBCleaningScheme>(DivBCleaningName, NumDivBCleaningScheme, cleaning_type);
 
-        fp_t divb_diff = get_or<fp_t>(config, "simulation.divb_diff", 0.8_fp);
+        fp_t divb_diff = get_or<fp_t>(config, "simulation.divb_diff", 0.2_fp);
         if (sim.num_dim == 1) {
             if (scheme != DivBCleaningScheme::Projection) {
                 auto cleaning_source = select_scheme<FluidTraits<1, FluidType::Mhd>>(scheme);

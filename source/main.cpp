@@ -10,6 +10,9 @@
 #include "SetupModules.hpp"
 #include "SourceTerms.hpp"
 
+#include <chrono>
+using namespace std::chrono_literals;
+
 namespace Mosscap {
 
 void write_output_inner(const Simulation& sim, int i, fp_t time) {
@@ -48,7 +51,8 @@ int main(int argc, char** argv) {
     );
     {
         Simulation sim = setup_sim(config, config_path);
-        fmt::println("Set up with {} conserved vars", sim.state.Q.extent(0));
+        auto start_time = std::chrono::system_clock::now();
+        auto prev_print = start_time;
 
         fill_bcs(sim);
 
@@ -65,11 +69,20 @@ int main(int argc, char** argv) {
                 );
             }
 
+            auto current_time = std::chrono::system_clock::now();
             if (sim.time >= sim.out_cfg.prev_output_time + sim.out_cfg.delta) {
                 sim.write_output(sim);
+                std::chrono::duration<f64> run_time(current_time - start_time);
                 // TODO(cmo): This is printing very small dt due to step rounding... save dt natural too?
-                fmt::println("t = {:.03f}, dt = {:.03e}, iter = {}", sim.time, dt, sim.current_step);
+                fmt::println("* t = {:.03f} s, dt = {:.03e} s, iter = {}, wall time = {:.03e} s", sim.time, dt, sim.current_step, run_time.count());
+                prev_print = current_time;
             }
+            if (current_time - start_time > 30s) {
+                std::chrono::duration<f64> run_time(current_time - start_time);
+                fmt::println("t = {:.03f} s, dt = {:.03e} s, iter = {}, wall time = {:.03e} s", sim.time, dt, sim.current_step, run_time.count());
+                prev_print = current_time;
+            }
+
         }
         sim.write_output(sim);
     }

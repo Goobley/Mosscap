@@ -89,7 +89,6 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += q_update + source;
     });
     Kokkos::fence();
-    clean_divb(sim);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -110,9 +109,10 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = 0.5_fp * (Q_old(var, k, j, i) + state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
-    clean_divb(sim);
 
     fill_bcs(sim);
+
+    clean_divb(sim);
     sim.time += dt;
     sim.current_step += 1;
 }
@@ -164,16 +164,10 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += q_update + source;
     });
     Kokkos::fence();
-    clean_divb(sim);
 
     sim.dt_sub = 0.25_fp * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
-    if (FTraits::is_mhd) {
-        fp_t max_divb = 0.0_fp;
-        compute_divb(sim, &max_divb);
-        fmt::println("DivB post {}", max_divb);
-    }
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
@@ -190,16 +184,10 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = 0.75_fp * Q_old(var, k, j, i) + 0.25_fp * (state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
-    clean_divb(sim);
 
     sim.dt_sub = (2.0_fp / 3.0_fp) * dt;
     zero_source_terms(sim);
     fill_bcs(sim);
-    if (FTraits::is_mhd) {
-        fp_t max_divb = 0.0_fp;
-        compute_divb(sim, &max_divb);
-        fmt::println("DivB post {}", max_divb);
-    }
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
 
@@ -216,14 +204,9 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = (1.0_fp / 3.0_fp) * Q_old(var, k, j, i) + (2.0_fp / 3.0_fp) * (state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
-    clean_divb(sim);
 
     fill_bcs(sim);
-    if (FTraits::is_mhd) {
-        fp_t max_divb = 0.0_fp;
-        compute_divb(sim, &max_divb);
-        fmt::println("DivB post final {} @ {}", max_divb, sim.time + dt);
-    }
+    clean_divb(sim);
     sim.time += dt;
     sim.current_step += 1;
 }
@@ -275,7 +258,6 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
-    clean_divb(sim);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -296,7 +278,6 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
-    clean_divb(sim);
 
     sim.dt_sub = (1.0_fp / 6.0_fp) * dt;
     zero_source_terms(sim);
@@ -317,7 +298,6 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = (2.0_fp / 3.0_fp) * Q_old(var, k, j, i) + (1.0_fp / 3.0_fp) * state.Q(var, k, j, i) + (1.0_fp / 6.0_fp) * (q_update + source);
     });
     Kokkos::fence();
-    clean_divb(sim);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -338,10 +318,9 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
-    clean_divb(sim);
-
 
     fill_bcs(sim);
+    clean_divb(sim);
     sim.time += dt;
     sim.current_step += 1;
 }
