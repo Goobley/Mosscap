@@ -21,6 +21,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
     const int ng = state.sz.ng;
     const auto& eos = sim.eos;
 
+    constexpr fp_t damping_factor = 2.0_fp;
     constexpr const char* kernel_name[3] = {"Fill BCs x", "Fill BCs y", "Fill BCs z"};
     int dims[3] = {sz.xc, sz.yc, sz.zc};
     int launch_dims[3] = {sz.xc, sz.yc, sz.zc};
@@ -91,10 +92,12 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                     // }
                     // TODO(cmo): This isn't technically correct in the 2D case as there could be x-momentum too
                     Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    JasUse(damping_factor);
                     if constexpr (FTraits::is_mhd) {
-                        Q_view(I(Cons::Bx)) = Q_edge(I(Cons::Bx));
+                        fp_t damping = std::exp(-damping_factor * std::abs(i_edge.j - idx.j));
+                        Q_view(I(Cons::Bx)) = damping * Q_edge(I(Cons::Bx));
                         Q_view(I(Cons::By)) = Q_edge(I(Cons::By));
-                        Q_view(I(Cons::Bz)) = Q_edge(I(Cons::Bz));
+                        Q_view(I(Cons::Bz)) = damping * Q_edge(I(Cons::Bz));
                         Q_view(I(Cons::Ene)) += (square(Q_view(I(Cons::Bx))) + square(Q_view(I(Cons::By))) + square(Q_view(I(Cons::Bz)))) / (2.0_fp * state.mu0);
                     }
 
@@ -172,10 +175,12 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                     //     Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     // }
                     Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    JasUse(damping_factor);
                     if constexpr (FTraits::is_mhd) {
-                        Q_view(I(Cons::Bx)) = Q_edge(I(Cons::Bx));
+                        fp_t damping = std::exp(-damping_factor * std::abs(i_edge.j - idx.j));
+                        Q_view(I(Cons::Bx)) = damping * Q_edge(I(Cons::Bx));
                         Q_view(I(Cons::By)) = Q_edge(I(Cons::By));
-                        Q_view(I(Cons::Bz)) = Q_edge(I(Cons::Bz));
+                        Q_view(I(Cons::Bz)) = damping * Q_edge(I(Cons::Bz));
                         Q_view(I(Cons::Ene)) += (square(Q_view(I(Cons::Bx))) + square(Q_view(I(Cons::By))) + square(Q_view(I(Cons::Bz)))) / (2.0_fp * state.mu0);
                     }
                     // for (int var = 0; var < state.Q.extent(0); ++var) {

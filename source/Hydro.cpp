@@ -278,51 +278,39 @@ make_flux_impl() {
     };
 }
 
-template <typename FTraits, typename WType>
+template <typename FTraits, CflScheme scheme, typename WType>
 KOKKOS_INLINE_FUNCTION void dt_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& running_dt) {
     using Prim = FTraits::prim;
     constexpr i32 NumDim = FTraits::num_dim;
-    // fp_t cs = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
-    // fp_t vel2 = square(w(I(Prim::Vx)));
-    // if (NumDim > 1) {
-    //     vel2 += square(w(I(Prim::Vy)));
-    //     if constexpr (FTraits::is_mhd) {
-    //         cs = std::max(cs, fast_wave_speed<FTraits, 1>(eos.gamma, mu0, w));
-    //     }
-    // }
-    // if (NumDim > 2) {
-    //     vel2 += square(w(I(Prim::Vz)));
-    //     if constexpr (FTraits::is_mhd) {
-    //         cs = std::max(cs, fast_wave_speed<FTraits, 2>(eos.gamma, mu0, w));
-    //     }
-    // }
-    // const fp_t vel = std::sqrt(vel2);
-    // const fp_t dt_local = dx / (cs + vel);
     fp_t cs = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
     fp_t vel = std::abs(w(I(Prim::Vx)));
-    // fp_t dt_local = dx / (cs + vel);
     fp_t inv_dt = (cs + vel) / dx;
     if constexpr (NumDim > 1) {
         vel = std::abs(w(I(Prim::Vy)));
         if constexpr (FTraits::is_mhd) {
             cs = fast_wave_speed<FTraits, 1>(eos.gamma, mu0, w);
         }
-        // dt_local = std::min(dt_local, dx / (cs + vel));
-        inv_dt += (cs + vel) / dx;
+        if constexpr (scheme == CflScheme::MinPerAxis) {
+            inv_dt = std::max(inv_dt, (cs + vel) / dx);
+        } else {
+            inv_dt += (cs + vel) / dx;
+        }
     }
     if constexpr (NumDim > 2) {
         vel = std::abs(w(I(Prim::Vz)));
         if constexpr (FTraits::is_mhd) {
             cs = fast_wave_speed<FTraits, 2>(eos.gamma, mu0, w);
         }
-        // dt_local = std::min(dt_local, dx / (cs + vel));
-        inv_dt += (cs + vel) / dx;
+        if constexpr (scheme == CflScheme::MinPerAxis) {
+            inv_dt = std::max(inv_dt, (cs + vel) / dx);
+        } else {
+            inv_dt += (cs + vel) / dx;
+        }
     }
-    // running_dt = std::min(dt_local, running_dt);
     running_dt = std::min(1.0_fp / inv_dt, running_dt);
 }
 
-template <typename FTraits>
+template <typename FTraits, CflScheme scheme>
 f64 compute_dt_impl(const Simulation& sim) {
     const auto& state = sim.state;
     const auto& eos = sim.eos;
@@ -339,7 +327,7 @@ f64 compute_dt_impl(const Simulation& sim) {
                 .k = k
             };
             cons_to_prim<FTraits>(eos.gamma, state.mu0, QtyView(state.Q, idx), w);
-            dt_reducer<FTraits>(eos, state.mu0, w, state.dx, running_dt);
+            dt_reducer<FTraits, scheme>(eos, state.mu0, w, state.dx, running_dt);
         },
         Kokkos::Min<fp_t>(dt_max)
     );
@@ -457,18 +445,82 @@ void select_hydro_fns(Simulation& sim) {
         sim.flux_fns.flux_z = flux_fns[std::make_tuple(schemes.riemann_solver, 2, sim.fluid_type, sim.num_dim)];
     }
 
-    std::map<std::pair<int, FluidType>, std::function<fp_t(const Simulation&)>> cfl_fns = {
-        {{1, FluidType::Hydro}, compute_dt_impl<FluidTraits<1, FluidType::Hydro>>},
-        {{2, FluidType::Hydro}, compute_dt_impl<FluidTraits<2, FluidType::Hydro>>},
-        {{3, FluidType::Hydro}, compute_dt_impl<FluidTraits<3, FluidType::Hydro>>},
-        {{1, FluidType::Mhd}, compute_dt_impl<FluidTraits<1, FluidType::Mhd>>},
-        {{2, FluidType::Mhd}, compute_dt_impl<FluidTraits<2, FluidType::Mhd>>},
-        {{3, FluidType::Mhd}, compute_dt_impl<FluidTraits<3, FluidType::Mhd>>},
-        {{1, FluidType::GlmMhd}, compute_dt_impl<FluidTraits<1, FluidType::GlmMhd>>},
-        {{2, FluidType::GlmMhd}, compute_dt_impl<FluidTraits<2, FluidType::GlmMhd>>},
-        {{3, FluidType::GlmMhd}, compute_dt_impl<FluidTraits<3, FluidType::GlmMhd>>}
+    std::map<std::tuple<int, FluidType, CflScheme>, std::function<fp_t(const Simulation&)>> cfl_fns = {
+        {
+            {1, FluidType::Hydro, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<1, FluidType::Hydro>, CflScheme::MinPerAxis>
+        },
+        {
+            {2, FluidType::Hydro, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<2, FluidType::Hydro>, CflScheme::MinPerAxis>
+        },
+        {
+            {3, FluidType::Hydro, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<3, FluidType::Hydro>, CflScheme::MinPerAxis>
+        },
+        {
+            {1, FluidType::Mhd, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<1, FluidType::Mhd>, CflScheme::MinPerAxis>
+        },
+        {
+            {2, FluidType::Mhd, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<2, FluidType::Mhd>, CflScheme::MinPerAxis>
+        },
+        {
+            {3, FluidType::Mhd, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<3, FluidType::Mhd>, CflScheme::MinPerAxis>
+        },
+        {
+            {1, FluidType::GlmMhd, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<1, FluidType::GlmMhd>, CflScheme::MinPerAxis>
+        },
+        {
+            {2, FluidType::GlmMhd, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<2, FluidType::GlmMhd>, CflScheme::MinPerAxis>
+        },
+        {
+            {3, FluidType::GlmMhd, CflScheme::MinPerAxis},
+            compute_dt_impl<FluidTraits<3, FluidType::GlmMhd>, CflScheme::MinPerAxis>
+        },
+
+        {
+            {1, FluidType::Hydro, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<1, FluidType::Hydro>, CflScheme::MaxSum>
+        },
+        {
+            {2, FluidType::Hydro, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<2, FluidType::Hydro>, CflScheme::MaxSum>
+        },
+        {
+            {3, FluidType::Hydro, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<3, FluidType::Hydro>, CflScheme::MaxSum>
+        },
+        {
+            {1, FluidType::Mhd, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<1, FluidType::Mhd>, CflScheme::MaxSum>
+        },
+        {
+            {2, FluidType::Mhd, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<2, FluidType::Mhd>, CflScheme::MaxSum>
+        },
+        {
+            {3, FluidType::Mhd, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<3, FluidType::Mhd>, CflScheme::MaxSum>
+        },
+        {
+            {1, FluidType::GlmMhd, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<1, FluidType::GlmMhd>, CflScheme::MaxSum>
+        },
+        {
+            {2, FluidType::GlmMhd, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<2, FluidType::GlmMhd>, CflScheme::MaxSum>
+        },
+        {
+            {3, FluidType::GlmMhd, CflScheme::MaxSum},
+            compute_dt_impl<FluidTraits<3, FluidType::GlmMhd>, CflScheme::MaxSum>
+        }
     };
-    sim.compute_dt = cfl_fns[std::make_pair(sim.num_dim, sim.fluid_type)];
+    sim.compute_dt = cfl_fns[std::make_tuple(sim.num_dim, sim.fluid_type, sim.scheme.cfl_scheme)];
 }
 
 void compute_hydro_fluxes(const Simulation& sim) {

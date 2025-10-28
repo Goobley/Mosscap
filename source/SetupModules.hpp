@@ -158,6 +158,9 @@ void setup_hydro_fns(Simulation& sim, YAML::Node& config) {
     std::string rs_str = get_or<std::string>(config, "scheme.riemann_solver", "hll");
     scheme.riemann_solver = find_associated_enum<RiemannSolver>(RiemannSolverName, NumRiemannSolverType, rs_str);
 
+    std::string cfl_str = get_or<std::string>(config, "scheme.cfl_scheme", "maxsum");
+    scheme.cfl_scheme = find_associated_enum<CflScheme>(CflSchemeName, NumCflScheme, cfl_str);
+
     select_hydro_fns(sim);
 }
 

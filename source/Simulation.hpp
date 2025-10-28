@@ -14,11 +14,22 @@
 
 namespace Mosscap {
 
+enum class CflScheme {
+    MaxSum = 0,
+    MinPerAxis,
+};
+constexpr const char* CflSchemeName[] = {
+    "maxsum",
+    "minperaxis",
+};
+constexpr int NumCflScheme = sizeof(CflSchemeName) / sizeof(CflSchemeName[0]);
+
 struct NumericalSchemes {
     Reconstruction reconstruction;
     SlopeLimiter slope_limit;
     RiemannSolver riemann_solver;
     TimeStepScheme time_stepper;
+    CflScheme cfl_scheme;
 };
 
 struct FluxFns {
