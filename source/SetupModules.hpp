@@ -212,8 +212,11 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
         throw std::runtime_error("Dex integration only supports 2D models!");
     }
 
+    bool rad_loss = get_or<std::string>(config, "dex.rad_loss", "None") != "None";
+
     bool advect = get_or<bool>(config, "dex.advect", false);
     sim.dex.interface_config.advect = advect;
+    sim.dex.interface_config.rad_loss = rad_loss;
     sim.dex.init_config(sim, config, config_path);
 }
 

@@ -67,6 +67,8 @@ int main(int argc, char** argv) {
                     .max_iter=200
                     }
                 );
+                sim.dex.copy_pops_to_aux_fields(sim);
+                sim.dex.integrate_rad_loss_split(sim);
             }
 
             auto current_time = std::chrono::system_clock::now();

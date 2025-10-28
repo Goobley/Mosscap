@@ -26,7 +26,41 @@ int get_dexrt_dimensionality() {
 
 namespace Mosscap {
 
-using Fluid = FluidTraits<2, FluidType::Hydro>;
+template <typename Lambda, typename ...Args>
+static auto invoke_fluid_traits(
+    int num_dim,
+    FluidType fluid_type,
+    Lambda&& fn,
+    Args&&... args)
+-> decltype(fn(FluidTraits<2, FluidType::Hydro>{}, std::forward<Args>(args)...)) {
+    auto invoke_dim = [...args = std::forward<Args>(args), fn, num_dim]<FluidType FType>(FluidType fluid_type) {
+        // switch (num_dim) {
+            // case 1: {
+            //     return fn(FluidTraits<1, FType>{}, std::forward<Args>(args)...);
+            // };
+            // case 2: {
+            //     return fn(FluidTraits<2, FType>{}, std::forward<Args>(args)...);
+            // };
+            // case 3: {
+            //     return fn(FluidTraits<3, FType>{}, std::forward<Args>(args)...);
+            // };
+        // }
+        return fn(FluidTraits<2, FType>{}, std::forward<Args>(args)...);
+    };
+
+    switch (fluid_type) {
+        case FluidType::Hydro: {
+            return invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
+        };
+        case FluidType::Mhd: {
+            return invoke_dim.template operator()<FluidType::Mhd>(FluidType::Mhd);
+        };
+        case FluidType::GlmMhd: {
+            return invoke_dim.template operator()<FluidType::GlmMhd>(FluidType::GlmMhd);
+        };
+    }
+    return invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
+}
 
 // NOTE(cmo): Direct transplant from dexrt
 static void allocate_J(DexState& state) {
@@ -51,6 +85,35 @@ static void allocate_J(DexState& state) {
     // contents should probably be moved first, but we don't have these terms yet.
 }
 
+void allocate_rad_loss(DexState& state) {
+    JasUnpack(state, config, mr_block_map, c0_size, adata);
+    if (config.rad_loss == RadLossType::None) {
+        return;
+    }
+    if (config.rad_loss == RadLossType::PerWavelength) {
+        throw std::runtime_error("Currently only supporting Integrated rad loss.");
+    }
+    i64 num_cells = mr_block_map.block_map.get_num_active_cells();
+    i32 wave_dim = adata.wavelength.extent(0);
+
+    int rad_loss_leading_dim = wave_dim;
+    if (config.store_J_on_cpu) {
+        rad_loss_leading_dim = c0_size.wave_batch;
+    }
+    int rad_loss_cpu_leading_dim = wave_dim;
+    if (config.rad_loss == RadLossType::Integrated) {
+        rad_loss_leading_dim = 1;
+        rad_loss_cpu_leading_dim = 1;
+    }
+
+    state.rad_loss = decltype(state.rad_loss)("L", yakl::DimsT<i64>(rad_loss_leading_dim, num_cells));
+    if (config.store_J_on_cpu) {
+        state.rad_loss_cpu = decltype(state.rad_loss_cpu)("LHost", yakl::DimsT<i64>(rad_loss_cpu_leading_dim, num_cells));
+        state.rad_loss_cpu = FP(0.0);
+    }
+    state.rad_loss = FP(0.0);
+}
+
 static void allocate_cell_count_based_terms(DexState& state, i64 num_active_cells) {
     const int n_level_total = state.adata.energy.extent(0);
     state.pops = decltype(state.pops)("pops", n_level_total, num_active_cells);
@@ -65,10 +128,12 @@ static void allocate_cell_count_based_terms(DexState& state, i64 num_active_cell
 
     // TODO(cmo): Maybe no J unless requested.
     allocate_J(state);
+    allocate_rad_loss(state);
 }
 
+template <typename FTraits>
 bool DexInterface::update_atmosphere(Simulation& sim) {
-    constexpr i32 num_dim = 2;
+    constexpr i32 num_dim = FTraits::num_dim;
     constexpr i32 block_size = BLOCK_SIZE;
     constexpr fp_t m_p = ConstantsF64::u;
     auto& block_map = state.mr_block_map.block_map;
@@ -94,7 +159,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             const i32 xt = coord.x;
             const i32 zt = coord.z;
 
-            constexpr int n_hydro = N_HYDRO_VARS<num_dim>;
+            constexpr int n_hydro = FTraits::num_vars;
             yakl::SArray<fp_t, 1, n_hydro> w;
             using Prim = Prim<num_dim>;
 
@@ -102,7 +167,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
                     CellIndex idx{.i = x + sz.ng, .j = z + sz.ng, .k = 0};
                     const auto q = QtyView(Q, idx);
-                    cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
+                    cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
 
                     fp_t n_baryon = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
                     fp_t y = eos.y;
@@ -173,12 +238,12 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
 
-            constexpr i32 n_hydro = N_HYDRO_VARS<num_dim>;
+            constexpr i32 n_hydro = FTraits::num_vars;
             CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
-            cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
-            using Prim = Prim<num_dim>;
+            cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
+            using Prim = FTraits::prim;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
             const fp_t nh = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
@@ -221,8 +286,14 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
     return true;
 }
 
+bool DexInterface::update_atmosphere(Simulation& sim) {
+    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        return this->update_atmosphere<FTraits>(sim);
+    });
+}
+
+template <typename FTraits>
 bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
-    constexpr int num_dim = 2;
     constexpr fp_t m_p = ConstantsF64::u;
 
     auto& map = state.mr_block_map.block_map;
@@ -275,15 +346,15 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             u32 code = encode_morton<2>(Coord2{.x = xt, .z = zt});
             morton_order(zt, xt) = code;
 
-            constexpr int n_hydro = N_HYDRO_VARS<num_dim>;
+            constexpr int n_hydro = FTraits::num_vars;
             yakl::SArray<fp_t, 1, n_hydro> w;
-            using Prim = Prim<num_dim>;
+            using Prim = FTraits::prim;
 
             for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
                     CellIndex idx{.i = x + sz.ng, .j = z + sz.ng, .k = 0};
                     const auto q = QtyView(Q, idx);
-                    cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
+                    cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
 
                     fp_t n_baryon = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
                     fp_t y = eos.y;
@@ -318,7 +389,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
         KOKKOS_LAMBDA (i32 idx) {
             u32 code = active_tiles_view(idx);
             map.active_tiles(idx) = code;
-            Coord2 coord = decode_morton<num_dim>(code);
+            Coord2 coord = decode_morton<FTraits::num_dim>(code);
             map.lookup(coord) = idx;
         }
     );
@@ -327,7 +398,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
     state.mr_block_map.init(map, max_mip_level);
 
     using dfp_t = Dex::fp_t;
-    i64 num_active_cells = num_active_tiles * ::DexImpl::int_pow<num_dim>(block_size);
+    i64 num_active_cells = num_active_tiles * ::DexImpl::int_pow<FTraits::num_dim>(block_size);
     state.atmos = SparseAtmosphere{
         .voxel_scale = dfp_t(sim.state.dx),
         .offset_x = dfp_t(sim.state.loc.x),
@@ -356,12 +427,12 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
 
-            constexpr i32 n_hydro = N_HYDRO_VARS<num_dim>;
+            constexpr i32 n_hydro = FTraits::num_vars;
             CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
-            cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
-            using Prim = Prim<num_dim>;
+            cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
+            using Prim = FTraits::prim;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
             const fp_t nh = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
@@ -383,6 +454,12 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
     Kokkos::fence();
 
     return true;
+}
+
+bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
+    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        return this->init_atmosphere<FTraits>(sim, max_mip_level);
+    });
 }
 
 bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::string& config_path) {
@@ -414,6 +491,7 @@ bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::stri
     return true;
 }
 
+template <typename FTraits>
 bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
     auto dex_config = cfg["dex"];
     // state.config = parse_dexrt_config("mosscap", dex_config);
@@ -448,7 +526,7 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
         state.println("Mips not supported with LineCoeffCalc::Classic");
     }
     interface_config.max_mip_level = max_mip_level;
-    init_atmosphere(sim, max_mip_level);
+    init_atmosphere<FTraits>(sim, max_mip_level);
 
     state.phi = VoigtProfile<dfp_t>();
     state.nh_lte = HPartFn();
@@ -494,9 +572,18 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
     return true;
 }
 
+bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
+    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits ftraits) {
+        return this->init<FTraits>(sim, cfg);
+    });
+}
+
 static void setup_wavelength_batch(const DexState& state, int la_start, int la_end) {
     if (state.config.store_J_on_cpu) {
         state.J = FP(0.0);
+        if (state.rad_loss.initialized() && state.config.rad_loss != RadLossType::Integrated) {
+            state.rad_loss = FP(0.0);
+        }
         Kokkos::fence();
     }
 }
@@ -513,9 +600,36 @@ static void copy_J_plane_to_host(const DexState& state, int la_start, int la_end
     }
 }
 
+/// Called to copy rad_loss from GPU to plane of host array if config.store_J_on_cpu
+static void copy_rad_loss_plane_to_host(const DexState& state, int la_start, int la_end) {
+    if (!state.rad_loss.initialized()) {
+        return;
+    }
+
+    // TODO(cmo): This whole function is silly if we're in integrated.
+    int wave_batch = la_end - la_start;
+    const auto rad_loss_copy = state.rad_loss.createHostCopy();
+    if (state.config.rad_loss == RadLossType::PerWavelength) {
+        // TODO(cmo): Replace with a memcpy?
+        for (int wave = 0; wave < wave_batch; ++wave) {
+            for (i64 ks = 0; ks < rad_loss_copy.extent(1); ++ks) {
+                state.rad_loss_cpu(la_start + wave, ks) = rad_loss_copy(wave, ks);
+            }
+        }
+    } else {
+        KOKKOS_ASSERT(rad_loss_copy.extent(0) == 1);
+        for (i64 ks = 0; ks < rad_loss_copy.extent(1); ++ks) {
+            state.rad_loss_cpu(0, ks) = rad_loss_copy(0, ks);
+        }
+    }
+}
+
 static void finalise_wavelength_batch(const DexState& state, int la_start, int la_end) {
     if (state.config.store_J_on_cpu) {
         copy_J_plane_to_host(state, la_start, la_end);
+        if (state.rad_loss.initialized()) {
+            copy_rad_loss_plane_to_host(state, la_start, la_end);
+        }
     }
 
     const i32 wave_batch_idx = la_start / state.c0_size.wave_batch;
@@ -635,9 +749,11 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
             dynamic_formal_sol_rc(
                 state,
                 casc_state,
-                lambda_iterate,
-                wave_batch.la_start,
-                wave_batch.la_end
+                DynamicFormalSolRcOptions {
+                    .la_start = wave_batch.la_start,
+                    .la_end = wave_batch.la_end,
+                    .lambda_iterate = lambda_iterate
+                }
             );
             finalise_wavelength_batch(state, wave_batch.la_start, wave_batch.la_end);
         }
@@ -1091,6 +1207,15 @@ void save_results(const DexState& state, yakl::SimpleNetCDF& nc, bool single_fil
     if (out_cfg.sparse) {
         nc.write(block_map.active_tiles, convert_name("morton_tiles"), {convert_name("num_active_tiles")});
     }
+
+    if (out_cfg.rad_loss) {
+        std::string leading_dim = config.rad_loss == RadLossType::Integrated ? "wavelength_integrated" : "wavelength";
+        if (config.store_J_on_cpu) {
+            maybe_rehydrate_and_write(state.rad_loss_cpu, convert_name("rad_loss"), {leading_dim});
+        } else {
+            maybe_rehydrate_and_write(state.rad_loss, convert_name("rad_loss"), {leading_dim});
+        }
+    }
 }
 
 void DexInterface::write_output(const Simulation& sim, yakl::SimpleNetCDF& nc) {
@@ -1101,6 +1226,7 @@ void DexInterface::write_output(const Simulation& sim, yakl::SimpleNetCDF& nc) {
     save_results(state, nc, cfg.single_file, num_iter);
 }
 
+template <typename FTraits>
 void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
     if (!interface_config.enable) {
         return;
@@ -1131,6 +1257,13 @@ void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
     Kokkos::fence();
 }
 
+void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
+    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        return this->copy_nhtot_to_rho<FTraits>(sim);
+    });
+}
+
+template <typename FTraits>
 void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
     if (!interface_config.advect || !interface_config.enable) {
         return;
@@ -1160,6 +1293,71 @@ void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
     Kokkos::fence();
 }
 
+void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
+    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        return this->copy_pops_to_aux_fields<FTraits>(sim);
+    });
+}
+
+template <typename FTraits>
+void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
+    if (!interface_config.enable || !interface_config.rad_loss) {
+        return;
+    }
+
+    using Cons = FTraits::cons;
+
+    constexpr fp_t temperature_floor = 2.5e3_fp;
+    constexpr fp_t total_abund = 1.0_fp;
+    JasUnpack(state, mr_block_map, atmos, pops, rad_loss);
+    const auto& block_map = mr_block_map.block_map;
+    const auto& Q = sim.state.Q;
+    const auto& sz = sim.state.sz;
+    JasUnpack(sim, dt, eos);
+    const auto& gamma = eos.gamma;
+
+    typedef Kokkos::MinLoc<fp_t, i64> MinLoc;
+    MinLoc::value_type minloc;
+    dex_parallel_reduce(
+        "Integrate rad loss",
+        FlatLoop<2>(block_map.loop_bounds()),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx, MinLoc::value_type& min_loc) {
+            IdxGen idx_gen(mr_block_map);
+            const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
+
+            // Calculated in kW/m3;
+            fp_t delta_E = rad_loss(0, ks) * 1e3 * dt;
+
+            const fp_t eint_pre = atmos.pressure(ks) / (gamma - 1.0_fp);
+            fp_t eint_post = eint_pre + delta_E;
+            fp_t pressure_post = eint_post * (gamma - 1.0_fp);
+            fp_t temperature_post = pressure_post / (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks)));
+            temperature_post = std::max(temperature_post, temperature_floor);
+            pressure_post = (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks))) * temperature_post;
+            eint_post = pressure_post / (gamma - 1.0_fp);
+
+            if (temperature_post < min_loc.val) {
+                min_loc.val = temperature_post;
+                min_loc.loc = ks;
+            }
+
+            Q(I(Cons::Ene), idx.k, idx.j, idx.i) += (eint_post - eint_pre);
+        },
+        MinLoc(minloc)
+    );
+
+    fmt::println("Min temperature {:.3e} K @ ks={}", minloc.val, minloc.loc);
+}
+
+void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
+    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits){
+        return this->integrate_rad_loss_split<FTraits>(sim);
+    });
+}
+
+template <typename FTraits>
 void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
     if (!interface_config.advect || !interface_config.enable) {
         return;
@@ -1221,6 +1419,13 @@ void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
     Kokkos::fence();
 }
 
+void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
+    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        return this->copy_pops_from_aux_fields<FTraits>(sim);
+    });
+}
+
+template <typename FTraits>
 void DexInterface::lte_init_aux_fields(const Simulation& sim) {
     if (!interface_config.advect || !interface_config.enable) {
         return;
@@ -1250,12 +1455,12 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
             "LTE tracers",
             FlatLoop<3>(sz.zc, sz.yc, sz.xc),
             KOKKOS_LAMBDA (i32 k, i32 j, i32 i) {
-                constexpr i32 n_hydro = N_HYDRO_VARS<num_dim>;
+                constexpr i32 n_hydro = FTraits::num_vars;
                 CellIndex idx{.i = i, .j = j, .k = k};
                 yakl::SArray<fp_t, 1, n_hydro> w;
                 QtyView q(Q, idx);
-                cons_to_prim<Fluid>(eos.gamma, mu0, q, w);
-                using Prim = Prim<num_dim>;
+                cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
+                using Prim = FTraits::prim;
 
                 const i64 flat_idx = i + j * sz.xc + k * sz.yc * sz.xc;
 
@@ -1282,6 +1487,12 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
             }
         );
     }
+}
+
+void DexInterface::lte_init_aux_fields(const Simulation& sim) {
+    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        return this->lte_init_aux_fields<FTraits>(sim);
+    });
 }
 
 }

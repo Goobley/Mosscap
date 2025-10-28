@@ -20,6 +20,7 @@ using DexCascState = ::CascadeState;
 struct DexMosscapConfig {
     bool advect = false;
     bool enable = false;
+    bool rad_loss = false;
     i32 max_mip_level = 0;
     i32 field_start_idx = 0;
 };
@@ -38,15 +39,42 @@ struct DexInterface {
     i32 num_iter;
 
     bool init_config(Simulation& sim, YAML::Node& config, const std::string& config_path);
+
     bool init(Simulation& sim, YAML::Node& config);
+    template <typename FTraits>
+    bool init(Simulation& sim, YAML::Node& config);
+
     bool init_atmosphere(Simulation& sim, i32 max_mip_level);
+    template <typename FTraits>
+    bool init_atmosphere(Simulation& sim, i32 max_mip_level);
+
     bool update_atmosphere(Simulation& sim);
+    template <typename FTraits>
+    bool update_atmosphere(Simulation& sim);
+
     bool iterate(const DexConvergence& tol, bool first_iter=false);
+
     void copy_nhtot_to_rho(const Simulation& sim);
+    template <typename FTraits>
+    void copy_nhtot_to_rho(const Simulation& sim);
+
     void copy_pops_to_aux_fields(const Simulation&);
+    template <typename FTraits>
+    void copy_pops_to_aux_fields(const Simulation&);
+
     void copy_pops_from_aux_fields(const Simulation&);
+    template <typename FTraits>
+    void copy_pops_from_aux_fields(const Simulation&);
+
     void lte_init_aux_fields(const Simulation&);
+    template <typename FTraits>
+    void lte_init_aux_fields(const Simulation&);
+
     void write_output(const Simulation&, yakl::SimpleNetCDF&);
+
+    void integrate_rad_loss_split(const Simulation& sim);
+    template <typename FTraits>
+    void integrate_rad_loss_split(const Simulation& sim);
 };
 
 template <typename T, typename U, int rank, int mem_space>
