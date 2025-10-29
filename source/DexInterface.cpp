@@ -1311,7 +1311,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
             CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
 
             // Calculated in kW/m3;
-            fp_t delta_E = rad_loss(0, ks) * 1e3 * dt;
+            fp_t delta_E = -rad_loss(0, ks) * 1e3 * dt;
 
             const fp_t eint_pre = atmos.pressure(ks) / (gamma - 1.0_fp);
             fp_t eint_post = eint_pre + delta_E;
