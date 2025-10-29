@@ -15,7 +15,7 @@ MOSSCAP_NEW_PROBLEM(circular_explosion) {
             "{} only handles {}d problems", PROBLEM_NAME, num_dim
         ));
     }
-    using Prim = Prim<num_dim>;
+    using Prim = Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;

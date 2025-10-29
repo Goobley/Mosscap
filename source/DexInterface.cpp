@@ -27,7 +27,7 @@ int get_dexrt_dimensionality() {
 namespace Mosscap {
 
 template <typename Lambda, typename ...Args>
-static auto invoke_fluid_traits(
+static auto invoke_fluid_traits_2d(
     int num_dim,
     FluidType fluid_type,
     Lambda&& fn,
@@ -161,7 +161,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
 
             constexpr int n_hydro = FTraits::num_vars;
             yakl::SArray<fp_t, 1, n_hydro> w;
-            using Prim = Prim<num_dim>;
+            using Prim = FTraits::prim;
 
             for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
@@ -287,7 +287,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
 }
 
 bool DexInterface::update_atmosphere(Simulation& sim) {
-    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
         return this->update_atmosphere<FTraits>(sim);
     });
 }
@@ -457,7 +457,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
 }
 
 bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
-    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
         return this->init_atmosphere<FTraits>(sim, max_mip_level);
     });
 }
@@ -494,28 +494,10 @@ bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::stri
 template <typename FTraits>
 bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
     auto dex_config = cfg["dex"];
-    // state.config = parse_dexrt_config("mosscap", dex_config);
-
-    // setup_comm(&state);
 
     using dfp_t = Dex::fp_t;
 
     const auto& config = state.config;
-    // std::vector<ModelAtom<f64>> crtaf_models;
-    // crtaf_models.reserve(config.atom_paths.size());
-    // for (int i = 0; i < config.atom_paths.size(); ++i) {
-    //     const auto& p = config.atom_paths[i];
-    //     const auto& model_config = config.atom_configs[i];
-    //     crtaf_models.emplace_back(parse_crtaf_model<f64>(p, model_config));
-    // }
-    // AtomicDataHostDevice<dfp_t> atomic_data = to_atomic_data<dfp_t, f64>(crtaf_models);
-    // state.adata = atomic_data.device;
-    // state.adata_host = atomic_data.host;
-    // state.have_h = atomic_data.have_h_model;
-    // state.atoms = extract_atoms(atomic_data.device, atomic_data.host);
-    // GammaAtomsAndMapping gamma_atoms = extract_atoms_with_gamma_and_mapping(atomic_data.device, atomic_data.host);
-    // state.atoms_with_gamma = gamma_atoms.atoms;
-    // state.atoms_with_gamma_mapping = gamma_atoms.mapping;
 
     i32 max_mip_level = 0;
     for (int i = 0; i <= config.max_cascade; ++i) {
@@ -573,7 +555,7 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
 }
 
 bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
-    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits ftraits) {
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits ftraits) {
         return this->init<FTraits>(sim, cfg);
     });
 }
@@ -752,7 +734,8 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
                 DynamicFormalSolRcOptions {
                     .la_start = wave_batch.la_start,
                     .la_end = wave_batch.la_end,
-                    .lambda_iterate = lambda_iterate
+                    .lambda_iterate = lambda_iterate,
+                    .compute_rad_loss = interface_config.rad_loss
                 }
             );
             finalise_wavelength_batch(state, wave_batch.la_start, wave_batch.la_end);
@@ -1240,7 +1223,7 @@ void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
     constexpr fp_t m_p = ConstantsF64::u;
     const auto& eos = sim.eos;
     constexpr i32 num_dim = 2;
-    using Cons = Cons<num_dim>;
+    using Cons = FTraits::cons;
 
     dex_parallel_for(
         "nhtot -> rho",
@@ -1258,7 +1241,7 @@ void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
 }
 
 void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
-    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
         return this->copy_nhtot_to_rho<FTraits>(sim);
     });
 }
@@ -1294,7 +1277,7 @@ void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
 }
 
 void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
-    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
         return this->copy_pops_to_aux_fields<FTraits>(sim);
     });
 }
@@ -1352,7 +1335,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
 }
 
 void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
-    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits){
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits){
         return this->integrate_rad_loss_split<FTraits>(sim);
     });
 }
@@ -1420,7 +1403,7 @@ void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
 }
 
 void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
-    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
         return this->copy_pops_from_aux_fields<FTraits>(sim);
     });
 }
@@ -1432,7 +1415,6 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
     }
 
     constexpr fp_t m_p = ConstantsF64::u;
-    constexpr i32 num_dim = 2;
 
     const auto& Q = sim.state.Q;
     const auto& sz = sim.state.sz;
@@ -1490,7 +1472,7 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
 }
 
 void DexInterface::lte_init_aux_fields(const Simulation& sim) {
-    return invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
         return this->lte_init_aux_fields<FTraits>(sim);
     });
 }

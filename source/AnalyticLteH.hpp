@@ -47,7 +47,7 @@ struct AnalyticLteH {
         return eint;
     }
 
-    template <int NumDim>
+    template <typename FTraits>
     inline void update_eos(const Simulation& sim) const {
         const auto& state = sim.state;
         const auto& eos = sim.eos;
@@ -55,7 +55,7 @@ struct AnalyticLteH {
         const auto& Q = state.Q;
         const bool ionisation_e = include_ionisation_e;
         const fp_t inv_avg_mass = 1.0_fp / eos.avg_mass;
-        using Cons = Cons<NumDim>;
+        using Cons = FTraits::cons;
 
         // NOTE(cmo): Scheme similar to lare
         dex_parallel_for(
@@ -64,10 +64,10 @@ struct AnalyticLteH {
             KOKKOS_LAMBDA (int k, int j, int i) {
                 const fp_t rho = Q(I(Cons::Rho), k, j, i);
                 fp_t mom2_sum = square(Q(I(Cons::MomX), k, j, i));
-                if constexpr (NumDim > 1) {
+                if constexpr (FTraits::is_mhd || FTraits::num_dim > 1) {
                     mom2_sum += square(Q(I(Cons::MomY), k, j, i));
                 }
-                if constexpr (NumDim > 2) {
+                if constexpr (FTraits::is_mhd || FTraits::num_dim > 2) {
                     mom2_sum += square(Q(I(Cons::MomZ), k, j, i));
                 }
                 const fp_t e_kin = 0.5_fp * mom2_sum / rho;

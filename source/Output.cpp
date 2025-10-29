@@ -15,10 +15,10 @@ void ncwrap (int ierr, int line) {
     }
 }
 
-template <int NumDim>
+template <typename FTraits>
 void write_cons_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
     int ncid = nc.file.ncid;
-    using Cons = Cons<NumDim>;
+    using Cons = FTraits::cons;
     int irho = I(Cons::Rho);
     ncwrap(
         nc_put_att_int(ncid, NC_GLOBAL, "irho", NC_INT, 1, &irho),
@@ -29,14 +29,14 @@ void write_cons_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
         nc_put_att_int(ncid, NC_GLOBAL, "imx", NC_INT, 1, &imx),
         __LINE__
     );
-    if constexpr (NumDim > 1) {
+    if constexpr (FTraits::is_mhd || FTraits::num_dim > 1) {
         int imy = I(Cons::MomY);
         ncwrap(
             nc_put_att_int(ncid, NC_GLOBAL, "imy", NC_INT, 1, &imy),
             __LINE__
         );
     }
-    if constexpr (NumDim > 2) {
+    if constexpr (FTraits::is_mhd || FTraits::num_dim > 2) {
         int imz = I(Cons::MomZ);
         ncwrap(
             nc_put_att_int(ncid, NC_GLOBAL, "imz", NC_INT, 1, &imz),
@@ -48,12 +48,36 @@ void write_cons_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
         nc_put_att_int(ncid, NC_GLOBAL, "iene", NC_INT, 1, &iene),
         __LINE__
     );
+    if constexpr (FTraits::is_mhd) {
+        int ibx = I(Cons::Bx);
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "ibx", NC_INT, 1, &ibx),
+            __LINE__
+        );
+        int iby = I(Cons::By);
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "iby", NC_INT, 1, &iby),
+            __LINE__
+        );
+        int ibz = I(Cons::Bz);
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "ibz", NC_INT, 1, &ibz),
+            __LINE__
+        );
+        if (FTraits::fluid_type == FluidType::GlmMhd) {
+            int ipsi = I(Cons::Psi);
+            ncwrap(
+                nc_put_att_int(ncid, NC_GLOBAL, "ipsi", NC_INT, 1, &ipsi),
+                __LINE__
+            );
+        }
+    }
 }
 
-template <int NumDim>
+template <typename FTraits>
 void write_prim_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
     int ncid = nc.file.ncid;
-    using Prim = Prim<NumDim>;
+    using Prim = FTraits::prim;
     int irho = I(Prim::Rho);
     ncwrap(
         nc_put_att_int(ncid, NC_GLOBAL, "irho", NC_INT, 1, &irho),
@@ -64,14 +88,14 @@ void write_prim_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
         nc_put_att_int(ncid, NC_GLOBAL, "ivx", NC_INT, 1, &ivx),
         __LINE__
     );
-    if constexpr (NumDim > 1) {
+    if constexpr (FTraits::is_mhd || FTraits::num_dim > 1) {
         int ivy = I(Prim::Vy);
         ncwrap(
             nc_put_att_int(ncid, NC_GLOBAL, "ivy", NC_INT, 1, &ivy),
             __LINE__
         );
     }
-    if constexpr (NumDim > 2) {
+    if constexpr (FTraits::is_mhd || FTraits::num_dim > 2) {
         int ivz = I(Prim::Vz);
         ncwrap(
             nc_put_att_int(ncid, NC_GLOBAL, "ivz", NC_INT, 1, &ivz),
@@ -83,6 +107,30 @@ void write_prim_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
         nc_put_att_int(ncid, NC_GLOBAL, "ipre", NC_INT, 1, &ipre),
         __LINE__
     );
+    if constexpr (FTraits::is_mhd) {
+        int ibx = I(Prim::Bx);
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "ibx", NC_INT, 1, &ibx),
+            __LINE__
+        );
+        int iby = I(Prim::By);
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "iby", NC_INT, 1, &iby),
+            __LINE__
+        );
+        int ibz = I(Prim::Bz);
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "ibz", NC_INT, 1, &ibz),
+            __LINE__
+        );
+        if (FTraits::fluid_type == FluidType::GlmMhd) {
+            int ipsi = I(Prim::Psi);
+            ncwrap(
+                nc_put_att_int(ncid, NC_GLOBAL, "ipsi", NC_INT, 1, &ipsi),
+                __LINE__
+            );
+        }
+    }
 }
 
 void write_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
@@ -134,28 +182,14 @@ void write_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
         __LINE__
     );
 
-    if (sim.num_dim == 1) {
+    invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
         if (cfg.variables.conserved) {
-            write_cons_header<1>(nc, sim);
+            write_cons_header<FTraits>(nc, sim);
         }
         if (cfg.variables.primitive) {
-            write_prim_header<1>(nc, sim);
+            write_prim_header<FTraits>(nc, sim);
         }
-    } else if (sim.num_dim == 2) {
-        if (cfg.variables.conserved) {
-            write_cons_header<2>(nc, sim);
-        }
-        if (cfg.variables.primitive) {
-            write_prim_header<2>(nc, sim);
-        }
-    } else {
-        if (cfg.variables.conserved) {
-            write_cons_header<3>(nc, sim);
-        }
-        if (cfg.variables.primitive) {
-            write_prim_header<3>(nc, sim);
-        }
-    }
+    });
 }
 
 void write_axes(yakl::SimpleNetCDF& nc, const Simulation& sim) {
@@ -227,8 +261,12 @@ bool write_output(Simulation& sim) {
         }
         if (cfg.variables.fluxes) {
             nc.write(sim.fluxes.Fx, "Fx", {"var", "z", "y", "x"});
-            nc.write(sim.fluxes.Fy, "Fy", {"var", "z", "y", "x"});
-            nc.write(sim.fluxes.Fz, "Fz", {"var", "z", "y", "x"});
+            if (sim.num_dim > 1) {
+                nc.write(sim.fluxes.Fy, "Fy", {"var", "z", "y", "x"});
+            }
+            if (sim.num_dim > 2) {
+                nc.write(sim.fluxes.Fz, "Fz", {"var", "z", "y", "x"});
+            }
         }
         if (cfg.variables.source) {
             nc.write(sim.sources.S, "S", {"conserved_var", "z", "y", "x"});

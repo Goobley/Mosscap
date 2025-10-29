@@ -99,15 +99,15 @@ void setup_boundaries(Simulation& sim, YAML::Node& config) {
             const auto name = fmt::format("{}_const", bdry);
             if (config["boundary"][name]){
                 if (config["boundary"][name].IsSequence()) {
-                    using Cons3 = Cons<3>;
+                    using Cons3 = Cons<3, FluidType::Hydro>;
                     auto node = config["boundary"][fmt::format("{}_const", bdry)];
                     if (sim.num_dim == 1) {
-                        using Cons1 = Cons<1>;
+                        using Cons1 = Cons<1, FluidType::Hydro>;
                         arr(I(Cons1::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
                         arr(I(Cons1::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
                         arr(I(Cons1::Ene)) = node[I(Cons3::Ene)].as<fp_t>();
                     } else if (sim.num_dim == 2) {
-                        using Cons2 = Cons<2>;
+                        using Cons2 = Cons<2, FluidType::Hydro>;
                         arr(I(Cons2::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
                         arr(I(Cons2::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
                         arr(I(Cons2::MomY)) = node[I(Cons3::MomY)].as<fp_t>();

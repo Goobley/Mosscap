@@ -113,24 +113,24 @@ struct TabulatedLteH {
         };
     }
 
-    template <int NumDim>
+    template <typename FTraits>
     inline void update_eos(const Simulation& sim) const {
         const auto& state = sim.state;
         const auto& eos = sim.eos;
         const auto& sz = state.sz;
         const auto& Q = state.Q;
 
-        using Cons = Cons<NumDim>;
+        using Cons = FTraits::cons;
 
         dex_parallel_for(
             "Update tabulated EOS",
             FlatLoop<3>(sz.zc, sz.yc, sz.xc),
             KOKKOS_CLASS_LAMBDA (int k, int j, int i) {
                 fp_t mom2_sum = square(Q(I(Cons::MomX), k, j, i));
-                if constexpr (NumDim > 1) {
+                if constexpr (FTraits::is_mhd || FTraits::num_dim > 1) {
                     mom2_sum += square(Q(I(Cons::MomY), k, j, i));
                 }
-                if constexpr (NumDim > 2) {
+                if constexpr (FTraits::is_mhd || FTraits::num_dim > 2) {
                     mom2_sum += square(Q(I(Cons::MomZ), k, j, i));
                 }
                 const fp_t rho = Q(I(Cons::Rho), k, j, i);

@@ -50,13 +50,9 @@ bool Eos::init_analytic_lte_h(fp_t gamma_, Simulation& sim, bool include_ionisat
     lte_eos.init(include_ionisation_energy);
 
     sim.update_eos = [lte_eos](const Simulation& sim) {
-        if (sim.num_dim == 1) {
-            lte_eos.update_eos<1>(sim);
-        } else if (sim.num_dim == 2) {
-            lte_eos.update_eos<2>(sim);
-        } else {
-            lte_eos.update_eos<3>(sim);
-        }
+        invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+            lte_eos.update_eos<FTraits>(sim);
+        });
     };
 
     return true;
@@ -75,14 +71,11 @@ bool Eos::init_tabulated_lte_h(fp_t gamma_, Simulation& sim, const std::string& 
     y_space = -1.0_fp;
 
     sim.update_eos = [lte_h](const Simulation& sim) {
-        if (sim.num_dim == 1) {
-            lte_h.update_eos<1>(sim);
-        } else if (sim.num_dim == 2) {
-            lte_h.update_eos<2>(sim);
-        } else {
-            lte_h.update_eos<3>(sim);
-        }
+        invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+            lte_h.update_eos<FTraits>(sim);
+        });
     };
+
     return true;
 }
 
@@ -102,7 +95,9 @@ bool Eos::init_dexrt(fp_t gamma_, Simulation& sim) {
     dex_eos.init();
 
     sim.update_eos = [dex_eos](const Simulation& sim) {
-        dex_eos.update_eos(sim);
+        invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+            dex_eos.update_eos<FTraits>(sim);
+        });
     };
 
     return true;

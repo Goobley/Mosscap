@@ -368,7 +368,7 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
         auto rho_d = rho.createDeviceCopy();
         auto eint_d = eint.createDeviceCopy();
         const auto& Q = state.Q;
-        using Cons = Cons<num_dim>;
+        using Cons = Fluid::cons;
 
         dex_parallel_for(
             "Setup Q",
