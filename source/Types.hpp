@@ -1,6 +1,5 @@
 #if !defined(MOSSCAP_TYPES_HPP)
 #define MOSSCAP_TYPES_HPP
-#define MOSSCAP_DEBUG
 #if !defined(KOKKOS_ENABLE_DEBUG) && defined(MOSSCAP_DEBUG)
     #define KOKKOS_ENABLE_DEBUG
 #endif
