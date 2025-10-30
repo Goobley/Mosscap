@@ -225,25 +225,27 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
     sim.dex.init_config(sim, config, config_path);
 }
 
-void setup_dex(Simulation& sim, YAML::Node& config) {
+void setup_dex(Simulation& sim, YAML::Node& config, bool is_restart) {
     if (!sim.dex.interface_config.enable) {
         return;
     }
 
     sim.dex.init(sim, config);
-    sim.dex.lte_init_aux_fields(sim);
-    sim.dex.iterate(
-        DexConvergence{
-            .convergence = 1e-3_fp,
-            .max_iter = 300,
-        },
-        true
-    );
+    if (!is_restart) {
+        sim.dex.lte_init_aux_fields(sim);
+        sim.dex.iterate(
+            DexConvergence{
+                .convergence = 1e-3_fp,
+                .max_iter = 300,
+            },
+            true
+        );
+        sim.dex.copy_nhtot_to_rho(sim);
+        sim.dex.copy_pops_to_aux_fields(sim);
+    }
     // NOTE(cmo): The first step conserves pressure, but from then on, we simply
     // load nhtot from rho and conserve charge
     sim.dex.state.config.conserve_pressure = false;
-    sim.dex.copy_nhtot_to_rho(sim);
-    sim.dex.copy_pops_to_aux_fields(sim);
 }
 
 Simulation setup_sim(YAML::Node& config, const std::string& config_path, const RestartArgs& restart) {
@@ -268,11 +270,11 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path, const R
 
     if (restart.restart) {
         load_restart(sim, restart.restart_from);
-        setup_dex(sim, config);
+        setup_dex(sim, config, restart.restart);
     } else {
         sim.setup_ics(sim);
         // NOTE(cmo): Load the rest of dex, and the starting atmosphere
-        setup_dex(sim, config);
+        setup_dex(sim, config, restart.restart);
         if (sim.update_eos) {
             sim.update_eos(sim);
         }
