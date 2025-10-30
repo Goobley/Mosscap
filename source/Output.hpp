@@ -25,6 +25,7 @@ struct OutputConfig {
 
 struct Simulation;
 bool write_output(Simulation& sim);
+bool load_restart(Simulation& sim, i64 restart_from);
 
 }
 

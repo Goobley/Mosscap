@@ -78,41 +78,42 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
     const fp_t rho_l = 1.0_fp;
     const fp_t pressure = 1.0_fp / eos.gamma;
 
-    dex_parallel_for(
-        "Setup problem",
-        FlatLoop<3>(sz.zc, sz.yc, sz.xc),
-        KOKKOS_LAMBDA (int k, int j, int i) {
-            vec3 p = state.get_pos(i, j);
-            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
+    sim.setup_ics = [=](Simulation& sim) {
+        dex_parallel_for(
+            "Setup problem",
+            FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+            KOKKOS_LAMBDA (int k, int j, int i) {
+                vec3 p = state.get_pos(i, j);
+                yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
 
-            w(I(Prim::Pres)) = pressure;
-            if (mode == 0) {
-                if (p(axis) > 0.0_fp) {
-                    w(I(Prim::Rho)) = rho_h;
-                } else {
-                    w(I(Prim::Rho)) = rho_l;
-                    w(I(Prim::Vy)) = streaming_vel;
-                }
-            } else if (mode == 1) {
-                if (square(p(0) + 0.5_fp) + square(p(1) - 1.0_fp) < square(blob_radius)) {
-                    w(I(Prim::Rho)) = rho_h;
-                } else {
-                    w(I(Prim::Rho)) = rho_l;
-                    w(I(Prim::Vy)) = streaming_vel;
-                }
+                w(I(Prim::Pres)) = pressure;
+                if (mode == 0) {
+                    if (p(axis) > 0.0_fp) {
+                        w(I(Prim::Rho)) = rho_h;
+                    } else {
+                        w(I(Prim::Rho)) = rho_l;
+                        w(I(Prim::Vy)) = streaming_vel;
+                    }
+                } else if (mode == 1) {
+                    if (square(p(0) + 0.5_fp) + square(p(1) - 1.0_fp) < square(blob_radius)) {
+                        w(I(Prim::Rho)) = rho_h;
+                    } else {
+                        w(I(Prim::Rho)) = rho_l;
+                        w(I(Prim::Vy)) = streaming_vel;
+                    }
 
+                }
+                yakl::Random rng(seed + k * sz.yc * sz.xc + j * sz.xc + i);
+                w(I(Prim::Vx)) = random_scale * (rng.genFP<fp_t>() - 0.5_fp);
+                CellIndex idx {
+                    .i = i,
+                    .j = j,
+                    .k = k
+                };
+                prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
             }
-            yakl::Random rng(seed + k * sz.yc * sz.xc + j * sz.xc + i);
-            w(I(Prim::Vx)) = random_scale * (rng.genFP<fp_t>() - 0.5_fp);
-            CellIndex idx {
-                .i = i,
-                .j = j,
-                .k = k
-            };
-            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
-        }
-    );
-
+        );
+    };
     if (sim.state.boundaries.ys == BoundaryType::Constant && !config["boundary"]["ys"].IsSequence()) {
         const fp_t boundary_inflow_vel = get_or<fp_t>(config, "problem.boundary_inflow_vel", 1.0_fp);
         yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);

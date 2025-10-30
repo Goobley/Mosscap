@@ -7,6 +7,11 @@
 
 namespace Mosscap {
 
+struct RestartArgs {
+    bool restart = false;
+    i64 restart_from = -1;
+};
+
 void setup_grid(Simulation& sim, YAML::Node& config) {
     auto& sz = sim.state.sz;
     sz.ng = get_or<int>(config, "grid.num_ghost", 3);
@@ -241,7 +246,7 @@ void setup_dex(Simulation& sim, YAML::Node& config) {
     sim.dex.copy_pops_to_aux_fields(sim);
 }
 
-Simulation setup_sim(YAML::Node& config, const std::string& config_path) {
+Simulation setup_sim(YAML::Node& config, const std::string& config_path, const RestartArgs& restart) {
     // TODO(cmo): Do an early check if problem.name is "from_file", and have a separate path for that.
     const int num_dim = get_or<int>(config, "simulation.num_dim", 0);
     if (num_dim < 1 || num_dim > 3) {
@@ -261,15 +266,21 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path) {
     setup_output(sim, config);
     setup_problem(sim, config);
 
-    // NOTE(cmo): Load the rest of dex, and the starting atmosphere
-    setup_dex(sim, config);
-    if (sim.update_eos) {
-        sim.update_eos(sim);
+    if (restart.restart) {
+        load_restart(sim, restart.restart_from);
+        setup_dex(sim, config);
+    } else {
+        sim.setup_ics(sim);
+        // NOTE(cmo): Load the rest of dex, and the starting atmosphere
+        setup_dex(sim, config);
+        if (sim.update_eos) {
+            sim.update_eos(sim);
+        }
+        fill_bcs(sim);
+        // Write the header + ICs
+        // TODO(cmo): Don't do this on restart
+        sim.write_output(sim);
     }
-    fill_bcs(sim);
-    // Write the header + ICs
-    // TODO(cmo): Don't do this on restart
-    sim.write_output(sim);
 
     return sim;
 }

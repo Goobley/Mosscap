@@ -19,34 +19,36 @@ MOSSCAP_NEW_PROBLEM(shock_tube_2d) {
         ));
     }
 
-    const auto& state = sim.state;
-    const auto& sz = state.sz;
-    const auto& eos = sim.eos;
+    sim.setup_ics = [](Simulation& sim) {
+        const auto& state = sim.state;
+        const auto& sz = state.sz;
+        const auto& eos = sim.eos;
 
-    dex_parallel_for(
-        FlatLoop<3>(sz.zc, sz.yc, sz.xc),
-        KOKKOS_LAMBDA (int k, int j, int i) {
-            vec3 p = state.get_pos(i);
-            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
-            if (p(0) < 0.5_fp) {
-                w(I(Prim::Rho)) = 1.0_fp;
-                w(I(Prim::Vx)) = 0.0_fp;
-                w(I(Prim::Vy)) = 0.0_fp;
-                w(I(Prim::Pres)) = 1.0_fp;
-            } else {
-                w(I(Prim::Rho)) = 0.125_fp;
-                w(I(Prim::Vx)) = 0.0_fp;
-                w(I(Prim::Vy)) = 0.0_fp;
-                w(I(Prim::Pres)) = 0.1_fp;
+        dex_parallel_for(
+            FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+            KOKKOS_LAMBDA (int k, int j, int i) {
+                vec3 p = state.get_pos(i);
+                yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
+                if (p(0) < 0.5_fp) {
+                    w(I(Prim::Rho)) = 1.0_fp;
+                    w(I(Prim::Vx)) = 0.0_fp;
+                    w(I(Prim::Vy)) = 0.0_fp;
+                    w(I(Prim::Pres)) = 1.0_fp;
+                } else {
+                    w(I(Prim::Rho)) = 0.125_fp;
+                    w(I(Prim::Vx)) = 0.0_fp;
+                    w(I(Prim::Vy)) = 0.0_fp;
+                    w(I(Prim::Pres)) = 0.1_fp;
+                }
+                CellIndex idx {
+                    .i = i,
+                    .j = j,
+                    .k = k
+                };
+                prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
             }
-            CellIndex idx {
-                .i = i,
-                .j = j,
-                .k = k
-            };
-            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
-        }
-    );
+        );
+    };
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.2_fp);
 }
 

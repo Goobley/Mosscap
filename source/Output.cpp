@@ -4,6 +4,8 @@
 #include "GitVersion.hpp"
 #include "DexInterface.hpp"
 #include <fmt/core.h>
+#include <filesystem>
+#include <regex>
 
 namespace Mosscap {
 
@@ -232,15 +234,34 @@ void write_axes(yakl::SimpleNetCDF& nc, const Simulation& sim) {
     }
 }
 
-bool write_output(Simulation& sim) {
+static std::string get_filename(Simulation& sim, i64 write_count = -1) {
+    const auto& cfg = sim.out_cfg;
+    if (write_count < 0) {
+        write_count = cfg.output_count;
+    }
     std::string filename;
-    auto& cfg = sim.out_cfg;
-    const bool single_file = cfg.single_file;
-    if (single_file) {
+    if (cfg.single_file) {
         filename = fmt::format("{}.nc", cfg.filename);
     } else {
-        filename = fmt::format("{}_{:05d}.nc", cfg.filename, cfg.output_count);
+        filename = fmt::format("{}_{:05d}.nc", cfg.filename, write_count);
     }
+
+    return filename;
+}
+
+static std::regex get_filename_regex(Simulation& sim) {
+    const auto& cfg = sim.out_cfg;
+    if (cfg.single_file) {
+        return std::regex(fmt::format("{}\\.nc", cfg.filename));
+    }
+
+    return std::regex(fmt::format("{}_(\\d{{5}})\\.nc", cfg.filename));
+}
+
+bool write_output(Simulation& sim) {
+    auto& cfg = sim.out_cfg;
+    const bool single_file = cfg.single_file;
+    std::string filename = get_filename(sim);
 
     yakl::SimpleNetCDF nc;
     if (cfg.prev_output_time < 0.0 || !cfg.single_file) {
@@ -279,7 +300,7 @@ bool write_output(Simulation& sim) {
         }
     } else {
         std::string time_name("time");
-        int time_idx = nc.getDimSize(time_name);
+        int time_idx = cfg.output_count;
         nc.write1(sim.time, time_name, time_idx, time_name);
         if (cfg.variables.conserved) {
             nc.write1(sim.state.Q, "Q", {"var", "z", "y", "x"}, time_idx, time_name);
@@ -315,6 +336,83 @@ bool write_output(Simulation& sim) {
     cfg.output_count += 1;
 
     nc.close();
+
+    return true;
+}
+
+bool load_restart(Simulation& sim, i64 restart_from) {
+    namespace fs = std::filesystem;
+    std::string filename;
+    auto& cfg = sim.out_cfg;
+    if (cfg.single_file || restart_from > -1) {
+        filename = get_filename(sim, restart_from);
+        if (!fs::exists(filename)) {
+            throw std::runtime_error(fmt::format("File \"{}\" does not exist", filename));
+        }
+    } else {
+        i64 max_file_seen = -1;
+        auto regex = get_filename_regex(sim);
+
+        for (const auto& dir_entry : fs::directory_iterator(".")) {
+            const std::string file = dir_entry.path().filename();
+            std::smatch regex_match;
+            if (std::regex_match(file, regex_match, regex)) {
+                if (regex_match.size() == 2) {
+                    max_file_seen = std::max(max_file_seen, i64(std::stoll(regex_match[1].str())));
+                }
+            }
+        }
+
+        if (max_file_seen == -1) {
+            throw std::runtime_error(fmt::format("Unable to find snapshosts matching \"{}\" in the current directory.", cfg.filename));
+        }
+        filename = get_filename(sim, max_file_seen);
+        restart_from = max_file_seen;
+    }
+
+    yakl::SimpleNetCDF nc;
+    nc.open(filename, yakl::NETCDF_MODE_READ);
+    int ncid = nc.file.ncid;
+
+    int wrote_conserved;
+    ncwrap(
+        nc_get_att_int(ncid, NC_GLOBAL, "write_conserved", &wrote_conserved),
+        __LINE__
+    );
+    if (!wrote_conserved) {
+        throw std::runtime_error("Can't restart unless conserved variables are written");
+    }
+
+    f64 current_time = 0.0_fp;
+    if (cfg.single_file) {
+        if (restart_from < 0) {
+            restart_from = nc.getDimSize("time") - 1;
+        }
+        nc.read1(sim.state.Q, "Q", restart_from, "time");
+        auto& eos = sim.eos;
+        if (!eos.is_constant) {
+            nc.read1(eos.y_space, "ion_frac", restart_from, "time");
+            if (eos.T_space.initialized()) {
+                nc.read1(eos.T_space, "T", restart_from, "time");
+            }
+        }
+        yakl::Array<f64, 1, yakl::memHost> time;
+        nc.read(time, "time");
+        current_time = time(restart_from);
+    } else {
+        nc.read(sim.state.Q, "Q");
+        auto& eos = sim.eos;
+        if (!eos.is_constant) {
+            nc.read(eos.y_space, "ion_frac");
+            if (eos.T_space.initialized()) {
+                nc.read(eos.T_space, "T");
+            }
+        }
+        nc.read(current_time, "time");
+    }
+    cfg.output_count = restart_from;
+    cfg.prev_output_time = current_time;
+    sim.time = current_time;
 
     return true;
 }

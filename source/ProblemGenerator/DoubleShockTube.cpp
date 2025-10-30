@@ -45,15 +45,24 @@ void double_shock_tube_impl(Simulation& sim, int axis) {
 MOSSCAP_NEW_PROBLEM(double_shock_tube) {
     MOSSCAP_PROBLEM_PREAMBLE(double_shock_tube);
 
-    sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.038_fp);
-    int axis = get_or<int>(config, "problem.shock_axis", 0);
-    if (sim.num_dim == 1) {
-        double_shock_tube_impl<1>(sim, axis);
-    } else if (sim.num_dim == 2) {
-        double_shock_tube_impl<2>(sim, axis);
-    } else {
-        double_shock_tube_impl<3>(sim, axis);
+    if (sim.fluid_type != FluidType::Hydro) {
+        throw std::runtime_error(fmt::format(
+            "Unsupported fluid type (expecting {})", FluidTypeName[int(FluidType::Hydro)]
+        ));
     }
+
+    sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.038_fp);
+
+    int axis = get_or<int>(config, "problem.shock_axis", 0);
+    sim.setup_ics = [=](Simulation& sim) {
+        if (sim.num_dim == 1) {
+            double_shock_tube_impl<1>(sim, axis);
+        } else if (sim.num_dim == 2) {
+            double_shock_tube_impl<2>(sim, axis);
+        } else {
+            double_shock_tube_impl<3>(sim, axis);
+        }
+    };
 }
 
 }

@@ -37,9 +37,26 @@ int main(int argc, char** argv) {
         .default_value(std::string("mosscap.yaml"))
         .help("Path to config file")
         .metavar("FILE");
-    // TODO(cmo): restart
+    program
+        .add_argument("--restart")
+        .default_value(false)
+        .implicit_value(true)
+        .help("Whether to restart an existing run following the specified config.");
+    program
+        .add_argument("--restart-from")
+        .scan<'i', i64>()
+        .default_value<i64>(-1)
+        .help("Output iteration to restart from. Implies --restart.")
+        .metavar("TIMESTEP");
     program.add_epilog("Simple accelerated n-dimensional hydro code");
     program.parse_known_args(argc, argv);
+
+    i64 restart_from = program.get<i64>("--restart-from");
+    bool restart = program["--restart"] == true || (restart_from > -1);
+    RestartArgs restart_args {
+        .restart = restart,
+        .restart_from = restart_from
+    };
 
     std::string config_path(program.get<std::string>("--config"));
     YAML::Node config = YAML::LoadFile(config_path);
@@ -50,7 +67,7 @@ int main(int argc, char** argv) {
             .set_pool_size_mb(get_or<f64>(config, "system.mem_pool_gb", 2.0) * 1024)
     );
     {
-        Simulation sim = setup_sim(config, config_path);
+        Simulation sim = setup_sim(config, config_path, restart_args);
         auto start_time = std::chrono::system_clock::now();
         auto prev_print = start_time;
 

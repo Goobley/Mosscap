@@ -43,32 +43,33 @@ MOSSCAP_NEW_PROBLEM(kelvin_helmholtz) {
     const int IV = axis == 0 ? Prim::Vx : Prim::Vy;
     const fp_t axis_length = state.get_axis_length(axis);
     const fp_t other_axis_length = state.get_axis_length(other_axis);
-    dex_parallel_for(
-        "Setup problem",
-        FlatLoop<3>(sz.zc, sz.yc, sz.xc),
-        KOKKOS_LAMBDA (int k, int j, int i) {
-            vec3 p = state.get_pos(i, j);
-            const fp_t pres_0 = 2.5_fp;
-            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
+    sim.setup_ics = [=](Simulation& sim) {
+        dex_parallel_for(
+            "Setup problem",
+            FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+            KOKKOS_LAMBDA (int k, int j, int i) {
+                vec3 p = state.get_pos(i, j);
+                const fp_t pres_0 = 2.5_fp;
+                yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
 
-            if (p(axis) > 0.0_fp) {
-                w(I(Prim::Rho)) = 2.0_fp;
-            } else {
-                w(I(Prim::Rho)) = 1.0_fp;
+                if (p(axis) > 0.0_fp) {
+                    w(I(Prim::Rho)) = 2.0_fp;
+                } else {
+                    w(I(Prim::Rho)) = 1.0_fp;
+                }
+                w(I(Prim::Pres)) = pres_0 + w(I(Prim::Rho)) * grav * p(axis);
+                w(IV) = 0.01_fp * (1.0_fp + std::cos(2.0_fp * M_PI / other_axis_length * p(other_axis)))
+                                * (1.0_fp + std::cos(2.0_fp * M_PI / axis_length * p(axis))) * 0.25_fp;
+
+                CellIndex idx {
+                    .i = i,
+                    .j = j,
+                    .k = k
+                };
+                prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
             }
-            w(I(Prim::Pres)) = pres_0 + w(I(Prim::Rho)) * grav * p(axis);
-            w(IV) = 0.01_fp * (1.0_fp + std::cos(2.0_fp * M_PI / other_axis_length * p(other_axis)))
-                             * (1.0_fp + std::cos(2.0_fp * M_PI / axis_length * p(axis))) * 0.25_fp;
-
-            CellIndex idx {
-                .i = i,
-                .j = j,
-                .k = k
-            };
-            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
-        }
-    );
-
+        );
+    };
     setup_gravity(sim, config);
 }
 

@@ -44,13 +44,16 @@ MOSSCAP_NEW_PROBLEM(divb_checkerboard) {
         ));
     }
 
-    if (sim.fluid_type != FluidType::Mhd) {
+    if (sim.fluid_type != FluidType::Mhd || sim.fluid_type != FluidType::GlmMhd) {
         throw std::runtime_error("This is an MHD problem.");
     }
     sim.state.mu0 = 1.0_fp;
 
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.00001_fp);
-    initial_conditions_checkerboard(sim);
+
+    sim.setup_ics = [](Simulation& sim) {
+        initial_conditions_checkerboard(sim);
+    };
 }
 
 }

@@ -7,7 +7,10 @@
 namespace Mosscap {
 
 struct DexPressureEos {
-    bool init() {
+    fp_t temperature_threshold = 2.5e3_fp;
+
+    bool init(fp_t temperature_threshold_ = 2.5e3_fp) {
+        temperature_threshold = temperature_threshold_;
         return true;
     }
 
@@ -25,8 +28,9 @@ struct DexPressureEos {
         const fp_t mu0 = sim.state.mu0;
 
         constexpr fp_t m_p = ConstantsF64::u;
-        // constexpr fp_t k_B = ConstantsF64::k_B;
+        constexpr fp_t k_B = ConstantsF64::k_B;
         const auto& eos = sim.eos;
+        const auto& temperature_threshold = this->temperature_threshold;
         using Cons = FTraits::cons;
 
         // TODO(cmo): Pull this out and set it somewhere
@@ -47,10 +51,10 @@ struct DexPressureEos {
                 // const fp_t y = atmos.ne(ks) / (atmos.nh_tot(ks) * total_abund);
                 const fp_t nh_tot = Qv(I(Cons::Rho)) / (eos.avg_mass * m_p);
                 const fp_t prev_y = eos.y_space(idx.k, idx.j, idx.i);
-                const fp_t y = Qv(ne_idx) / (nh_tot * total_abund);
+                const fp_t y = Qv(ne_idx) / nh_tot;
                 // const fp_t pressure_ratio = (1.0_fp + y / total_abund) / (1.0_fp + prev_y / total_abund);
                 // NOTE(cmo): Accounts for pressure change due to ionisation
-                const fp_t delta_E_factor = (y - prev_y) / (total_abund + prev_y);
+                // const fp_t delta_E_factor = (y - prev_y) / (total_abund + prev_y);
                 eos.y_space(idx.k, idx.j, idx.i) = y;
 
                 const fp_t rho = Qv(I(Cons::Rho));
@@ -68,9 +72,13 @@ struct DexPressureEos {
                     e_mag = (square(Qv(I(Cons::Bx))) + square(Qv(I(Cons::By))) + square(Qv(I(Cons::Bz)))) / (2.0_fp * mu0);
                 }
                 const fp_t eint = Q(I(Cons::Ene), idx.k, idx.j, idx.i) - e_kin - e_mag;
-                const fp_t delta_eint = eint * delta_E_factor;
+                const fp_t prev_pressure = (eos.gamma - 1.0_fp) * eint;
+                const fp_t temperature = temperature_si(prev_pressure, total_abund * nh_tot, prev_y);
+                const fp_t limited_temperature = std::max(temperature, temperature_threshold);
+                // const fp_t delta_eint = eint * delta_E_factor;
+                const fp_t new_pressure = nh_tot * (total_abund + y) * limited_temperature * k_B;
 
-                Q(I(Cons::Ene), idx.k, idx.j, idx.i) += delta_eint;
+                Q(I(Cons::Ene), idx.k, idx.j, idx.i) = eint + e_kin + e_mag;
             }
         );
         Kokkos::fence();

@@ -61,6 +61,7 @@ struct Simulation {
     Fluxes fluxes;
     Sources sources;
     TimeStepperStorage ts_storage;
+    std::function<void(Simulation&)> setup_ics;
     std::function<f64(const Simulation&)> compute_dt;
     std::function<void(const Simulation&)> clean_divb;
     std::function<void(const Simulation&)> update_eos;

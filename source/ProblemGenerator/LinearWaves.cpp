@@ -60,13 +60,15 @@ MOSSCAP_NEW_PROBLEM(linear_waves) {
         set_boundary(bd.ze, "ze");
     }
 
-    if (sim.num_dim == 1) {
-        linear_waves_impl<FluidTraits<1, FluidType::Hydro>>(sim, amp, vflow);
-    } else if (sim.num_dim == 2) {
-        linear_waves_impl<FluidTraits<2, FluidType::Hydro>>(sim, amp, vflow);
-    } else {
-        linear_waves_impl<FluidTraits<3, FluidType::Hydro>>(sim, amp, vflow);
-    }
+    sim.setup_ics = [=](Simulation& sim) {
+        if (sim.num_dim == 1) {
+            linear_waves_impl<FluidTraits<1, FluidType::Hydro>>(sim, amp, vflow);
+        } else if (sim.num_dim == 2) {
+            linear_waves_impl<FluidTraits<2, FluidType::Hydro>>(sim, amp, vflow);
+        } else {
+            linear_waves_impl<FluidTraits<3, FluidType::Hydro>>(sim, amp, vflow);
+        }
+    };
 }
 
 }

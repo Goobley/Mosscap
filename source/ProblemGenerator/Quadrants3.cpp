@@ -20,45 +20,47 @@ MOSSCAP_NEW_PROBLEM(quadrants_3) {
         ));
     }
     using Prim = Fluid::prim;
-    constexpr int n_hydro = Fluid::num_vars;
-    const auto& state = sim.state;
-    const auto& eos = sim.eos;
-    const auto& sz = state.sz;
 
-    dex_parallel_for(
-        FlatLoop<3>(sz.zc, sz.yc, sz.xc),
-        KOKKOS_LAMBDA (int k, int j, int i) {
-            vec3 p = state.get_pos(i, j);
-            yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
-            if (p(0) < 0.5_fp && p(1) >= 0.5_fp) {
-                w(I(Prim::Pres)) = 0.3_fp;
-                w(I(Prim::Rho)) = 0.5323_fp;
-                w(I(Prim::Vx)) = 1.206_fp;
-                w(I(Prim::Vy)) = 0.0_fp;
-            } else if (p(0) < 0.5_fp && p(1) < 0.5_fp) {
-                w(I(Prim::Pres)) = 0.029_fp;
-                w(I(Prim::Rho)) = 0.138_fp;
-                w(I(Prim::Vx)) = 1.206_fp;
-                w(I(Prim::Vy)) = 1.206_fp;
-            } else if (p(0) >= 0.5_fp && p(1) >= 0.5_fp) {
-                w(I(Prim::Pres)) = 1.5_fp;
-                w(I(Prim::Rho)) = 1.5_fp;
-                w(I(Prim::Vx)) = 0.0_fp;
-                w(I(Prim::Vy)) = 0.0_fp;
-            } else if (p(0) >= 0.5_fp && p(1) < 0.5_fp) {
-                w(I(Prim::Pres)) = 0.3_fp;
-                w(I(Prim::Rho)) = 0.5323_fp;
-                w(I(Prim::Vx)) = 0.0_fp;
-                w(I(Prim::Vy)) = 1.206_fp;
+    sim.setup_ics = [] (Simulation& sim) {
+        constexpr int n_hydro = Fluid::num_vars;
+        const auto& state = sim.state;
+        const auto& eos = sim.eos;
+        const auto& sz = state.sz;
+        dex_parallel_for(
+            FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+            KOKKOS_LAMBDA (int k, int j, int i) {
+                vec3 p = state.get_pos(i, j);
+                yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
+                if (p(0) < 0.5_fp && p(1) >= 0.5_fp) {
+                    w(I(Prim::Pres)) = 0.3_fp;
+                    w(I(Prim::Rho)) = 0.5323_fp;
+                    w(I(Prim::Vx)) = 1.206_fp;
+                    w(I(Prim::Vy)) = 0.0_fp;
+                } else if (p(0) < 0.5_fp && p(1) < 0.5_fp) {
+                    w(I(Prim::Pres)) = 0.029_fp;
+                    w(I(Prim::Rho)) = 0.138_fp;
+                    w(I(Prim::Vx)) = 1.206_fp;
+                    w(I(Prim::Vy)) = 1.206_fp;
+                } else if (p(0) >= 0.5_fp && p(1) >= 0.5_fp) {
+                    w(I(Prim::Pres)) = 1.5_fp;
+                    w(I(Prim::Rho)) = 1.5_fp;
+                    w(I(Prim::Vx)) = 0.0_fp;
+                    w(I(Prim::Vy)) = 0.0_fp;
+                } else if (p(0) >= 0.5_fp && p(1) < 0.5_fp) {
+                    w(I(Prim::Pres)) = 0.3_fp;
+                    w(I(Prim::Rho)) = 0.5323_fp;
+                    w(I(Prim::Vx)) = 0.0_fp;
+                    w(I(Prim::Vy)) = 1.206_fp;
+                }
+                CellIndex idx {
+                    .i = i,
+                    .j = j,
+                    .k = k
+                };
+                prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
             }
-            CellIndex idx {
-                .i = i,
-                .j = j,
-                .k = k
-            };
-            prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
-        }
-    );
+        );
+    };
 
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.3_fp);
 }

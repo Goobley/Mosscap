@@ -272,116 +272,118 @@ KOKKOS_INLINE_FUNCTION T interp(
 MOSSCAP_NEW_PROBLEM(solar_1d) {
     MOSSCAP_PROBLEM_PREAMBLE(solar_1d);
 
-    std::string data_path = get_or<std::string>(config, "problem.data_path", "fal.nc");
-    // fp_t solar_g = get_or<fp_t>(config, "sources.gravity.x", -274);
-    fp_t solar_g = -274.0;
-    // TODO(cmo): Set if not present?
+    sim.setup_ics = [=](Simulation& sim) {
+        std::string data_path = get_or<std::string>(config, "problem.data_path", "fal.nc");
+        // fp_t solar_g = get_or<fp_t>(config, "sources.gravity.x", -274);
+        fp_t solar_g = -274.0;
+        // TODO(cmo): Set if not present?
 
-    typedef yakl::Array<f64, 1, yakl::memHost> F64Host ;
-    F64Host z;
-    F64Host temperature_profile;
-    yakl::SimpleNetCDF nc;
-    nc.open(data_path, yakl::NETCDF_MODE_READ);
-    nc.read(temperature_profile, "temperature");
-    nc.read(z, "z");
-    f64 base_pressure, base_nh;
-    nc.read(base_pressure, "base_pressure");
-    nc.read(base_nh, "base_nhtot");
+        typedef yakl::Array<f64, 1, yakl::memHost> F64Host;
+        F64Host z;
+        F64Host temperature_profile;
+        yakl::SimpleNetCDF nc;
+        nc.open(data_path, yakl::NETCDF_MODE_READ);
+        nc.read(temperature_profile, "temperature");
+        nc.read(z, "z");
+        f64 base_pressure, base_nh;
+        nc.read(base_pressure, "base_pressure");
+        nc.read(base_nh, "base_nhtot");
 
-    const bool ideal = sim.eos.is_constant;
-    const bool ion_frac = ideal ? sim.eos.y : 1.0_fp;
-    fmt::println("Is Ideal: {}", ideal);
+        const bool ideal = sim.eos.is_constant;
+        const bool ion_frac = ideal ? sim.eos.y : 1.0_fp;
+        fmt::println("Is Ideal: {}", ideal);
 
-    const auto& state = sim.state;
-    const auto& eos = sim.eos;
-    const auto& sz = sim.state.sz;
-    F64Host temperature("temp", sz.xc);
-    F64Host pressure("pressure", sz.xc);
-    F64Host nhtot("nhtot", sz.xc);
-    F64Host y("y", sz.xc);
+        const auto& state = sim.state;
+        const auto& eos = sim.eos;
+        const auto& sz = sim.state.sz;
+        F64Host temperature("temp", sz.xc);
+        F64Host pressure("pressure", sz.xc);
+        F64Host nhtot("nhtot", sz.xc);
+        F64Host y("y", sz.xc);
 
-    static constexpr f64 h_mass = 1.6737830080950003e-27;
-    static constexpr f64 k_B = 1.380649e-23;
-    // static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
-    const f64 mean_mass = eos.avg_mass * h_mass;
-    // Set up base values and interpolate run of temperature
-    for (int i = 0; i < sz.xc; ++i) {
-        temperature(i) = interp(state.get_pos(i)(0) + z(0), z, temperature_profile);
-    }
-    fmt::println("Max temperature {:.3e}", temperature(sz.xc - sz.ng - 1));
-    nhtot(sz.ng) = base_nh;
-    y(sz.ng) = y_from_nhtot(nhtot(sz.ng), temperature(sz.ng));
-    if (ideal) {
-        y(sz.ng) = ion_frac;
-    }
-    pressure(sz.ng) = base_nh * (1.0 + y(sz.ng)) * k_B * temperature(sz.ng);
-    fmt::println("P: {}, y: {}, nhtot {:e}", pressure(sz.ng), y(sz.ng), nhtot(sz.ng));
+        static constexpr f64 h_mass = 1.6737830080950003e-27;
+        static constexpr f64 k_B = 1.380649e-23;
+        // static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
+        const f64 mean_mass = eos.avg_mass * h_mass;
+        // Set up base values and interpolate run of temperature
+        for (int i = 0; i < sz.xc; ++i) {
+            temperature(i) = interp(state.get_pos(i)(0) + z(0), z, temperature_profile);
+        }
+        fmt::println("Max temperature {:.3e}", temperature(sz.xc - sz.ng - 1));
+        nhtot(sz.ng) = base_nh;
+        y(sz.ng) = y_from_nhtot(nhtot(sz.ng), temperature(sz.ng));
+        if (ideal) {
+            y(sz.ng) = ion_frac;
+        }
+        pressure(sz.ng) = base_nh * (1.0 + y(sz.ng)) * k_B * temperature(sz.ng);
+        fmt::println("P: {}, y: {}, nhtot {:e}", pressure(sz.ng), y(sz.ng), nhtot(sz.ng));
 
-    const f64 dz = state.dx;
-    for (int i = sz.ng + 1; i < sz.xc; ++i) {
-        const f64 dP_dz_base = mean_mass * nhtot(i-1) * solar_g;
-        const f64 P_half = pressure(i - 1) + dP_dz_base * 0.5 * dz;
-        const f64 T_half = 0.5 * (temperature(i) + temperature(i-1));
-        const f64 ntot_half = P_half / (k_B * T_half);
-        const f64 y_half = ideal ? ion_frac : y_from_ntot(ntot_half, T_half);
-        const f64 nhtot_half = ntot_half / (1.0 + y_half);
+        const f64 dz = state.dx;
+        for (int i = sz.ng + 1; i < sz.xc; ++i) {
+            const f64 dP_dz_base = mean_mass * nhtot(i-1) * solar_g;
+            const f64 P_half = pressure(i - 1) + dP_dz_base * 0.5 * dz;
+            const f64 T_half = 0.5 * (temperature(i) + temperature(i-1));
+            const f64 ntot_half = P_half / (k_B * T_half);
+            const f64 y_half = ideal ? ion_frac : y_from_ntot(ntot_half, T_half);
+            const f64 nhtot_half = ntot_half / (1.0 + y_half);
 
-        const f64 dP_dz_mid = mean_mass * nhtot_half * solar_g;
-        pressure(i) = pressure(i - 1) + dP_dz_mid * dz;
-        const f64 ntotal = pressure(i) / (k_B * temperature(i));
-        y(i) = ideal ? ion_frac : y_from_ntot(ntotal, temperature(i));
-        nhtot(i) = ntotal / (1.0 + y(i));
-        // try to refine guess
-        int iter = 0;
-        for (iter = 0; iter < 100; ++iter) {
-            const fp_t old_pressure = pressure(i);
-            // https://iopscience.iop.org/article/10.1086/342754/fulltext/
-            // Eq 40 + 41
-            if (i == sz.ng + 1) {
-                pressure(i) = pressure(i - 1) + 0.5 * solar_g * dz * (nhtot(i) + nhtot(i - 1)) * mean_mass;
-            } else {
-                pressure(i) = pressure(i - 1) + 1.0/12.0 * solar_g * dz * (5 * nhtot(i) + 8 * nhtot(i - 1) - nhtot(i-2)) * mean_mass;
-            }
-            if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-5) {
-                break;
-            }
+            const f64 dP_dz_mid = mean_mass * nhtot_half * solar_g;
+            pressure(i) = pressure(i - 1) + dP_dz_mid * dz;
             const f64 ntotal = pressure(i) / (k_B * temperature(i));
             y(i) = ideal ? ion_frac : y_from_ntot(ntotal, temperature(i));
             nhtot(i) = ntotal / (1.0 + y(i));
-        }
-        if (iter == 100) {
-            fmt::println("No converge: {}", i);
-        }
-    }
-
-    F64Host rho("rho", sz.xc);
-    F64Host eint("eint", sz.xc);
-    bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
-    AnalyticLteH lte_eos;
-    lte_eos.init(include_ionisation_energy);
-    for (int i = sz.ng; i < sz.xc; ++i) {
-        rho(i) = nhtot(i) * mean_mass;
-        eint(i) = lte_eos.internal_energy(eos.gamma, eos.avg_mass, rho(i), y(i), temperature(i));
-    }
-
-    {
-        auto rho_d = rho.createDeviceCopy();
-        auto eint_d = eint.createDeviceCopy();
-        const auto& Q = state.Q;
-        using Cons = Fluid::cons;
-
-        dex_parallel_for(
-            "Setup Q",
-            FlatLoop<3>(sz.zc, sz.yc, sz.xc),
-            KOKKOS_LAMBDA (int k, int j, int i) {
-                int ii = std::max(i, sz.ng);
-                Q(I(Cons::Rho), k, j, i) = rho_d(ii);
-                Q(I(Cons::Ene), k, j, i) = eint_d(ii);
-                Q(I(Cons::MomX), k, j, i) = 0.0_fp;
+            // try to refine guess
+            int iter = 0;
+            for (iter = 0; iter < 100; ++iter) {
+                const fp_t old_pressure = pressure(i);
+                // https://iopscience.iop.org/article/10.1086/342754/fulltext/
+                // Eq 40 + 41
+                if (i == sz.ng + 1) {
+                    pressure(i) = pressure(i - 1) + 0.5 * solar_g * dz * (nhtot(i) + nhtot(i - 1)) * mean_mass;
+                } else {
+                    pressure(i) = pressure(i - 1) + 1.0/12.0 * solar_g * dz * (5 * nhtot(i) + 8 * nhtot(i - 1) - nhtot(i-2)) * mean_mass;
+                }
+                if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-5) {
+                    break;
+                }
+                const f64 ntotal = pressure(i) / (k_B * temperature(i));
+                y(i) = ideal ? ion_frac : y_from_ntot(ntotal, temperature(i));
+                nhtot(i) = ntotal / (1.0 + y(i));
             }
-        );
-        Kokkos::fence();
-    }
+            if (iter == 100) {
+                fmt::println("No converge: {}", i);
+            }
+        }
+
+        F64Host rho("rho", sz.xc);
+        F64Host eint("eint", sz.xc);
+        bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
+        AnalyticLteH lte_eos;
+        lte_eos.init(include_ionisation_energy);
+        for (int i = sz.ng; i < sz.xc; ++i) {
+            rho(i) = nhtot(i) * mean_mass;
+            eint(i) = lte_eos.internal_energy(eos.gamma, eos.avg_mass, rho(i), y(i), temperature(i));
+        }
+
+        {
+            auto rho_d = rho.createDeviceCopy();
+            auto eint_d = eint.createDeviceCopy();
+            const auto& Q = state.Q;
+            using Cons = Fluid::cons;
+
+            dex_parallel_for(
+                "Setup Q",
+                FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+                KOKKOS_LAMBDA (int k, int j, int i) {
+                    int ii = std::max(i, sz.ng);
+                    Q(I(Cons::Rho), k, j, i) = rho_d(ii);
+                    Q(I(Cons::Ene), k, j, i) = eint_d(ii);
+                    Q(I(Cons::MomX), k, j, i) = 0.0_fp;
+                }
+            );
+            Kokkos::fence();
+        }
+    };
 
     setup_gravity(sim, config);
     OurWaveDriver driver{

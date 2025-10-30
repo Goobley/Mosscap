@@ -1086,19 +1086,19 @@ void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file
     );
 }
 
-void save_results(const DexState& state, yakl::SimpleNetCDF& nc, bool single_file, i32 num_iter) {
+void save_results(
+    const DexState& state,
+    yakl::SimpleNetCDF& nc,
+    bool single_file,
+    i32 num_iter,
+    i32 time_idx
+) {
     const auto& config = state.config;
     const auto& out_cfg = config.output;
     if (state.mpi_state.rank != 0) {
         return;
     }
 
-    i32 time_idx = 0;
-    if (single_file) {
-        // NOTE(cmo): This is called after mosscap has already extended the time axis
-        time_idx = nc.getDimSize("time") - 1;
-        time_idx = std::max(time_idx, 0);
-    }
     const auto& block_map = state.mr_block_map.block_map;
 
     if (single_file) {
@@ -1206,7 +1206,7 @@ void DexInterface::write_output(const Simulation& sim, yakl::SimpleNetCDF& nc) {
     if (cfg.prev_output_time < 0.0_fp || !cfg.single_file) {
         add_netcdf_attributes(state, nc);
     }
-    save_results(state, nc, cfg.single_file, num_iter);
+    save_results(state, nc, cfg.single_file, num_iter, sim.out_cfg.output_count);
 }
 
 template <typename FTraits>

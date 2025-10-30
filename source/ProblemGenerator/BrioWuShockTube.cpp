@@ -46,20 +46,22 @@ void shock_tube_impl(Simulation& sim, int axis) {
 MOSSCAP_NEW_PROBLEM(brio_wu_shock_tube) {
     MOSSCAP_PROBLEM_PREAMBLE(brio_wu_shock_tube);
 
-    if (sim.fluid_type != FluidType::Mhd) {
+    if (sim.fluid_type != FluidType::Mhd || sim.fluid_type != FluidType::GlmMhd) {
         throw std::runtime_error("This is an MHD problem.");
     }
     sim.state.mu0 = 1.0_fp;
-
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.05_fp);
     int axis = get_or<int>(config, "problem.shock_axis", 0);
-    if (sim.num_dim == 1) {
-        shock_tube_impl<1>(sim, axis);
-    } else if (sim.num_dim == 2) {
-        shock_tube_impl<2>(sim, axis);
-    } else {
-        shock_tube_impl<3>(sim, axis);
-    }
+
+    sim.setup_ics = [=](Simulation& sim) {
+        if (sim.num_dim == 1) {
+            shock_tube_impl<1>(sim, axis);
+        } else if (sim.num_dim == 2) {
+            shock_tube_impl<2>(sim, axis);
+        } else {
+            shock_tube_impl<3>(sim, axis);
+        }
+    };
 }
 
 }

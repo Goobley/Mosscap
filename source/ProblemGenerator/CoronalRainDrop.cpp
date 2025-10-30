@@ -200,7 +200,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
 }
 
 template <typename Fluid>
-static void initial_conditions(Simulation& sim, YAML::Node& config) {
+static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     using Prim = Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     typedef yakl::Array<f64, 1, yakl::memHost> F64Host;
@@ -289,13 +289,6 @@ static void initial_conditions(Simulation& sim, YAML::Node& config) {
             prim_to_cons<Fluid>(eos.gamma, state.mu0, w, QtyView(state.Q, idx));
         }
     );
-    setup_gravity(sim, config);
-    BcParams bc_params {
-        .g_y = g
-    };
-    sim.user_bc = [=](const Simulation& sim) {
-        fill_one_bc_hse<1, Fluid>(sim, bc_params);
-    };
 
     const i32 n_extra = sim.state.num_tracers;
     if (n_extra == 1 && get_or<bool>(config, "problem.dye", false)) {
@@ -333,16 +326,36 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
         ));
     }
 
-    if (sim.fluid_type == FluidType::Hydro) {
-        initial_conditions<FluidTraits<num_dim, FluidType::Hydro>>(sim, config);
-    } else if (sim.fluid_type == FluidType::Mhd) {
-        initial_conditions<FluidTraits<num_dim, FluidType::Mhd>>(sim, config);
-    } else if (sim.fluid_type == FluidType::GlmMhd) {
-        initial_conditions<FluidTraits<num_dim, FluidType::GlmMhd>>(sim, config);
-    } else {
-        throw std::runtime_error("Unknown fluid type");
-    }
+    sim.setup_ics = [=](Simulation& sim) {
+        if (sim.fluid_type == FluidType::Hydro) {
+            initial_conditions<FluidTraits<num_dim, FluidType::Hydro>>(sim, config);
+        } else if (sim.fluid_type == FluidType::Mhd) {
+            initial_conditions<FluidTraits<num_dim, FluidType::Mhd>>(sim, config);
+        } else if (sim.fluid_type == FluidType::GlmMhd) {
+            initial_conditions<FluidTraits<num_dim, FluidType::GlmMhd>>(sim, config);
+        } else {
+            throw std::runtime_error("Unknown fluid type");
+        }
+    };
 
+    setup_gravity(sim, config);
+    const fp_t g = get_or<fp_t>(config, "sources.gravity.y", -274.0_fp);
+    BcParams bc_params {
+        .g_y = g
+    };
+    if (sim.fluid_type == FluidType::Hydro) {
+        sim.user_bc = [=](const Simulation& sim) {
+            fill_one_bc_hse<1, FluidTraits<num_dim, FluidType::Hydro>>(sim, bc_params);
+        };
+    } else if (sim.fluid_type == FluidType::Mhd) {
+        sim.user_bc = [=](const Simulation& sim) {
+            fill_one_bc_hse<1, FluidTraits<num_dim, FluidType::Mhd>>(sim, bc_params);
+        };
+    } else if (sim.fluid_type == FluidType::GlmMhd) {
+        sim.user_bc = [=](const Simulation& sim) {
+            fill_one_bc_hse<1, FluidTraits<num_dim, FluidType::GlmMhd>>(sim, bc_params);
+        };
+    }
 }
 
 }
