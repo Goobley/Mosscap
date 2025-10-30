@@ -16,11 +16,13 @@ namespace Mosscap {
 // NOTE(cmo): Only supporting 2D for now
 using DexState = ::State;
 using DexCascState = ::CascadeState;
+using DexFp2d = ::Fp2d;
 
 struct DexMosscapConfig {
     bool advect = false;
     bool enable = false;
     bool rad_loss = false;
+    bool time_dependent_updates = false;
     i32 max_mip_level = 0;
     i32 field_start_idx = 0;
 };
@@ -30,6 +32,11 @@ struct DexConvergence {
     i32 max_iter;
 };
 
+struct IterateArgs {
+    fp_t dt = 0.0_fp; /// 0.0 implies stat eq
+    bool first_iter = false;
+};
+
 struct Simulation;
 
 struct DexInterface {
@@ -37,6 +44,7 @@ struct DexInterface {
     DexState state;
     DexCascState casc_state;
     i32 num_iter;
+    DexFp2d prev_pops; /// Used for time dependent updates
 
     bool init_config(Simulation& sim, YAML::Node& config, const std::string& config_path);
 
@@ -52,7 +60,7 @@ struct DexInterface {
     template <typename FTraits>
     bool update_atmosphere(Simulation& sim);
 
-    bool iterate(const DexConvergence& tol, bool first_iter=false);
+    bool iterate(const DexConvergence& tol, const IterateArgs& args = IterateArgs());
 
     void copy_nhtot_to_rho(const Simulation& sim);
     template <typename FTraits>

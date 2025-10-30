@@ -140,7 +140,6 @@ void compute_recon_impl(const Simulation& sim) {
     static_assert(Axis < 3, "What are you doing?");
     const auto& state = sim.state;
     const auto& recon = sim.recon_scratch;
-    const auto& eos = sim.eos;
     const auto& sz = sim.state.sz;
     int nx = sz.xc - 2 * sz.ng;
     int ny = std::max(sz.yc - 2 * sz.ng, 1);

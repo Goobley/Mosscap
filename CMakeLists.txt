@@ -79,6 +79,7 @@ list(APPEND MOSSCAP_SOURCE_FILES
     "source/Output.cpp"
     "source/DexInterface.cpp"
     "source/DivBCleaning.cpp"
+    "source/TimeDepPopulations.cpp"
     ${MOSSCAP_SOURCE_TERMS}
     ${MOSSCAP_PROBLEMS}
     ${DEX_SOURCE_FILES}

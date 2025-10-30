@@ -15,7 +15,6 @@ static void initial_conditions(Simulation& sim) {
     const auto& sz = state.sz;
 
     constexpr fp_t pi = 3.14159265358979312_fp;
-    constexpr fp_t v0 = 1.0_fp;
     const fp_t B0 = 5.0_fp / std::sqrt(4.0_fp * pi);
     dex_parallel_for(
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),

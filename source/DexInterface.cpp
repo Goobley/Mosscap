@@ -2,6 +2,7 @@
 #include "DexInterface.hpp"
 #include "Simulation.hpp"
 #include "JasPP.hpp"
+#include "TimeDepPopulations.hpp"
 // NOTE(cmo): The reason Kokkos sort was failing before was due to the (never
 // used If, Then, Else in JasPP)
 #include "Kokkos_Sort.hpp"
@@ -280,6 +281,9 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
 
     if (interface_config.advect) {
         copy_pops_from_aux_fields(sim);
+    }
+    if (interface_config.time_dependent_updates) {
+        prev_pops = state.pops.createDeviceCopy();
     }
     fmt::println("Update atmosphere at {:.3f} s", sim.time);
 
@@ -630,7 +634,7 @@ static void finalise_wavelength_batch(const DexState& state, int la_start, int l
     yakl::fence();
 }
 
-bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
+bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
     JasUnpack(state, config);
     if (state.mr_block_map.get_num_active_cells() == 0) {
         return true;
@@ -645,6 +649,13 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
     if (conserve_pressure && !conserve_charge) {
         throw std::runtime_error("Cannot enable pressure conservation without charge conservation.");
     }
+    bool time_dependent = false;
+    if (args.dt != 0.0_fp && interface_config.time_dependent_updates) {
+        time_dependent = true;
+        if (!prev_pops.initialized()) {
+            throw std::runtime_error("Time dependent update requested, but prev_pops not available (call update_atmosphere).");
+        }
+    }
     const bool actually_conserve_pressure = actually_conserve_charge && conserve_pressure;
     const int initial_lambda_iterations = config.initial_lambda_iterations;
     const int max_iters = config.max_iter;
@@ -654,7 +665,7 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
     wave_dist.init(state.mpi_state, waves.extent(0), state.c0_size.wave_batch);
 
     int i = 0;
-    if ((first_iter || !interface_config.advect) && actually_conserve_charge) {
+    if ((args.first_iter || !interface_config.advect) && actually_conserve_charge && !time_dependent) {
         // TODO(cmo): Make all of these parameters configurable
         state.println("-- Iterating LTE n_e/pressure --");
         fp_t lte_max_change = FP(1.0);
@@ -746,27 +757,57 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
         yakl::fence();
         wave_dist.wait_for_all(state.mpi_state);
 
-        state.println("  == Statistical equilibrium ==");
-        wave_dist.reduce_Gamma(&state);
-        max_change = stat_eq(
-            &state,
-            StatEqOptions{
-                .ignore_change_below_ntot_frac=std::min(FP(1e-6), tol.convergence)
-            }
-        );
-        if (actually_conserve_charge) {
-            fp_t nr_update = nr_post_update(
-                &state,
-                NrPostUpdateOptions{
-                    .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence),
-                    .conserve_pressure = actually_conserve_pressure,
-                    .total_abund = FP(1.0)
+        if (time_dependent) {
+            state.println("  == Pops update ==");
+            wave_dist.reduce_Gamma(&state);
+            max_change = time_dep_update(
+                state,
+                prev_pops,
+                KineticEqOptions {
+                    .dt = Dex::fp_t(args.dt),
+                    .ignore_change_below_ntot_frac=std::min(FP(1e-6), tol.convergence)
                 }
             );
-            wave_dist.update_ne(&state);
-            max_change = std::max(nr_update, max_change);
-            if (actually_conserve_pressure) {
-                wave_dist.update_nh_tot(&state);
+            if (actually_conserve_charge) {
+                fp_t nr_update = time_dep_nr_post_update(
+                    state,
+                    prev_pops,
+                    TimeDepNrPostUpdateOptions{
+                        .dt = Dex::fp_t(args.dt),
+                        .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence),
+                        .conserve_pressure = actually_conserve_pressure,
+                        .total_abund = FP(1.0)
+                    }
+                );
+                wave_dist.update_ne(&state);
+                max_change = std::max(nr_update, max_change);
+                if (actually_conserve_pressure) {
+                    wave_dist.update_nh_tot(&state);
+                }
+            }
+        } else {
+            state.println("  == Statistical equilibrium ==");
+            wave_dist.reduce_Gamma(&state);
+            max_change = stat_eq(
+                &state,
+                StatEqOptions{
+                    .ignore_change_below_ntot_frac=std::min(FP(1e-6), tol.convergence)
+                }
+            );
+            if (actually_conserve_charge) {
+                fp_t nr_update = nr_post_update(
+                    &state,
+                    NrPostUpdateOptions{
+                        .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence),
+                        .conserve_pressure = actually_conserve_pressure,
+                        .total_abund = FP(1.0)
+                    }
+                );
+                wave_dist.update_ne(&state);
+                max_change = std::max(nr_update, max_change);
+                if (actually_conserve_pressure) {
+                    wave_dist.update_nh_tot(&state);
+                }
             }
         }
         if (config.ng.enable) {
@@ -779,7 +820,7 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
         first_inner_iter = false;
     }
 
-    if (first_iter) {
+    if (args.first_iter) {
         config.conserve_pressure = false;
     }
     num_iter = i;
@@ -1225,7 +1266,6 @@ void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
 
     constexpr fp_t m_p = ConstantsF64::u;
     const auto& eos = sim.eos;
-    constexpr i32 num_dim = 2;
     using Cons = FTraits::cons;
 
     dex_parallel_for(
@@ -1295,7 +1335,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
 
     constexpr fp_t temperature_floor = 2.5e3_fp;
     constexpr fp_t total_abund = 1.0_fp;
-    JasUnpack(state, mr_block_map, atmos, pops, rad_loss);
+    JasUnpack(state, mr_block_map, atmos, rad_loss);
     const auto& block_map = mr_block_map.block_map;
     const auto& Q = sim.state.Q;
     const auto& sz = sim.state.sz;

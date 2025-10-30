@@ -218,10 +218,12 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
     }
 
     bool rad_loss = get_or<std::string>(config, "dex.rad_loss", "None") != "None";
-
     bool advect = get_or<bool>(config, "dex.advect", false);
+    bool time_dependent = get_or<bool>(config, "dex.time_dep_update", false);
+
     sim.dex.interface_config.advect = advect;
     sim.dex.interface_config.rad_loss = rad_loss;
+    sim.dex.interface_config.time_dependent_updates = time_dependent;
     sim.dex.init_config(sim, config, config_path);
 }
 
@@ -234,11 +236,13 @@ void setup_dex(Simulation& sim, YAML::Node& config, bool is_restart) {
     if (!is_restart) {
         sim.dex.lte_init_aux_fields(sim);
         sim.dex.iterate(
-            DexConvergence{
+            DexConvergence {
                 .convergence = 1e-3_fp,
                 .max_iter = 300,
             },
-            true
+            IterateArgs {
+                .first_iter = true
+            }
         );
         sim.dex.copy_nhtot_to_rho(sim);
         sim.dex.copy_pops_to_aux_fields(sim);

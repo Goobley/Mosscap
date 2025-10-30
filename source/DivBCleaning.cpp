@@ -88,7 +88,7 @@ void glm_source(const Simulation& sim, fp_t glm_alpha) {
 template <typename FTraits>
 Fp3d cg_poisson(const Simulation& sim, Fp3d divB, int max_iters) {
     const auto& state = sim.state;
-    JasUnpack(state, sz, Q);
+    JasUnpack(state, sz);
     int nx = sz.xc - 4;
     int ny = std::max(sz.yc - 4, 1);
     int nz = std::max(sz.zc - 4, 1);
@@ -488,7 +488,6 @@ void linde_cleaning(const Simulation& sim, fp_t divB_diff) {
     const fp_t inv_mu0 = 1.0_fp / state.mu0;
     // NOTE(cmo): This routine is not responsible for integrating the source
     // terms, so we need to divide by dt, unlike amrvac.
-    const fp_t dt_sub = sim.dt_sub;
     const fp_t eta = divB_diff * square(state.dx) / fp_t(sim.num_dim) / sim.dt_sub;
     // NOTE(cmo): Shrink one cell further to handle gradient calculation -- hence needing at least 2 ghost cells
     const fp_t space_factor = 1.0_fp / (2.0_fp * state.dx);
