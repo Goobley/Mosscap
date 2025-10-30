@@ -632,6 +632,9 @@ static void finalise_wavelength_batch(const DexState& state, int la_start, int l
 
 bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
     JasUnpack(state, config);
+    if (state.mr_block_map.get_num_active_cells() == 0) {
+        return true;
+    }
 
     const bool conserve_charge = config.conserve_charge;
     const bool actually_conserve_charge = state.have_h && conserve_charge;
@@ -781,7 +784,7 @@ bool DexInterface::iterate(const DexConvergence& tol, bool first_iter) {
     }
     num_iter = i;
 
-    return true;
+    return max_change <= tol.convergence;
 }
 
 /// Add Dex's metadata to the file using attributes. The netcdf layer needs extending to do this, so I'm just throwing it in manually.
@@ -1335,6 +1338,9 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
 }
 
 void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
+    if (state.mr_block_map.get_num_active_cells() == 0) {
+        return;
+    }
     return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits){
         return this->integrate_rad_loss_split<FTraits>(sim);
     });
