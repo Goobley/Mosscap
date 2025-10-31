@@ -410,7 +410,7 @@ bool load_restart(Simulation& sim, i64 restart_from) {
         }
         nc.read(current_time, "time");
     }
-    cfg.output_count = restart_from;
+    cfg.output_count = restart_from + 1;
     cfg.prev_output_time = current_time;
     sim.time = current_time;
 
