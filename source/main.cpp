@@ -30,6 +30,7 @@ void write_output_inner(const Simulation& sim, int i, fp_t time) {
 
 int main(int argc, char** argv) {
     using namespace Mosscap;
+    init_mpi(argc, argv);
 
     argparse::ArgumentParser program("Mosscap", GIT_HASH);
     program
@@ -110,6 +111,7 @@ int main(int argc, char** argv) {
         sim.write_output(sim);
     }
     yakl::finalize();
+    finalise_mpi();
     Kokkos::finalize();
 
     return 0;
