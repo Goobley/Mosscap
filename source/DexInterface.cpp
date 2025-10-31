@@ -132,6 +132,272 @@ static void allocate_cell_count_based_terms(DexState& state, i64 num_active_cell
     allocate_rad_loss(state);
 }
 
+DexInterface::~DexInterface() {
+#ifdef HAVE_MPI
+    if (state.mpi_state.rank == 0) {
+        int should_continue = false;
+        MPI_Bcast(&should_continue, 1, MPI_INT, 0, state.mpi_state.comm);
+    }
+#endif
+}
+
+void DexInterface::broadcast_atmosphere() {
+#ifdef HAVE_MPI
+    constexpr int block_size = BLOCK_SIZE;
+    using dfp_t = Dex::fp_t;
+
+    i64 dims[5];
+    dfp_t atmos_params[4];
+    if (state.mpi_state.rank == 0) {
+        dims[0] = state.mr_block_map.get_num_active_cells();
+        dims[1] = state.mr_block_map.block_map.num_active_tiles;
+        dims[2] = state.mr_block_map.block_map.num_x_tiles();
+        dims[3] = state.mr_block_map.block_map.num_z_tiles();
+        dims[4] = state.mr_block_map.max_mip_level;
+        atmos_params[0] = state.atmos.voxel_scale;
+        atmos_params[1] = state.atmos.offset_x;
+        atmos_params[2] = state.atmos.offset_y;
+        atmos_params[3] = state.atmos.offset_z;
+    }
+    MPI_Bcast(&dims, 4, MPI_INT64_T, 0, state.mpi_state.comm);
+    MPI_Bcast(&atmos_params, 4, get_FpMpi(), 0, state.mpi_state.comm);
+    if (state.mpi_state.rank != 0) {
+        i64 num_active_cells = dims[0];
+        i32 num_active_tiles = dims[1];
+        i32 num_x = dims[2] * block_size;
+        i32 num_z = dims[3] * block_size;
+
+        auto& block_map = state.mr_block_map.block_map;
+        block_map.lookup.entries = -1;
+        block_map.num_active_tiles = num_active_tiles;
+        block_map.active_tiles = decltype(block_map.active_tiles)("active tiles", num_active_tiles);
+
+        dfp_t voxel_scale = atmos_params[0];
+        dfp_t offset_x = atmos_params[1];
+        dfp_t offset_y = atmos_params[2];
+        dfp_t offset_z = atmos_params[3];
+
+        state.atmos = SparseAtmosphere{
+            .voxel_scale = voxel_scale,
+            .offset_x = offset_x,
+            .offset_y = offset_y,
+            .offset_z = offset_z,
+            .num_x = num_x,
+            .num_y = 0,
+            .num_z = num_z,
+            .moving = true,
+            .temperature = yakl::Array<dfp_t, 1, yakl::memDevice>("temperature", num_active_cells),
+            .pressure = yakl::Array<dfp_t, 1, yakl::memDevice>("pressure", num_active_cells),
+            .ne = yakl::Array<dfp_t, 1, yakl::memDevice>("ne", num_active_cells),
+            .nh_tot = yakl::Array<dfp_t, 1, yakl::memDevice>("nh_tot", num_active_cells),
+            .nh0 = yakl::Array<dfp_t, 1, yakl::memDevice>("nh0", num_active_cells),
+            .vturb = yakl::Array<dfp_t, 1, yakl::memDevice>("vturb", num_active_cells),
+            .vx = yakl::Array<dfp_t, 1, yakl::memDevice>("vx", num_active_cells),
+            .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
+            .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
+        };
+        allocate_cell_count_based_terms(state, num_active_cells);
+    }
+
+    // NOTE(cmo): broadcast all the things
+    auto& comm = state.mpi_state.comm;
+    auto& block_map = state.mr_block_map.block_map;
+    auto& entries = block_map.lookup.entries;
+    MPI_Bcast(entries.data(), entries.size(), MPI_INT64_T, 0, comm);
+    MPI_Bcast(block_map.active_tiles.data(), block_map.active_tiles.size(), MPI_UINT32_T, 0, comm);
+
+    auto& atmos = state.atmos;
+    MPI_Bcast(atmos.temperature.data(), atmos.temperature.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.pressure.data(), atmos.pressure.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.ne.data(), atmos.ne.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.nh_tot.data(), atmos.nh_tot.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.nh0.data(), atmos.nh0.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.vturb.data(), atmos.vturb.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.vx.data(), atmos.vx.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.vy.data(), atmos.vy.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.vz.data(), atmos.vz.size(), get_FpMpi(), 0, comm);
+
+
+    if (state.mpi_state.rank != 0) {
+        i32 max_mip_level = dims[4];
+        state.mr_block_map.init(state.mr_block_map.block_map, max_mip_level);
+
+        const bool sparse_calc = state.config.sparse_calculation;
+        CascadeStorage c0 = state.c0_size;
+        std::vector<yakl::Array<i32, 2, yakl::memDevice>> active_probes;
+        if (sparse_calc) {
+            active_probes = compute_active_probe_lists(state, state.config.max_cascade);
+        }
+        casc_state.probes_to_compute.init(c0, sparse_calc, active_probes);
+        casc_state.mip_chain.init(state, state.mr_block_map.buffer_len(), c0.wave_batch);
+    }
+
+    if (interface_config.advect) {
+        MPI_Bcast(state.pops.data(), state.pops.size(), get_FpMpi(), 0, comm);
+    }
+    if (interface_config.time_dependent_updates && state.mpi_state.rank != 0) {
+        prev_pops = state.pops.createDeviceCopy();
+    }
+
+#endif
+}
+
+
+void DexInterface::initial_worker_atmos_setup() {
+    using dfp_t = Dex::fp_t;
+    constexpr i32 block_size = BLOCK_SIZE;
+
+    i64 dims[5];
+    dfp_t atmos_params[4];
+    if (state.mpi_state.rank == 0) {
+        dims[0] = state.mr_block_map.get_num_active_cells();
+        dims[1] = state.mr_block_map.block_map.num_active_tiles;
+        dims[2] = state.mr_block_map.block_map.num_x_tiles();
+        dims[3] = state.mr_block_map.block_map.num_z_tiles();
+        dims[4] = state.mr_block_map.max_mip_level;
+        atmos_params[0] = state.atmos.voxel_scale;
+        atmos_params[1] = state.atmos.offset_x;
+        atmos_params[2] = state.atmos.offset_y;
+        atmos_params[3] = state.atmos.offset_z;
+    }
+
+    MPI_Bcast(&dims, 4, MPI_INT64_T, 0, state.mpi_state.comm);
+    MPI_Bcast(&atmos_params, 4, get_FpMpi(), 0, state.mpi_state.comm);
+    auto& map = state.mr_block_map.block_map;
+    if (state.mpi_state.rank != 0) {
+        i64 num_active_cells = dims[0];
+        i32 num_active_tiles = dims[1];
+        i32 num_x = dims[2] * block_size;
+        i32 num_z = dims[3] * block_size;
+
+        dfp_t voxel_scale = atmos_params[0];
+        dfp_t offset_x = atmos_params[1];
+        dfp_t offset_y = atmos_params[2];
+        dfp_t offset_z = atmos_params[3];
+
+        map.num_x_tiles() = dims[2];
+        map.num_z_tiles() = dims[3];
+
+        map.bbox.min = 0;
+        map.bbox.max(0) = num_x;
+        map.bbox.max(1) = num_z;
+        map.lookup.init(Dims<2>{.x = map.num_x_tiles(), .z = map.num_z_tiles()});
+
+        map.num_active_tiles = dims[1];
+        map.morton_traversal_order = yakl::Array<u32, 1, yakl::memDevice>(
+            "morton_traversal_order",
+            map.num_z_tiles() * map.num_x_tiles()
+        );
+        map.active_tiles = decltype(map.active_tiles)("active tiles", map.num_active_tiles);
+
+        auto& block_map = state.mr_block_map.block_map;
+        block_map.lookup.entries = -1;
+        block_map.num_active_tiles = num_active_tiles;
+        block_map.active_tiles = decltype(block_map.active_tiles)("active tiles", num_active_tiles);
+
+        state.atmos = SparseAtmosphere{
+            .voxel_scale = voxel_scale,
+            .offset_x = offset_x,
+            .offset_y = offset_y,
+            .offset_z = offset_z,
+            .num_x = num_x,
+            .num_y = 0,
+            .num_z = num_z,
+            .moving = true,
+            .temperature = yakl::Array<dfp_t, 1, yakl::memDevice>("temperature", num_active_cells),
+            .pressure = yakl::Array<dfp_t, 1, yakl::memDevice>("pressure", num_active_cells),
+            .ne = yakl::Array<dfp_t, 1, yakl::memDevice>("ne", num_active_cells),
+            .nh_tot = yakl::Array<dfp_t, 1, yakl::memDevice>("nh_tot", num_active_cells),
+            .nh0 = yakl::Array<dfp_t, 1, yakl::memDevice>("nh0", num_active_cells),
+            .vturb = yakl::Array<dfp_t, 1, yakl::memDevice>("vturb", num_active_cells),
+            .vx = yakl::Array<dfp_t, 1, yakl::memDevice>("vx", num_active_cells),
+            .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
+            .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
+        };
+        allocate_cell_count_based_terms(state, num_active_cells);
+    }
+
+    auto& comm = state.mpi_state.comm;
+    auto& entries = map.lookup.entries;
+    MPI_Bcast(entries.data(), entries.size(), MPI_INT64_T, 0, comm);
+    MPI_Bcast(map.morton_traversal_order.data(), map.morton_traversal_order.size(), MPI_UINT32_T, 0, comm);
+    MPI_Bcast(map.active_tiles.data(), map.active_tiles.size(), MPI_UINT32_T, 0, comm);
+
+    auto& atmos = state.atmos;
+    MPI_Bcast(atmos.temperature.data(), atmos.temperature.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.pressure.data(), atmos.pressure.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.ne.data(), atmos.ne.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.nh_tot.data(), atmos.nh_tot.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.nh0.data(), atmos.nh0.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.vturb.data(), atmos.vturb.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.vx.data(), atmos.vx.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.vy.data(), atmos.vy.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.vz.data(), atmos.vz.size(), get_FpMpi(), 0, comm);
+
+
+    if (state.mpi_state.rank != 0) {
+        // NOTE(cmo): We just have one of these chained for each boundary type -- they don't do anything if this configuration doesn't need them to.
+        // NOTE(cmo): This doesn't actually know that things will be allocated sparse
+        CascadeRays c0_rays;
+        c0_rays.num_probes(0) = state.atmos.num_x;
+        c0_rays.num_probes(1) = state.atmos.num_z;
+        c0_rays.num_flat_dirs = PROBE0_NUM_RAYS;
+        c0_rays.num_incl = NUM_INCL;
+        c0_rays.wave_batch = WAVE_BATCH;
+        constexpr int RcMode = RC_flags_storage_2d();
+        state.c0_size = cascade_rays_to_storage<RcMode>(c0_rays);
+
+        const auto& block_map = state.mr_block_map.block_map;
+        state.max_block_mip = decltype(state.max_block_mip)(
+            "max_block_mip",
+            (state.adata.wavelength.extent(0) + c0_rays.wave_batch - 1) / c0_rays.wave_batch,
+            block_map.num_z_tiles(),
+            block_map.num_x_tiles()
+        );
+        state.max_block_mip = -1;
+
+
+        i64 num_active_cells = state.mr_block_map.get_num_active_cells();
+        allocate_cell_count_based_terms(state, num_active_cells);
+        casc_state.init(state, state.config.max_cascade);
+    }
+}
+
+void DexInterface::run_worker_loop() {
+#ifdef HAVE_MPI
+    if (state.mpi_state.rank == 0) {
+        return;
+    }
+
+    initial_worker_atmos_setup();
+
+    while (true) {
+        int should_continue;
+        MPI_Bcast(&should_continue, 1, MPI_INT, 0, state.mpi_state.comm);
+
+        if (!should_continue) {
+            break;
+        }
+
+        broadcast_atmosphere();
+        f64 float_args[2];
+        i32 int_args[2];
+        MPI_Bcast(int_args, 2, MPI_INT, 0, state.mpi_state.comm);
+        MPI_Bcast(float_args, 2, MPI_DOUBLE, 0, state.mpi_state.comm);
+        DexConvergence conv{
+            .convergence = Dex::fp_t(float_args[0]),
+            .max_iter = int_args[0]
+        };
+        IterateArgs args{
+            .dt = float_args[1],
+            .first_iter = bool(int_args[1])
+        };
+        iterate(conv, args);
+    }
+    exit(0);
+#endif
+}
+
 template <typename FTraits>
 bool DexInterface::update_atmosphere(Simulation& sim) {
     constexpr i32 num_dim = FTraits::num_dim;
@@ -491,18 +757,6 @@ bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::stri
     state.atoms_with_gamma = gamma_atoms.atoms;
     state.atoms_with_gamma_mapping = gamma_atoms.mapping;
 
-    interface_config.enable = true;
-    return true;
-}
-
-template <typename FTraits>
-bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
-    auto dex_config = cfg["dex"];
-
-    using dfp_t = Dex::fp_t;
-
-    const auto& config = state.config;
-
     i32 max_mip_level = 0;
     for (int i = 0; i <= config.max_cascade; ++i) {
         max_mip_level = std::max(max_mip_level, config.mip_config.mip_levels[i]);
@@ -512,16 +766,34 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
         state.println("Mips not supported with LineCoeffCalc::Classic");
     }
     interface_config.max_mip_level = max_mip_level;
-    init_atmosphere<FTraits>(sim, max_mip_level);
-
     state.phi = VoigtProfile<dfp_t>();
     state.nh_lte = HPartFn();
-    state.println("DexRT Scale: {} m", state.atmos.voxel_scale);
-
-
-    // NOTE(cmo): We just have one of these chained for each boundary type -- they don't do anything if this configuration doesn't need them to.
     state.pw_bc = load_bc(config.atmos_path, state.adata.wavelength, config.boundary, PromweaverResampleType::FluxConserving);
     state.boundary = config.boundary;
+
+    yakl::Array<dfp_t, 1, yakl::memHost> muy("muy", NUM_INCL);
+    yakl::Array<dfp_t, 1, yakl::memHost> wmuy("wmuy", NUM_INCL);
+    for (int i = 0; i < NUM_INCL; ++i) {
+        muy(i) = INCL_RAYS[i];
+        wmuy(i) = INCL_WEIGHTS[i];
+    }
+    state.incl_quad.muy = muy.createDeviceCopy();
+    state.incl_quad.wmuy = wmuy.createDeviceCopy();
+
+    interface_config.enable = true;
+
+    run_worker_loop();
+    return true;
+}
+
+template <typename FTraits>
+bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
+    auto dex_config = cfg["dex"];
+
+    using dfp_t = Dex::fp_t;
+
+    init_atmosphere<FTraits>(sim, interface_config.max_mip_level);
+    state.println("DexRT Scale: {} m", state.atmos.voxel_scale);
 
     // NOTE(cmo): This doesn't actually know that things will be allocated sparse
     CascadeRays c0_rays;
@@ -542,18 +814,11 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
     );
     state.max_block_mip = -1;
 
-    yakl::Array<dfp_t, 1, yakl::memHost> muy("muy", NUM_INCL);
-    yakl::Array<dfp_t, 1, yakl::memHost> wmuy("wmuy", NUM_INCL);
-    for (int i = 0; i < NUM_INCL; ++i) {
-        muy(i) = INCL_RAYS[i];
-        wmuy(i) = INCL_WEIGHTS[i];
-    }
-    state.incl_quad.muy = muy.createDeviceCopy();
-    state.incl_quad.wmuy = wmuy.createDeviceCopy();
-
     i64 num_active_cells = state.mr_block_map.get_num_active_cells();
     allocate_cell_count_based_terms(state, num_active_cells);
     casc_state.init(state, state.config.max_cascade);
+
+    initial_worker_atmos_setup();
 
     return true;
 }
@@ -636,6 +901,14 @@ static void finalise_wavelength_batch(const DexState& state, int la_start, int l
 
 bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
     JasUnpack(state, config);
+#ifdef HAVE_MPI
+    if (state.mpi_state.rank == 0) {
+        int should_continue = true;
+        MPI_Bcast(&should_continue, 1, MPI_INT, 0, state.mpi_state.comm);
+
+        broadcast_atmosphere();
+    }
+#endif
     if (state.mr_block_map.get_num_active_cells() == 0) {
         return true;
     }
@@ -816,6 +1089,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
                 state.println("  ~~ Ng Acceleration! (📉 or 💣) ~~");
             }
         }
+        wave_dist.update_pops(&state);
         i += 1;
         first_inner_iter = false;
     }

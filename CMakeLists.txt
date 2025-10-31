@@ -36,6 +36,11 @@ endif()
 if (${YAKL_AUTO_FENCE})
     set(YAKL_DEFS "${YAKL_DEFS} -DYAKL_AUTO_FENCE")
 endif()
+if ("${YAKL_HAVE_MPI}" OR "${MOSSCAP_USE_MPI}")
+    set(MOSSCAP_USE_MPI "On")
+    set(YAKL_DEFS "${YAKL_DEFS} -DHAVE_MPI")
+    find_package(MPI REQUIRED)
+endif()
 
 list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/BrioWuShockTube.cpp"
@@ -131,6 +136,12 @@ target_link_libraries(mosscap git_version)
 target_link_libraries(mosscap Kokkos::kokkos)
 target_link_libraries(mosscap Kokkos::kokkoskernels)
 target_link_libraries(mosscap yakl)
+
+if (${MOSSCAP_USE_MPI})
+    target_include_directories(mosscap SYSTEM PUBLIC ${MPI_CXX_INCLUDE_DIRS})
+    target_link_libraries(mosscap MPI::MPI_CXX)
+    target_compile_definitions(mosscap PUBLIC HAVE_MPI)
+endif()
 
 set_target_properties(mosscap PROPERTIES
     COMPILE_FLAGS "${YAKL_DEFS} ${MOSSCAP_CXX_FLAGS}"

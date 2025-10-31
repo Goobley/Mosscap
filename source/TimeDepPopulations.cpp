@@ -246,10 +246,10 @@ template <typename State>
 fp_t time_dep_update(State& state, const Fp2d& prev_pops, const KineticEqOptions& args) {
 #ifdef HAVE_MPI
     fp_t max_rel_change;
-    if (state->mpi_state.rank == 0) {
-        max_rel_change = time_dep_impl<StatEqPrecision>(state, args);
+    if (state.mpi_state.rank == 0) {
+        max_rel_change = time_dep_impl<StatEqPrecision>(state, prev_pops, args);
     }
-    MPI_Bcast(&max_rel_change, 1, get_FpMpi(), 0, state->mpi_state.comm);
+    MPI_Bcast(&max_rel_change, 1, get_FpMpi(), 0, state.mpi_state.comm);
     return max_rel_change;
 #else
     return time_dep_impl<StatEqPrecision>(state, prev_pops, args);
@@ -729,10 +729,10 @@ template <typename State>
 fp_t time_dep_nr_post_update(State& state, const Fp2d& prev_pops, const TimeDepNrPostUpdateOptions& args) {
 #ifdef HAVE_MPI
     fp_t max_rel_change;
-    if (state->mpi_state.rank == 0) {
+    if (state.mpi_state.rank == 0) {
         max_rel_change = time_dep_nr_post_update_impl<StatEqPrecision>(state, prev_pops, args);
     }
-    MPI_Bcast(&max_rel_change, 1, get_FpMpi(), 0, state->mpi_state.comm);
+    MPI_Bcast(&max_rel_change, 1, get_FpMpi(), 0, state.mpi_state.comm);
     return max_rel_change;
 #else
     return time_dep_nr_post_update_impl<StatEqPrecision>(state, prev_pops, args);

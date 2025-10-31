@@ -46,6 +46,8 @@ struct DexInterface {
     i32 num_iter;
     DexFp2d prev_pops; /// Used for time dependent updates
 
+    ~DexInterface();
+
     bool init_config(Simulation& sim, YAML::Node& config, const std::string& config_path);
 
     bool init(Simulation& sim, YAML::Node& config);
@@ -83,6 +85,10 @@ struct DexInterface {
     void integrate_rad_loss_split(const Simulation& sim);
     template <typename FTraits>
     void integrate_rad_loss_split(const Simulation& sim);
+
+    void run_worker_loop();
+    void initial_worker_atmos_setup();
+    void broadcast_atmosphere();
 };
 
 template <typename T, typename U, int rank, int mem_space>
