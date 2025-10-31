@@ -63,71 +63,92 @@ struct FluidTraits {
     typedef Cons<NumDim, fluid> cons;
 };
 
-template <typename Lambda, typename ...Args>
-static auto invoke_fluid_traits(
+template <
+    typename Lambda,
+    typename ...Args,
+    std::enable_if_t<
+        std::is_void_v<typename std::invoke_result<Lambda, FluidTraits<2, FluidType::Hydro>, Args...>::type>,
+        int
+    > = 0
+>
+auto invoke_fluid_traits(
+    int num_dim,
+    FluidType fluid_type,
+    Lambda&& fn,
+    Args&&... args)
+-> void {
+    auto invoke_dim = [...args = std::forward<Args>(args), fn, num_dim]<FluidType FType>(FluidType fluid_type) {
+        switch (num_dim) {
+            case 1: {
+                fn(FluidTraits<1, FType>{}, std::forward<Args>(args)...);
+            };
+            case 2: {
+                fn(FluidTraits<2, FType>{}, std::forward<Args>(args)...);
+            };
+            case 3: {
+                fn(FluidTraits<3, FType>{}, std::forward<Args>(args)...);
+            };
+        }
+    };
+
+    switch (fluid_type) {
+        case FluidType::Hydro: {
+            invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
+        };
+        case FluidType::Mhd: {
+            invoke_dim.template operator()<FluidType::Mhd>(FluidType::Mhd);
+        };
+        case FluidType::GlmMhd: {
+            invoke_dim.template operator()<FluidType::GlmMhd>(FluidType::GlmMhd);
+        };
+    }
+}
+
+template <
+    typename Lambda,
+    typename ...Args,
+    std::enable_if_t<
+        !std::is_void_v<typename std::invoke_result<Lambda, FluidTraits<2, FluidType::Hydro>, Args...>::type>,
+        int
+    > = 0
+>
+auto invoke_fluid_traits(
     int num_dim,
     FluidType fluid_type,
     Lambda&& fn,
     Args&&... args)
 -> decltype(fn(FluidTraits<2, FluidType::Hydro>{}, std::forward<Args>(args)...)) {
-    typedef decltype(fn(FluidTraits<2, FluidType::Hydro>{}, std::forward<Args>(args)...)) Result;
+    typedef typename std::invoke_result<Lambda, FluidTraits<2, FluidType::Hydro>, Args...> Result;
 
     auto invoke_dim = [...args = std::forward<Args>(args), fn, num_dim]<FluidType FType>(FluidType fluid_type) {
-        if constexpr (std::is_void_v<Result>) {
-            switch (num_dim) {
-                case 1: {
-                    fn(FluidTraits<1, FType>{}, std::forward<Args>(args)...);
-                };
-                case 2: {
-                    fn(FluidTraits<2, FType>{}, std::forward<Args>(args)...);
-                };
-                case 3: {
-                    fn(FluidTraits<3, FType>{}, std::forward<Args>(args)...);
-                };
-            }
-        } else {
-            Result result;
-            switch (num_dim) {
-                case 1: {
-                    result = fn(FluidTraits<1, FType>{}, std::forward<Args>(args)...);
-                };
-                case 2: {
-                    result = fn(FluidTraits<2, FType>{}, std::forward<Args>(args)...);
-                };
-                case 3: {
-                    result = fn(FluidTraits<3, FType>{}, std::forward<Args>(args)...);
-                };
-            }
-        }
-    };
-
-    if constexpr (std::is_void_v<Result>) {
-        switch (fluid_type) {
-            case FluidType::Hydro: {
-                invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
-            };
-            case FluidType::Mhd: {
-                invoke_dim.template operator()<FluidType::Mhd>(FluidType::Mhd);
-            };
-            case FluidType::GlmMhd: {
-                invoke_dim.template operator()<FluidType::GlmMhd>(FluidType::GlmMhd);
-            };
-        }
-    } else {
         Result result;
-        switch (fluid_type) {
-            case FluidType::Hydro: {
-                result = invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
+        switch (num_dim) {
+            case 1: {
+                result = fn(FluidTraits<1, FType>{}, std::forward<Args>(args)...);
             };
-            case FluidType::Mhd: {
-                result = invoke_dim.template operator()<FluidType::Mhd>(FluidType::Mhd);
+            case 2: {
+                result = fn(FluidTraits<2, FType>{}, std::forward<Args>(args)...);
             };
-            case FluidType::GlmMhd: {
-                result = invoke_dim.template operator()<FluidType::GlmMhd>(FluidType::GlmMhd);
+            case 3: {
+                result = fn(FluidTraits<3, FType>{}, std::forward<Args>(args)...);
             };
         }
         return result;
+    };
+
+    Result result;
+    switch (fluid_type) {
+        case FluidType::Hydro: {
+            result = invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
+        };
+        case FluidType::Mhd: {
+            result = invoke_dim.template operator()<FluidType::Mhd>(FluidType::Mhd);
+        };
+        case FluidType::GlmMhd: {
+            result = invoke_dim.template operator()<FluidType::GlmMhd>(FluidType::GlmMhd);
+        };
     }
+    return result;
 }
 
 template <typename E>
