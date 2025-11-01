@@ -1018,6 +1018,12 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         if (config.store_J_on_cpu) {
             state.J_cpu = FP(0.0);
         }
+        if (state.rad_loss.initialized()) {
+            state.rad_loss = FP(0.0);
+            if (config.store_J_on_cpu) {
+                state.rad_loss_cpu = FP(0.0);
+            }
+        }
         yakl::fence();
         WavelengthBatch wave_batch;
         wave_dist.reset();
@@ -1103,10 +1109,9 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         i += 1;
         first_inner_iter = false;
     }
+    // NOTE(cmo): We only need to do this after the final iteration.
+    wave_dist.reduce_rad_loss(&state);
 
-    if (args.first_iter) {
-        config.conserve_pressure = false;
-    }
     num_iter = i;
 
     return max_change <= tol.convergence;
@@ -1805,6 +1810,90 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
     return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
         return this->lte_init_aux_fields<FTraits>(sim);
     });
+}
+
+fp_t DexInterface::mean_temperature() {
+    JasUnpack(state, atmos);
+    const auto& temperature = atmos.temperature;
+
+    const fp_t threshold = state.config.threshold_temperature;
+    const bool have_temperature_threshold = threshold > FP(0.0);
+    f64 result;
+    dex_parallel_reduce(
+        "Temperature sum",
+        FlatLoop<1>(temperature.extent(0)),
+        KOKKOS_LAMBDA (i64 ks, f64& running_sum) {
+            const fp_t T = temperature(ks);
+            if (have_temperature_threshold && T >= threshold) {
+                return;
+            }
+            running_sum += temperature(ks);
+        },
+        Kokkos::Sum<f64>(result)
+    );
+    i64 num_active;
+    if (!have_temperature_threshold) {
+        num_active = temperature.extent(0);
+    } else {
+        dex_parallel_reduce(
+            "Active cell sum",
+            FlatLoop<1>(temperature.extent(0)),
+            KOKKOS_LAMBDA (i64 ks, i64& running_sum) {
+                if (temperature(ks) < threshold) {
+                    running_sum += 1;
+                }
+            },
+            Kokkos::Sum<i64>(num_active)
+        );
+    }
+    return result / num_active;
+}
+
+fp_t DexInterface::min_characteristic_cooling_time() {
+    JasUnpack(state, atmos, pops, adata, rad_loss);
+
+    constexpr fp_t gamma = (FP(5.0) / FP(3.0));
+    constexpr fp_t igm1 = FP(1.0) / (gamma - FP(1.0));
+    using namespace ConstantsFP;
+
+    fp_t result;
+    dex_parallel_reduce(
+        "Max characteristic cooling",
+        FlatLoop<1>(pops.extent(1)),
+        KOKKOS_LAMBDA (i64 ks, fp_t& running_min) {
+            fp_t e_int = igm1 * atmos.pressure(ks);
+            for (int i = 0; i < adata.energy.extent(0); ++i) {
+                e_int += pops(i, ks) * adata.energy(i) * eV;
+            }
+            fp_t cooling_time = e_int / std::abs(rad_loss(0, ks) * 1e3);
+            running_min = std::min(running_min, cooling_time);
+        },
+        Kokkos::Min<fp_t>(result)
+    );
+    return result;
+}
+
+void DexInterface::update_temperature_rad_eq(fp_t delta_t) {
+    JasUnpack(state, atmos, rad_loss);
+    const fp_t threshold = state.config.threshold_temperature;
+
+    fp_t max_temp_change;
+    dex_parallel_reduce(
+        "Update temperature (rad loss)",
+        FlatLoop<1>(rad_loss.extent(1)),
+        KOKKOS_LAMBDA (i64 ks, fp_t& running_max) {
+            const fp_t L = rad_loss(0, ks) * 1e3; // Calculated in kW/m3
+            const fp_t T = atmos.temperature(ks);
+
+            const fp_t temperature_update = (FP(2.0) / FP(5.0)) * L * T / atmos.pressure(ks) * delta_t;
+            if (threshold > FP(0.0) && T < threshold) {
+                atmos.temperature(ks) -= temperature_update;
+                running_max = std::max(running_max, std::abs(temperature_update));
+            }
+        },
+        Kokkos::Max<fp_t>(max_temp_change)
+    );
+    fmt::println("Max temperature change: {} K", max_temp_change);
 }
 
 }

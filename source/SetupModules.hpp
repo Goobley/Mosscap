@@ -234,6 +234,7 @@ void setup_dex(Simulation& sim, YAML::Node& config, bool is_restart) {
 
     sim.dex.init(sim, config);
     if (!is_restart) {
+        bool initial_rad_eq = get_or<bool>(config, "dex.initial_rad_eq", false);
         sim.dex.lte_init_aux_fields(sim);
         sim.dex.iterate(
             DexConvergence {
@@ -244,6 +245,38 @@ void setup_dex(Simulation& sim, YAML::Node& config, bool is_restart) {
                 .first_iter = true
             }
         );
+        if (initial_rad_eq) {
+            fp_t delta_t = 10.0_fp;
+            fp_t current_time = 0.0_fp;
+            for (int ii = 0; ii < 100; ++ii) {
+                fp_t tcv = sim.dex.min_characteristic_cooling_time();
+                if (tcv > 2e3) {
+                    break;
+                }
+                fp_t mean_temp = sim.dex.mean_temperature();
+                fmt::println("\n~~~~~~~~~~~~ Step {} s ~~~~~~~~~~~~~~", ii);
+                fmt::println("t_cv = {:e} s", tcv);
+                fmt::println("mean temperature = {:e} K", mean_temp);
+                delta_t = std::min(0.007 * tcv, 50.0);
+                sim.dex.update_temperature_rad_eq(delta_t);
+                // fp_t pop_tol = std::min(FP(9e-4), fp_t(FP(5e-2) / (FP(0.01) * tcv)));
+                // fp_t pop_tol = std::min(FP(5e-4), fp_t(FP(1e-2) / (FP(0.01) * tcv)));
+                fmt::println("delta_t: {}", delta_t);
+                fmt::println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+
+                sim.dex.iterate(
+                    DexConvergence {
+                        .convergence = 1e-3_fp,
+                        .max_iter = 300,
+                    },
+                    IterateArgs {
+                        .first_iter = true
+                    }
+                );
+
+                current_time += delta_t;
+            }
+        }
         sim.dex.copy_nhtot_to_rho(sim);
         sim.dex.copy_pops_to_aux_fields(sim);
     }

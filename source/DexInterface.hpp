@@ -89,6 +89,10 @@ struct DexInterface {
     void run_worker_loop();
     void initial_worker_atmos_setup();
     void broadcast_atmosphere();
+
+    fp_t min_characteristic_cooling_time();
+    fp_t mean_temperature();
+    void update_temperature_rad_eq(fp_t delta_t);
 };
 
 template <typename T, typename U, int rank, int mem_space>
