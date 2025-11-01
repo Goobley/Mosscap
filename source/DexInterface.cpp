@@ -146,7 +146,7 @@ void DexInterface::broadcast_atmosphere() {
     constexpr int block_size = BLOCK_SIZE;
     using dfp_t = Dex::fp_t;
 
-    i64 dims[5];
+    i64 dims[7];
     dfp_t atmos_params[4];
     if (state.mpi_state.rank == 0) {
         dims[0] = state.mr_block_map.get_num_active_cells();
@@ -154,6 +154,8 @@ void DexInterface::broadcast_atmosphere() {
         dims[2] = state.mr_block_map.block_map.num_x_tiles();
         dims[3] = state.mr_block_map.block_map.num_z_tiles();
         dims[4] = state.mr_block_map.max_mip_level;
+        dims[5] = state.config.conserve_charge;
+        dims[6] = state.config.conserve_pressure;
         atmos_params[0] = state.atmos.voxel_scale;
         atmos_params[1] = state.atmos.offset_x;
         atmos_params[2] = state.atmos.offset_y;
@@ -162,6 +164,8 @@ void DexInterface::broadcast_atmosphere() {
     MPI_Bcast(&dims, 5, MPI_INT64_T, 0, state.mpi_state.comm);
     MPI_Bcast(&atmos_params, 4, get_FpMpi(), 0, state.mpi_state.comm);
     if (state.mpi_state.rank != 0) {
+        state.config.conserve_charge = dims[5];
+        state.config.conserve_pressure = dims[6];
         i64 num_active_cells = dims[0];
         i32 num_active_tiles = dims[1];
         i32 num_x = dims[2] * block_size;
