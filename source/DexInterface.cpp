@@ -161,7 +161,7 @@ void DexInterface::broadcast_atmosphere() {
         atmos_params[2] = state.atmos.offset_y;
         atmos_params[3] = state.atmos.offset_z;
     }
-    MPI_Bcast(&dims, 5, MPI_INT64_T, 0, state.mpi_state.comm);
+    MPI_Bcast(&dims, 7, MPI_INT64_T, 0, state.mpi_state.comm);
     MPI_Bcast(&atmos_params, 4, get_FpMpi(), 0, state.mpi_state.comm);
     if (state.mpi_state.rank != 0) {
         state.config.conserve_charge = dims[5];
