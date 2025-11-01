@@ -159,7 +159,7 @@ void DexInterface::broadcast_atmosphere() {
         atmos_params[2] = state.atmos.offset_y;
         atmos_params[3] = state.atmos.offset_z;
     }
-    MPI_Bcast(&dims, 4, MPI_INT64_T, 0, state.mpi_state.comm);
+    MPI_Bcast(&dims, 5, MPI_INT64_T, 0, state.mpi_state.comm);
     MPI_Bcast(&atmos_params, 4, get_FpMpi(), 0, state.mpi_state.comm);
     if (state.mpi_state.rank != 0) {
         i64 num_active_cells = dims[0];
@@ -907,6 +907,16 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         MPI_Bcast(&should_continue, 1, MPI_INT, 0, state.mpi_state.comm);
 
         broadcast_atmosphere();
+
+        f64 float_args[2];
+        i32 int_args[2];
+        float_args[0] = tol.convergence;
+        float_args[1] = args.dt;
+        int_args[0] = tol.max_iter;
+        int_args[1] = args.first_iter;
+
+        MPI_Bcast(int_args, 2, MPI_INT, 0, state.mpi_state.comm);
+        MPI_Bcast(float_args, 2, MPI_DOUBLE, 0, state.mpi_state.comm);
     }
 #endif
     if (state.mr_block_map.get_num_active_cells() == 0) {
@@ -1010,8 +1020,8 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         }
         yakl::fence();
         WavelengthBatch wave_batch;
-        wave_dist.wait_for_all(state.mpi_state);
         wave_dist.reset();
+        wave_dist.wait_for_all(state.mpi_state);
         while (wave_dist.next_batch(state.mpi_state, &wave_batch)) {
             setup_wavelength_batch(state, wave_batch.la_start, wave_batch.la_end);
             bool lambda_iterate = i < initial_lambda_iterations;
