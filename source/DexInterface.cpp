@@ -262,7 +262,7 @@ void DexInterface::initial_worker_atmos_setup() {
         atmos_params[3] = state.atmos.offset_z;
     }
 
-    MPI_Bcast(&dims, 4, MPI_INT64_T, 0, state.mpi_state.comm);
+    MPI_Bcast(&dims, 5, MPI_INT64_T, 0, state.mpi_state.comm);
     MPI_Bcast(&atmos_params, 4, get_FpMpi(), 0, state.mpi_state.comm);
     auto& map = state.mr_block_map.block_map;
     if (state.mpi_state.rank != 0) {
