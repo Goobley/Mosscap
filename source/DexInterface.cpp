@@ -244,6 +244,7 @@ void DexInterface::broadcast_atmosphere() {
 
 
 void DexInterface::initial_worker_atmos_setup() {
+#ifdef HAVE_MPI
     using dfp_t = Dex::fp_t;
     constexpr i32 block_size = BLOCK_SIZE;
 
@@ -361,6 +362,7 @@ void DexInterface::initial_worker_atmos_setup() {
         allocate_cell_count_based_terms(state, num_active_cells);
         casc_state.init(state, state.config.max_cascade);
     }
+#endif
 }
 
 void DexInterface::run_worker_loop() {
