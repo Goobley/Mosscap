@@ -19,6 +19,7 @@ fp_t time_dep_impl(State& state, const Fp2d& prev_pops, const KineticEqOptions& 
             continue;
         }
         JasUnpack(state, pops);
+        JasUnpack(args, theta, predicted_pops);
         const auto& Gamma = state.Gamma[ia];
         const fp_t abundance = state.adata_host.abundance(ia);
         const auto nh_tot = state.atmos.nh_tot;
@@ -30,6 +31,84 @@ fp_t time_dep_impl(State& state, const Fp2d& prev_pops, const KineticEqOptions& 
         const int pops_start = state.adata_host.level_start(ia);
         const int num_level = state.adata_host.num_level(ia);
 
+        FlatLoop<2> nxn_loop(num_level, num_level);
+
+        if (args.theta < FP(1.0) && args.initial_iter) {
+            if (!args.predicted_pops.initialized()) {
+                throw std::runtime_error("Need to provide scratch space for the predicted populations");
+            }
+            size_t scratch_size = ScratchView<T**>::shmem_size(num_level, num_level);
+            scratch_size += ScratchView<T*>::shmem_size(num_level);
+
+            Kokkos::parallel_for(
+                "Compute predicted pops",
+                TeamPolicy(Nspace, std::min(square(num_level), 128)).set_scratch_size(0, Kokkos::PerTeam(scratch_size)),
+                KOKKOS_LAMBDA (const KTeam& team) {
+                    const i64 ks = team.league_rank();
+
+                    ScratchView<T**> Gammak(team.team_scratch(0), num_level, num_level);
+                    ScratchView<T*> pred_pops(team.team_scratch(0), num_level);
+
+                    // Copy over Gamma chunk
+                    Kokkos::parallel_for(
+                        Kokkos::TeamVectorRange(team, nxn_loop.num_iter),
+                        [&] (const int x) {
+                            const auto args = nxn_loop.unpack(x);
+                            const int i = args[0];
+                            const int j = args[1];
+
+                            Gammak(i, j) = Gamma(i, j, ks);
+                        }
+                    );
+                    team.team_barrier();
+
+                    // Fixup gamma
+                    Kokkos::parallel_for(
+                        Kokkos::TeamVectorRange(team, num_level),
+                        [&] (const int i) {
+                            T diag = T(FP(0.0));
+                            Gammak(i, i) = diag;
+                            for (int j = 0; j < num_level; ++j) {
+                                diag += Gammak(j, i);
+                            }
+                            Gammak(i, i) = -diag;
+                        }
+                    );
+
+                    // Set up pops vec
+                    Kokkos::parallel_for(
+                        Kokkos::TeamVectorRange(team, num_level),
+                        [&] (const int i) {
+                            pred_pops(i) = predicted_pops(pops_start + i, ks);
+                        }
+                    );
+                    team.team_barrier();
+
+                    // pred_pops = Gamma * n
+                    KokkosBlas::Experimental::Gemv<KokkosBlas::Mode::TeamVector, KokkosBlas::Algo::Gemv::Default>::invoke(
+                        team,
+                        'n',
+                        T(1),
+                        Gammak,
+                        pred_pops,
+                        T(0),
+                        pred_pops
+                    );
+                    team.team_barrier();
+
+                    // Copy pops vec
+                    Kokkos::parallel_for(
+                        Kokkos::TeamVectorRange(team, num_level),
+                        [&] (const int i) {
+                            predicted_pops(pops_start + i, ks) = pred_pops(i);
+                        }
+                    );
+                    team.team_barrier();
+                }
+            );
+            Kokkos::fence();
+        }
+
         // NOTE(cmo): This allocation could be avoided, but we would need to fuse everything into one kernel.
         yakl::Array<T, 2, yakl::memDevice> new_pops("new_pops", Nspace, num_level);
 
@@ -39,10 +118,9 @@ fp_t time_dep_impl(State& state, const Fp2d& prev_pops, const KineticEqOptions& 
             scratch_size += 2 * ScratchView<T*>::shmem_size(num_level);
         }
 
-        FlatLoop<2> nxn_loop(num_level, num_level);
 
         Kokkos::parallel_for(
-            "Stat Eq",
+            "Kinetic Eq",
             TeamPolicy(Nspace, std::min(square(num_level), 128)).set_scratch_size(0, Kokkos::PerTeam(scratch_size)),
             KOKKOS_LAMBDA (const KTeam& team) {
                 const i64 ks = team.league_rank();
@@ -74,17 +152,27 @@ fp_t time_dep_impl(State& state, const Fp2d& prev_pops, const KineticEqOptions& 
                         }
                         // NOTE(cmo): For stat eq we would set to -diag, but for
                         // time_dep it's 1 - Gamma*dt, so 1 + diag * dt
-                        Gammak(i, i) = 1.0  + diag * dt;
+                        Gammak(i, i) = 1.0 + theta * diag * dt;
                     }
                 );
 
-                // Setup rhs
-                Kokkos::parallel_for(
-                    Kokkos::TeamVectorRange(team, num_level),
-                    [&] (const int i) {
-                        new_popsk(i) =  prev_pops(pops_start + i, ks);
-                    }
-                );
+                if (theta < FP(1.0)) {
+                    // Setup rhs
+                    Kokkos::parallel_for(
+                        Kokkos::TeamVectorRange(team, num_level),
+                        [&] (const int i) {
+                            new_popsk(i) =  (FP(1.0) - theta) * dt * predicted_pops(pops_start + i, ks) + prev_pops(pops_start + i, ks);
+                        }
+                    );
+                } else {
+                    // Setup rhs
+                    Kokkos::parallel_for(
+                        Kokkos::TeamVectorRange(team, num_level),
+                        [&] (const int i) {
+                            new_popsk(i) =  prev_pops(pops_start + i, ks);
+                        }
+                    );
+                }
                 team.team_barrier();
 
                 // Convert Gamma to time-dependent backwards Euler
@@ -96,7 +184,7 @@ fp_t time_dep_impl(State& state, const Fp2d& prev_pops, const KineticEqOptions& 
                         const int j = args[1];
 
                         if (i != j) {
-                            Gammak(i, j) = -Gammak(i, j) * dt;
+                            Gammak(i, j) = -Gammak(i, j) * theta * dt;
                         }
                     }
                 );
@@ -260,8 +348,12 @@ fp_t time_dep_update(State& state, const Fp2d& prev_pops, const KineticEqOptions
 template <typename T=fp_t, typename State>
 fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const TimeDepNrPostUpdateOptions& args) {
     yakl::timer_start("Charge conservation");
-    JasUnpack(args, ignore_change_below_ntot_frac, conserve_pressure, dt);
+    JasUnpack(args, ignore_change_below_ntot_frac, conserve_pressure, dt, theta, predicted_pops);
     JasUnpack(state, atmos, nh_lte);
+
+    // If we're using a theta method, select the predicted_pops if provided to
+    // use in the LHS. These don't change n_e, only n.
+    const Fp2d& previous_pops = (theta < FP(1.0) && predicted_pops.initialized()) ? predicted_pops : prev_pops;
 
     // TODO(cmo): Add background n_e term like in Lw.
     // NOTE(cmo): Only considers H for now
@@ -275,9 +367,6 @@ fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const Tim
     JasUnpack(state.atmos, ne, nh_tot, pressure, temperature);
     // NOTE(cmo): GammaH_flat is how we access Gamma/C in the following
     const auto& GammaH_flat = state.Gamma[0];
-
-    // NOTE(cmo): Backwards Euler
-    constexpr fp_t theta = FP(1.0);
 
     fp_t total_abund = FP(0.0);
     if constexpr (false) {
@@ -433,7 +522,7 @@ fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const Tim
                             Fi -= Gammak(i, j) * new_popsk(j);
                         }
                         Fi *= theta * dt;
-                        Fi += new_popsk(i) - prev_pops(i, ks);
+                        Fi += new_popsk(i) - previous_pops(i, ks);
                         F(i) = Fi;
                     } else if (i == (num_level - 1)) {
                         if (conserve_pressure) {

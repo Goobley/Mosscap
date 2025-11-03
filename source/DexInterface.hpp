@@ -34,6 +34,7 @@ struct DexConvergence {
 
 struct IterateArgs {
     fp_t dt = 0.0_fp; /// 0.0 implies stat eq
+    fp_t theta = 1.0_fp; /// Theta in semi-implicit Euler method
     bool first_iter = false;
 };
 

@@ -386,16 +386,17 @@ void DexInterface::run_worker_loop() {
         }
 
         broadcast_atmosphere();
-        f64 float_args[2];
+        f64 float_args[3];
         i32 int_args[2];
         MPI_Bcast(int_args, 2, MPI_INT, 0, state.mpi_state.comm);
-        MPI_Bcast(float_args, 2, MPI_DOUBLE, 0, state.mpi_state.comm);
+        MPI_Bcast(float_args, 3, MPI_DOUBLE, 0, state.mpi_state.comm);
         DexConvergence conv{
             .convergence = Dex::fp_t(float_args[0]),
             .max_iter = int_args[0]
         };
         IterateArgs args{
             .dt = float_args[1],
+            .theta = float_args[2],
             .first_iter = bool(int_args[1])
         };
         iterate(conv, args);
@@ -914,15 +915,16 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
 
         broadcast_atmosphere();
 
-        f64 float_args[2];
+        f64 float_args[3];
         i32 int_args[2];
         float_args[0] = tol.convergence;
         float_args[1] = args.dt;
+        float_args[2] = args.theta;
         int_args[0] = tol.max_iter;
         int_args[1] = args.first_iter;
 
         MPI_Bcast(int_args, 2, MPI_INT, 0, state.mpi_state.comm);
-        MPI_Bcast(float_args, 2, MPI_DOUBLE, 0, state.mpi_state.comm);
+        MPI_Bcast(float_args, 3, MPI_DOUBLE, 0, state.mpi_state.comm);
     }
 #endif
     if (state.mr_block_map.get_num_active_cells() == 0) {
@@ -946,12 +948,17 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         }
     }
     const bool actually_conserve_pressure = actually_conserve_charge && conserve_pressure;
-    const int initial_lambda_iterations = config.initial_lambda_iterations;
+    const int initial_lambda_iterations = 0;
     const int max_iters = config.max_iter;
 
     auto& waves = state.adata_host.wavelength;
     WavelengthDistributor wave_dist;
     wave_dist.init(state.mpi_state, waves.extent(0), state.c0_size.wave_batch);
+
+    ::Fp2d predicted_pops;
+    if (args.theta < FP(1.0)) {
+        predicted_pops = state.pops.createDeviceObject();
+    }
 
     int i = 0;
     if ((args.first_iter || !interface_config.advect) && actually_conserve_charge && !time_dependent) {
@@ -1060,6 +1067,9 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
                 prev_pops,
                 KineticEqOptions {
                     .dt = Dex::fp_t(args.dt),
+                    .theta = Dex::fp_t(args.theta),
+                    .initial_iter = i == 0,
+                    .predicted_pops = predicted_pops,
                     .ignore_change_below_ntot_frac=std::min(FP(1e-6), tol.convergence)
                 }
             );
@@ -1069,6 +1079,8 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
                     prev_pops,
                     TimeDepNrPostUpdateOptions{
                         .dt = Dex::fp_t(args.dt),
+                        .theta = Dex::fp_t(args.theta),
+                        .predicted_pops = predicted_pops,
                         .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence),
                         .conserve_pressure = actually_conserve_pressure,
                         .total_abund = FP(1.0)

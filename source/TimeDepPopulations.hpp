@@ -7,6 +7,9 @@
 
 struct KineticEqOptions {
     fp_t dt = FP(0.0);
+    fp_t theta = FP(1.0); /// The fraction of the update to employ using the time-advanced rates. 1.0 => backwards euler, 0.0 forwards Euler
+    bool initial_iter = false;
+    const Fp2d& predicted_pops = Fp2d(); /// To be filled if theta < 1.0 and initial_iter = true
     /// When computing relative change, ignore the change in populations with a
     /// starting fraction lower than this
     fp_t ignore_change_below_ntot_frac = FP(0.0);
@@ -16,8 +19,8 @@ struct KineticEqOptions {
 
 struct TimeDepNrPostUpdateOptions {
     fp_t dt = FP(0.0);
-    /// When computing relative change, ignore the change in populations with a
-    /// starting fraction lower than this
+    fp_t theta = FP(1.0); /// The fraction of the update to employ using the time-advanced rates. 1.0 => backwards euler, 0.0 forwards Euler
+    const Fp2d& predicted_pops = Fp2d(); /// The predicted_pops array filled by time_dep_update.
     fp_t ignore_change_below_ntot_frac = FP(0.0);
     bool conserve_pressure = false;
     /// Set the total baryon abundance relative to H (e.g. 1.1 for a 10% He mix). Negative for default
