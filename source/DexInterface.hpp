@@ -25,6 +25,7 @@ struct DexMosscapConfig {
     bool time_dependent_updates = false;
     i32 max_mip_level = 0;
     i32 field_start_idx = 0;
+    fp_t theta = 1.0_fp;
 };
 
 struct DexConvergence {

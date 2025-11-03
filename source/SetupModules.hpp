@@ -220,10 +220,12 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
     bool rad_loss = get_or<std::string>(config, "dex.rad_loss", "None") != "None";
     bool advect = get_or<bool>(config, "dex.advect", false);
     bool time_dependent = get_or<bool>(config, "dex.time_dep_update", false);
+    fp_t theta = get_or<fp_t>(config, "dex.theta", 1.0_fp);
 
     sim.dex.interface_config.advect = advect;
     sim.dex.interface_config.rad_loss = rad_loss;
     sim.dex.interface_config.time_dependent_updates = time_dependent;
+    sim.dex.interface_config.theta = theta;
     sim.dex.init_config(sim, config, config_path);
 }
 

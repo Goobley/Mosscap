@@ -82,11 +82,12 @@ int main(int argc, char** argv) {
                 sim.dex.update_atmosphere(sim);
                 sim.dex.iterate(
                     DexConvergence {
-                        .convergence=1e-3_fp,
+                        .convergence=1.1e-3_fp,
                         .max_iter=200
                     },
                     IterateArgs {
-                        .dt = dt
+                        .dt = dt,
+                        .theta = sim.dex.interface_config.theta,
                     }
                 );
                 sim.dex.copy_pops_to_aux_fields(sim);
