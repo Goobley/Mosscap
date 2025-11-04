@@ -210,18 +210,20 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
 
     static constexpr f64 h_mass = 1.6737830080950003e-27;
     static constexpr f64 k_B = 1.380649e-23;
-    const fp_t rho_0 = 5e-12_fp;
-    const fp_t P_0 = 0.165_fp;
-    const fp_t T_0 = 2e6_fp;
+    const fp_t rho_0 = get_or<fp_t>(config, "problem.base_density", 5e-12_fp);
+    const fp_t P_0 = get_or<fp_t>(config, "problem.base_pressure", 0.165_fp);
     const fp_t g = get_or<fp_t>(config, "sources.gravity.y", -274.0_fp);
+    const fp_t rho_b0 = get_or<fp_t>(config, "problem.blob_density", 5e-10_fp);
+
+    const fp_t x0 = get_or<fp_t>(config, "problem.blob_x0", 0.0_fp);
+    const fp_t z0 = get_or<fp_t>(config, "problem.blob_z0", 50e6_fp);
+    const fp_t delta = get_or<fp_t>(config, "problem.blob_delta", 0.5e6_fp);
+
+    // Coronal background temperature = P_0 / (n k_B) -- fully ionised
+    const fp_t T_0 = P_0 / (2.0_fp * rho_0 / h_mass * k_B);
+    fmt::println("Base coronal temperature {:.2e} K", T_0);
     const fp_t mean_mass = 1.0_fp;
     const fp_t H = k_B * T_0 / (mean_mass * h_mass * -g);
-    // const fp_t rho_b0 = 10.0_fp * rho_0;
-    const fp_t rho_b0 = 5e-10_fp;
-
-    constexpr fp_t x0 = 0.0_fp;
-    constexpr fp_t z0 = 50e6_fp;
-    constexpr fp_t delta = 0.5e6_fp;
 
     F64Host rho("rho", sz.yc);
     F64Host pressure("pressure", sz.yc);
