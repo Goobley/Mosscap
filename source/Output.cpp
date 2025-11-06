@@ -66,10 +66,17 @@ void write_cons_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
             nc_put_att_int(ncid, NC_GLOBAL, "ibz", NC_INT, 1, &ibz),
             __LINE__
         );
-        if (FTraits::fluid_type == FluidType::GlmMhd) {
+        if constexpr (is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
             int ipsi = I(Cons::Psi);
             ncwrap(
                 nc_put_att_int(ncid, NC_GLOBAL, "ipsi", NC_INT, 1, &ipsi),
+                __LINE__
+            );
+        }
+        if constexpr (FTraits::has_hypertc) {
+            int iheat = I(Cons::HeatF);
+            ncwrap(
+                nc_put_att_int(ncid, NC_GLOBAL, "iheat", NC_INT, 1, &iheat),
                 __LINE__
             );
         }
@@ -125,10 +132,17 @@ void write_prim_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
             nc_put_att_int(ncid, NC_GLOBAL, "ibz", NC_INT, 1, &ibz),
             __LINE__
         );
-        if (FTraits::fluid_type == FluidType::GlmMhd) {
+        if constexpr (is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
             int ipsi = I(Prim::Psi);
             ncwrap(
                 nc_put_att_int(ncid, NC_GLOBAL, "ipsi", NC_INT, 1, &ipsi),
+                __LINE__
+            );
+        }
+        if constexpr (FTraits::has_hypertc) {
+            int iheat = I(Prim::HeatF);
+            ncwrap(
+                nc_put_att_int(ncid, NC_GLOBAL, "iheat", NC_INT, 1, &iheat),
                 __LINE__
             );
         }

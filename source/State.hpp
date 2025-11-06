@@ -10,15 +10,18 @@ namespace Mosscap {
 enum class FluidType {
     Hydro = 0,
     Mhd,
-    GlmMhd
+    MhdHyperTc,
+    GlmMhd,
+    GlmMhdHyperTc
 };
 constexpr const char* FluidTypeName[] = {
     "hydro",
     "mhd",
-    "glmmhd"
+    "mhdhypertc",
+    "glmmhd",
+    "glmmhdhypertc"
 };
 constexpr int NumFluidType = sizeof(FluidTypeName) / sizeof(FluidTypeName[0]);
-
 
 template <int NumDim, FluidType Fluid>
 struct Prim {
@@ -30,7 +33,8 @@ struct Prim {
     static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
     static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
     static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
-    static constexpr i32 Psi = (Fluid != FluidType::GlmMhd) ? 3072 : 8;
+    static constexpr i32 Psi = (Fluid != FluidType::GlmMhd || Fluid != FluidType::GlmMhdHyperTc) ? 3072 : 8;
+    static constexpr i32 HeatF = (Fluid == FluidType::MhdHyperTc) ? 8 : (Fluid == FluidType::GlmMhdHyperTc) ? 9 : 4096;
 };
 
 template <int NumDim, FluidType Fluid>
@@ -44,18 +48,52 @@ struct Cons {
     static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
     static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
     static constexpr i32 Psi = (Fluid != FluidType::GlmMhd) ? 3072 : 8;
+    static constexpr i32 HeatF = (Fluid == FluidType::MhdHyperTc) ? 8 : (Fluid == FluidType::GlmMhdHyperTc) ? 9 : 4096;
 };
 
-template <int NumDim, FluidType Fluid>
-constexpr int N_HYDRO_VARS = (Fluid == FluidType::Hydro) ? 2 + NumDim : (Fluid == FluidType::GlmMhd) ? 9 : 8;
+constexpr FluidType FLUID_WITH_MAX_VARS = FluidType::GlmMhdHyperTc;
 
 constexpr int get_num_hydro_vars(int num_dim, FluidType fluid = FluidType::Hydro)  {
-    return (fluid == FluidType::Hydro) ? 2 + num_dim : (fluid == FluidType::GlmMhd) ? 9 : 8;
+    int num_vars;
+    switch (fluid) {
+        case FluidType::Hydro: {
+            num_vars = 2 + num_dim;
+        } break;
+        case FluidType::Mhd: {
+            num_vars = 8;
+        } break;
+        case FluidType::MhdHyperTc: {
+            num_vars = 9;
+        } break;
+        case FluidType::GlmMhd: {
+            num_vars = 9;
+        } break;
+        case FluidType::GlmMhdHyperTc: {
+            num_vars = 10;
+        } break;
+    }
+    return num_vars;
 }
+
+constexpr bool is_instance(FluidType to_check, FluidType base) {
+    if (to_check == base) {
+        return true;
+    } else if (base == FluidType::Mhd) {
+        return to_check != FluidType::Hydro;
+    } else if (base == FluidType::GlmMhd) {
+        return to_check == FluidType::GlmMhd || to_check == FluidType::GlmMhdHyperTc;
+    }
+
+    return false;
+}
+
+template <int NumDim, FluidType Fluid>
+constexpr int N_HYDRO_VARS = get_num_hydro_vars(NumDim, Fluid);
 
 template <int NumDim, FluidType fluid>
 struct FluidTraits {
     static constexpr bool is_mhd = (fluid != FluidType::Hydro);
+    static constexpr bool has_hypertc = (fluid == FluidType::MhdHyperTc || fluid == FluidType::GlmMhdHyperTc);
     static constexpr int num_dim = NumDim;
     static constexpr int num_vars = N_HYDRO_VARS<NumDim, fluid>;
     static constexpr FluidType fluid_type = fluid;
@@ -81,26 +119,32 @@ auto invoke_fluid_traits(
         switch (num_dim) {
             case 1: {
                 fn(FluidTraits<1, FType>{}, std::forward<Args>(args)...);
-            };
+            } break;
             case 2: {
                 fn(FluidTraits<2, FType>{}, std::forward<Args>(args)...);
-            };
+            } break;
             case 3: {
                 fn(FluidTraits<3, FType>{}, std::forward<Args>(args)...);
-            };
+            } break;
         }
     };
 
     switch (fluid_type) {
         case FluidType::Hydro: {
             invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
-        };
+        } break;
         case FluidType::Mhd: {
             invoke_dim.template operator()<FluidType::Mhd>(FluidType::Mhd);
-        };
+        } break;
+        case FluidType::MhdHyperTc: {
+            invoke_dim.template operator()<FluidType::MhdHyperTc>(FluidType::MhdHyperTc);
+        } break;
         case FluidType::GlmMhd: {
             invoke_dim.template operator()<FluidType::GlmMhd>(FluidType::GlmMhd);
-        };
+        } break;
+        case FluidType::GlmMhdHyperTc: {
+            invoke_dim.template operator()<FluidType::GlmMhdHyperTc>(FluidType::GlmMhdHyperTc);
+        } break;
     }
 }
 
@@ -125,13 +169,13 @@ auto invoke_fluid_traits(
         switch (num_dim) {
             case 1: {
                 result = fn(FluidTraits<1, FType>{}, std::forward<Args>(args)...);
-            };
+            } break;
             case 2: {
                 result = fn(FluidTraits<2, FType>{}, std::forward<Args>(args)...);
-            };
+            } break;
             case 3: {
                 result = fn(FluidTraits<3, FType>{}, std::forward<Args>(args)...);
-            };
+            } break;
         }
         return result;
     };
@@ -140,13 +184,19 @@ auto invoke_fluid_traits(
     switch (fluid_type) {
         case FluidType::Hydro: {
             result = invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
-        };
+        } break;
         case FluidType::Mhd: {
             result = invoke_dim.template operator()<FluidType::Mhd>(FluidType::Mhd);
-        };
+        } break;
+        case FluidType::MhdHyperTc: {
+            result = invoke_dim.template operator()<FluidType::MhdHyperTc>(FluidType::MhdHyperTc);
+        } break;
         case FluidType::GlmMhd: {
             result = invoke_dim.template operator()<FluidType::GlmMhd>(FluidType::GlmMhd);
-        };
+        } break;
+        case FluidType::GlmMhdHyperTc: {
+            result = invoke_dim.template operator()<FluidType::GlmMhdHyperTc>(FluidType::GlmMhdHyperTc);
+        } break;
     }
     return result;
 }
@@ -191,6 +241,79 @@ constexpr int MagneticField() {
     }
 }
 
+struct PrimRt {
+    i32 Rho;
+    i32 Vx;
+    i32 Vy;
+    i32 Vz;
+    i32 Pres;
+    i32 Bx;
+    i32 By;
+    i32 Bz;
+    i32 Psi;
+    i32 HeatF;
+};
+
+struct ConsRt {
+    i32 Rho;
+    i32 MomX;
+    i32 MomY;
+    i32 MomZ;
+    i32 Ene;
+    i32 Bx;
+    i32 By;
+    i32 Bz;
+    i32 Psi;
+    i32 HeatF;
+};
+
+/// Runtime access to traits
+struct FluidTraitsRt {
+    bool is_mhd;
+    bool has_hypertc;
+    int num_dim;
+    int num_vars;
+    FluidType fluid_type;
+    PrimRt prim;
+    ConsRt cons;
+
+    FluidTraitsRt () {};
+    FluidTraitsRt(int num_dim_, FluidType type) :
+        is_mhd(type != FluidType::Hydro),
+        has_hypertc(type == FluidType::MhdHyperTc || type == FluidType::GlmMhdHyperTc),
+        num_dim(num_dim_),
+        num_vars(get_num_hydro_vars(num_dim_, type)),
+        fluid_type(type)
+    {
+        invoke_fluid_traits(num_dim, fluid_type, [this]<typename FTraits>(FTraits) {
+            using Prim = FTraits::prim;
+            using Cons = FTraits::cons;
+
+            prim.Rho = Prim::Rho;
+            prim.Vx = Prim::Vx;
+            prim.Vy = Prim::Vy;
+            prim.Vz = Prim::Vz;
+            prim.Pres = Prim::Pres;
+            prim.Bx = Prim::Bx;
+            prim.By = Prim::By;
+            prim.Bz = Prim::Bz;
+            prim.Psi = Prim::Psi;
+            prim.HeatF = Prim::HeatF;
+
+            cons.Rho = Cons::Rho;
+            cons.MomX = Cons::MomX;
+            cons.MomY = Cons::MomY;
+            cons.MomZ = Cons::MomZ;
+            cons.Ene = Cons::Ene;
+            cons.Bx = Cons::Bx;
+            cons.By = Cons::By;
+            cons.Bz = Cons::Bz;
+            cons.Psi = Cons::Psi;
+            cons.HeatF = Cons::HeatF;
+        });
+    };
+};
+
 enum class BoundaryType : i32 {
     Wall = 0,
     Periodic,
@@ -221,12 +344,12 @@ struct Boundaries {
 
     /// Storage for constant boundaries -- may be longer than actual content due
     /// to dimensionality, make sure to loop over the correct number!
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> xs_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> xe_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> ys_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> ye_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> zs_const;
-    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FluidType::Mhd>> ze_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FLUID_WITH_MAX_VARS>> xs_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FLUID_WITH_MAX_VARS>> xe_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FLUID_WITH_MAX_VARS>> ys_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FLUID_WITH_MAX_VARS>> ye_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FLUID_WITH_MAX_VARS>> zs_const;
+    yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FLUID_WITH_MAX_VARS>> ze_const;
 };
 
 

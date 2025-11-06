@@ -9,7 +9,7 @@ void update_glm_ch(Simulation& sim);
 
 template <int Axis, typename FTraits, typename WType>
 KOKKOS_INLINE_FUNCTION void glm_set_mid_state(const fp_t c_h, WType& wL, WType& wR) {
-    if constexpr (FTraits::fluid_type != FluidType::GlmMhd) {
+    if constexpr (!is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
         return;
     } else {
         using Prim = FTraits::prim;

@@ -324,6 +324,7 @@ Fp3d compute_divb(const Simulation& sim, fp_t* max_divb_out) {
     if (sim.fluid_type == FluidType::Hydro) {
         throw std::runtime_error("Computing divB on a non-magnetic fluid.");
     }
+    static_assert(false, "Replace with invoke");
 
     if (sim.num_dim == 1) {
         if (sim.fluid_type == FluidType::GlmMhd) {

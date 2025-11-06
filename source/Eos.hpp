@@ -115,6 +115,9 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const
         if constexpr (FTraits::fluid_type == FluidType::GlmMhd) {
             w(I(Prim::Psi)) = q(I(Cons::Psi));
         }
+        if constexpr (FTraits::has_hypertc) {
+            w(I(Prim::HeatF)) = q(I(Cons::HeatF));
+        }
     }
     // NOTE(cmo): Will probably need to bring EosView back in some capacity to handle ionisation energy
     w(I(Prim::Pres)) = (gamma - 1.0_fp) * ((q(I(Cons::Ene)) - e_kin - e_mag));
@@ -146,6 +149,9 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
         e_mag /= (2.0_fp * mu0);
         if constexpr (FTraits::fluid_type == FluidType::GlmMhd) {
             q(I(Cons::Psi)) = w(I(Prim::Psi));
+        }
+        if constexpr (FTraits::has_hypertc) {
+            q(I(Cons::HeatF)) = w(I(Prim::HeatF));
         }
     }
     const fp_t e_kin = 0.5_fp * w(I(Prim::Rho)) * v2_sum;
@@ -185,10 +191,11 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     const fp_t inv_mu0 = 1.0_fp / mu0;
     fp_t p_tot = w(I(Prim::Pres));
     fp_t vdotB = 0.0_fp;
+    fp_t b2 = 0.0_fp;
     fp_t e_mag = 0.0_fp;
     if constexpr (FTraits::is_mhd) {
-        e_mag = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
-        e_mag *= 0.5_fp * inv_mu0;
+        b2 = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
+        e_mag = b2 * 0.5_fp * inv_mu0;
         p_tot += e_mag;
         vdotB = w(I(Prim::Vx)) * w(I(Prim::Bx)) + w(I(Prim::Vy)) * w(I(Prim::By)) + w(I(Prim::Vz)) * w(I(Prim::Bz));
         f(I(Cons::MomX)) -= (w(IB1) * w(I(Prim::Bx))) * inv_mu0;
@@ -212,6 +219,9 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
 
     if constexpr (FTraits::is_mhd) {
         f(I(Cons::Ene)) -= (vdotB * w(IB1)) * inv_mu0;
+        if constexpr (FTraits::has_hypertc) {
+            f(I(Cons::Ene)) += w(I(Prim::HeatF)) * w(IB1) / (std::sqrt(b2) + 1e-20_fp);
+        }
     }
 }
 

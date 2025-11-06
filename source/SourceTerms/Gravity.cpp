@@ -50,6 +50,7 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
 
     auto apply_gravity = [=](const Simulation& sim) {
         const int num_dim = sim.num_dim;
+        static_assert("Use invoke");
         if (sim.fluid_type == FluidType::Hydro) {
             if (num_dim == 1) {
                 gravity_kernel<FluidTraits<1, FluidType::Hydro>>(sim, grav);

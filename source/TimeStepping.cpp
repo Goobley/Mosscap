@@ -14,6 +14,7 @@ template <TimeStepScheme scheme>
 std::function<void(Simulation&, fp_t)> select_fluidtraits_impl(const Simulation& sim) {
     using Stepper = TimeStepper<scheme>;
     std::function<void(Simulation&, fp_t)> test = Stepper::template time_step<FluidTraits<1, FluidType::Hydro>>;
+    static_assert(false, "Fix this");
     std::map<std::pair<int, FluidType>, std::function<void(Simulation&, fp_t)>> impls = {
         {{1, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<1, FluidType::Hydro>>},
         {{2, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<2, FluidType::Hydro>>},

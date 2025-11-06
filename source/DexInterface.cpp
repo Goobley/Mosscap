@@ -56,8 +56,14 @@ static auto invoke_fluid_traits_2d(
         case FluidType::Mhd: {
             return invoke_dim.template operator()<FluidType::Mhd>(FluidType::Mhd);
         };
+        case FluidType::MhdHyperTc: {
+            return invoke_dim.template operator()<FluidType::MhdHyperTc>(FluidType::MhdHyperTc);
+        };
         case FluidType::GlmMhd: {
             return invoke_dim.template operator()<FluidType::GlmMhd>(FluidType::GlmMhd);
+        };
+        case FluidType::GlmMhdHyperTc: {
+            return invoke_dim.template operator()<FluidType::GlmMhdHyperTc>(FluidType::GlmMhdHyperTc);
         };
     }
     return invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);

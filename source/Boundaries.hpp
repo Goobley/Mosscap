@@ -130,38 +130,11 @@ inline void fill_bcs_impl(const State& state) {
     }
 }
 
-template <int NumDim>
-inline void fill_bcs_fluid_dispatch(const Simulation& sim) {
-    switch (sim.fluid_type) {
-        case FluidType::Hydro: {
-            fill_bcs_impl<FluidTraits<NumDim, FluidType::Hydro>>(sim.state);
-        } break;
-        case FluidType::Mhd: {
-            fill_bcs_impl<FluidTraits<NumDim, FluidType::Mhd>>(sim.state);
-        } break;
-        case FluidType::GlmMhd: {
-            fill_bcs_impl<FluidTraits<NumDim, FluidType::GlmMhd>>(sim.state);
-        } break;
-        default: {
-            KOKKOS_ASSERT(false && "Unknown fluid type");
-        }
-    }
-}
 
 inline void fill_bcs(const Simulation& sim) {
-    switch (sim.num_dim) {
-        case 1: {
-            fill_bcs_fluid_dispatch<1>(sim);
-        } break;
-        case 2: {
-            fill_bcs_fluid_dispatch<2>(sim);
-        } break;
-        case 3: {
-            fill_bcs_fluid_dispatch<3>(sim);
-        } break;
-        default:
-            KOKKOS_ASSERT(false && "Weird num dim");
-    }
+    invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        fill_bcs_impl<FTraits>(sim.state);
+    });
     if (sim.user_bc) {
         sim.user_bc(sim);
     }
