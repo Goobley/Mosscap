@@ -164,7 +164,6 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     using Prim = FTraits::prim;
     using Cons = FTraits::cons;
     constexpr int NumDim = FTraits::is_mhd ? 3 : FTraits::num_dim;
-
     constexpr int IV1 = Velocity<Axis, FTraits>();
     constexpr int IV2 = Velocity<(Axis + 1) % 3, FTraits>();
     constexpr int IV3 = Velocity<(Axis + 2) % 3, FTraits>();
@@ -172,6 +171,21 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     constexpr int IB1 = MagneticField<Axis, FTraits>();
     constexpr int IB2 = MagneticField<(Axis + 1) % 3, FTraits>();
     constexpr int IB3 = MagneticField<(Axis + 2) % 3, FTraits>();
+
+    if constexpr (FTraits::fluid_type == FluidType::HyperTcOnly) {
+        for (int i = 0; i < FTraits::num_var; ++i) {
+            f(i) = 0.0_fp;
+        }
+        fp_t b2_in_plane = square(w(I(Prim::Bx)));
+        if constexpr (FTraits::num_dim > 1) {
+            b2_in_plane += square(w(I(Prim::By)));
+        }
+        if constexpr (FTraits::num_dim > 2)  {
+            b2_in_plane += square(w(I(Prim::Bz)));
+        }
+        f(I(Cons::Ene)) = w(I(Prim::HeatF)) * w(IB1) / (std::sqrt(b2_in_plane) + 1e-20_fp);
+        return;
+    }
 
     const fp_t mass_flux = w(I(Prim::Rho)) * w(IV1);
     fp_t e_kin = 0.0_fp;
@@ -192,9 +206,17 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     fp_t p_tot = w(I(Prim::Pres));
     fp_t vdotB = 0.0_fp;
     fp_t b2 = 0.0_fp;
+    fp_t b2_in_plane  = 0.0_fp;
     fp_t e_mag = 0.0_fp;
     if constexpr (FTraits::is_mhd) {
         b2 = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
+        b2_in_plane = square(w(I(Prim::Bx)));
+        if constexpr (FTraits::num_dim > 1) {
+            b2_in_plane += square(w(I(Prim::By)));
+        }
+        if constexpr (FTraits::num_dim > 2)  {
+            b2_in_plane += square(w(I(Prim::Bz)));
+        }
         e_mag = b2 * 0.5_fp * inv_mu0;
         p_tot += e_mag;
         vdotB = w(I(Prim::Vx)) * w(I(Prim::Bx)) + w(I(Prim::Vy)) * w(I(Prim::By)) + w(I(Prim::Vz)) * w(I(Prim::Bz));
@@ -220,7 +242,8 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     if constexpr (FTraits::is_mhd) {
         f(I(Cons::Ene)) -= (vdotB * w(IB1)) * inv_mu0;
         if constexpr (FTraits::has_hypertc) {
-            f(I(Cons::Ene)) += w(I(Prim::HeatF)) * w(IB1) / (std::sqrt(b2) + 1e-20_fp);
+            f(I(Cons::Ene)) += w(I(Prim::HeatF)) * w(IB1) / (std::sqrt(b2_in_plane) + 1e-20_fp);
+            f(I(Cons::HeatF)) = 0.0_fp;
         }
     }
 }

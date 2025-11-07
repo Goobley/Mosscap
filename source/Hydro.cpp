@@ -7,7 +7,7 @@ namespace Mosscap {
 
 template <typename FTraits, typename WType>
 KOKKOS_INLINE_FUNCTION void glm_ch_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& max_ch) {
-    static_assert(is_instance(FTraits::fluid_type, FluidType::GlmMhd), "Only needed by GLM MHD");
+    // static_assert(FTraits::has_hypertc || is_instance(FTraits::fluid_type, FluidType::GlmMhd), "Only needed by GLM or HyperTc");
 
     using Prim = FTraits::prim;
     constexpr i32 NumDim = FTraits::num_dim;
@@ -57,17 +57,19 @@ fp_t compute_glm_ch_impl(const Simulation& sim) {
 
 
 void update_glm_ch(Simulation& sim) {
-    if (!is_instance(sim.fluid_type, FluidType::GlmMhd)) {
+    FluidTraitsRt traits(sim.num_dim, sim.fluid_type);
+    if (!traits.has_hypertc && !is_instance(sim.fluid_type, FluidType::GlmMhd)) {
         return;
     }
+
     // Max wave propagation speed for divB cleaning
-    if (sim.num_dim == 1) {
-        sim.state.glm_ch = compute_glm_ch_impl<FluidTraits<1, FluidType::GlmMhd>>(sim);
-    } else if (sim.num_dim == 2) {
-        sim.state.glm_ch = compute_glm_ch_impl<FluidTraits<2, FluidType::GlmMhd>>(sim);
-    } else if (sim.num_dim == 3) {
-        sim.state.glm_ch = compute_glm_ch_impl<FluidTraits<3, FluidType::GlmMhd>>(sim);
-    }
+    invoke_fluid_traits(
+        sim.num_dim,
+        sim.fluid_type,
+        [&] <typename FTraits> (FTraits) {
+            sim.state.glm_ch = compute_glm_ch_impl<FTraits>(sim);
+        }
+    );
 }
 
 template <typename FTraits>

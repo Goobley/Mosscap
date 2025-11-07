@@ -72,11 +72,15 @@ int main(int argc, char** argv) {
         auto start_time = std::chrono::system_clock::now();
         auto prev_print = start_time;
 
+        fmt::println("Setup");
         fill_bcs(sim);
+        fmt::println("Bcs");
 
         while (sim.time < sim.max_time) {
             const f64 dt = compute_dt(sim);
+            fmt::println("dt");
             sim.time_step(sim, dt);
+            fmt::println("step");
 
             if (sim.dex.interface_config.enable) {
                 sim.dex.update_atmosphere(sim);

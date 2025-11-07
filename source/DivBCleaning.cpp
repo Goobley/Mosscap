@@ -324,27 +324,14 @@ Fp3d compute_divb(const Simulation& sim, fp_t* max_divb_out) {
     if (sim.fluid_type == FluidType::Hydro) {
         throw std::runtime_error("Computing divB on a non-magnetic fluid.");
     }
-    static_assert(false, "Replace with invoke");
 
-    if (sim.num_dim == 1) {
-        if (sim.fluid_type == FluidType::GlmMhd) {
-            return compute_divb_impl<FluidTraits<1, FluidType::GlmMhd>>(sim, max_divb_out);
-        } else {
-            return compute_divb_impl<FluidTraits<1, FluidType::Mhd>>(sim, max_divb_out);
+    return invoke_fluid_traits(
+        sim.num_dim,
+        sim.fluid_type,
+        [&]<typename FTraits>(FTraits) {
+            return compute_divb_impl<FTraits>(sim, max_divb_out);
         }
-    } else if (sim.num_dim == 2) {
-        if (sim.fluid_type == FluidType::GlmMhd) {
-            return compute_divb_impl<FluidTraits<2, FluidType::GlmMhd>>(sim, max_divb_out);
-        } else {
-            return compute_divb_impl<FluidTraits<2, FluidType::Mhd>>(sim, max_divb_out);
-        }
-    } else {
-        if (sim.fluid_type == FluidType::GlmMhd) {
-            return compute_divb_impl<FluidTraits<3, FluidType::GlmMhd>>(sim, max_divb_out);
-        } else {
-            return compute_divb_impl<FluidTraits<3, FluidType::Mhd>>(sim, max_divb_out);
-        }
-    }
+    );
 }
 
 template <typename FTraits>
@@ -565,100 +552,78 @@ std::function<void(const Simulation&, fp_t)> select_scheme(DivBCleaningScheme sc
     throw std::runtime_error("Unknown divB cleaning scheme.");
 }
 
-template <typename FTraits>
-std::function<void(const Simulation&, fp_t)> select_glm_fn(bool extended) {
-    if (extended) {
-        return glm_source<FTraits, true>;
+void setup_base_field_divb_cleaning(Simulation& sim, YAML::Node& config) {
+    constexpr const char* source_name = "divb_cleaning";
+    if (!is_instance(sim.fluid_type, FluidType::Mhd)) {
+        return;
     }
-    return glm_source<FTraits, false>;
+
+    if (sim.state.sz.ng < 2) {
+        throw std::runtime_error("For divB cleaning, need at least 2 ghost cells");
+    }
+    bool do_cleaning = get_or<bool>(config, "simulation.divb_cleaning", !is_instance(sim.fluid_type, FluidType::GlmMhd));
+    if (!do_cleaning) {
+        return;
+    }
+    if (source_term_index(sim, source_name) != sim.compute_source_terms.size()) {
+        throw std::runtime_error(fmt::format("Source \"{}\" already registered.", source_name));
+    }
+    std::string cleaning_type = get_or<std::string>(config, "simulation.divb_cleaning_scheme", "powell8wave");
+    DivBCleaningScheme scheme = find_associated_enum<DivBCleaningScheme>(DivBCleaningName, NumDivBCleaningScheme, cleaning_type);
+
+    fp_t divb_diff = get_or<fp_t>(config, "simulation.divb_diff", 0.2_fp);
+    if (scheme == DivBCleaningScheme::Projection) {
+        sim.clean_divb = select_fluid_traits<const Simulation&>(
+            sim.num_dim,
+            sim.fluid_type,
+            [] <typename FTraits> (FTraits, const Simulation& sim) {
+                return magnetic_field_projection_gs<FTraits>(sim);
+            }
+        );
+    } else {
+        auto cleaning_source = invoke_fluid_traits(
+            sim.num_dim,
+            sim.fluid_type,
+            [scheme] <typename FTraits> (FTraits) {
+                return select_scheme<FTraits>(scheme);
+            }
+        );
+        sim.compute_source_terms.push_back(SourceTerm{
+            .name = cleaning_type,
+            .fn = [divb_diff, cleaning_source] (const Simulation& sim) {
+                cleaning_source(sim, divb_diff);
+            }
+        });
+    }
 }
 
+void setup_glm_divb_cleaning(Simulation& sim, YAML::Node& config) {
+    if (!is_instance(sim.fluid_type, FluidType::GlmMhd)) {
+        return;
+    }
+
+    fp_t glm_alpha = get_or<fp_t>(config, "simulation.glm_alpha", 0.1_fp);
+    bool glm_extended = get_or<bool>(config, "simulation.glm_extended_source", false);
+
+    auto glm_source_fn = select_fluid_traits<const Simulation&>(
+        sim.num_dim,
+        sim.fluid_type,
+        [glm_alpha, glm_extended] <typename FTraits> (FTraits, const Simulation& sim) {
+            if (glm_extended) {
+                return glm_source<FTraits, true>(sim, glm_alpha);
+            }
+            return glm_source<FTraits, false>(sim, glm_alpha);
+        }
+    );
+    sim.compute_source_terms.push_back(SourceTerm{
+        .name = "GLM Source",
+        .fn = glm_source_fn
+    });
+}
 
 void setup_divb_cleaning(Simulation& sim, YAML::Node& config) {
-    constexpr const char* source_name = "divb_cleaning";
-    if (sim.fluid_type == FluidType::Mhd) {
-        if (sim.state.sz.ng < 2) {
-            throw std::runtime_error("For divB cleaning, need at least 2 ghost cells");
-        }
-        bool do_cleaning = get_or<bool>(config, "simulation.divb_cleaning", true);
-        if (!do_cleaning) {
-            return;
-        }
-        if (source_term_index(sim, source_name) != sim.compute_source_terms.size()) {
-            throw std::runtime_error(fmt::format("Source \"{}\" already registered.", source_name));
-        }
-        std::string cleaning_type = get_or<std::string>(config, "simulation.divb_cleaning_scheme", "powell8wave");
-        DivBCleaningScheme scheme = find_associated_enum<DivBCleaningScheme>(DivBCleaningName, NumDivBCleaningScheme, cleaning_type);
-
-        fp_t divb_diff = get_or<fp_t>(config, "simulation.divb_diff", 0.2_fp);
-        if (sim.num_dim == 1) {
-            if (scheme != DivBCleaningScheme::Projection) {
-                auto cleaning_source = select_scheme<FluidTraits<1, FluidType::Mhd>>(scheme);
-                sim.compute_source_terms.push_back(SourceTerm{
-                    .name = cleaning_type,
-                    .fn = [divb_diff, cleaning_source] (const Simulation& sim) {
-                        cleaning_source(sim, divb_diff);
-                    }
-                });
-            } else {
-                sim.clean_divb = magnetic_field_projection_gs<FluidTraits<1, FluidType::Mhd>>;
-            }
-        } else if (sim.num_dim == 2) {
-            if (scheme != DivBCleaningScheme::Projection) {
-                auto cleaning_source = select_scheme<FluidTraits<2, FluidType::Mhd>>(scheme);
-                sim.compute_source_terms.push_back(SourceTerm{
-                    .name = cleaning_type,
-                    .fn = [divb_diff, cleaning_source] (const Simulation& sim) {
-                        cleaning_source(sim, divb_diff);
-                    }
-                });
-            } else {
-                sim.clean_divb = magnetic_field_projection_gs<FluidTraits<2, FluidType::Mhd>>;
-            }
-        } else if (sim.num_dim == 3) {
-            if (scheme != DivBCleaningScheme::Projection) {
-                auto cleaning_source = select_scheme<FluidTraits<3, FluidType::Mhd>>(scheme);
-                sim.compute_source_terms.push_back(SourceTerm{
-                    .name = cleaning_type,
-                    .fn = [divb_diff, cleaning_source] (const Simulation& sim) {
-                        cleaning_source(sim, divb_diff);
-                    }
-                });
-            } else {
-                sim.clean_divb = magnetic_field_projection_gs<FluidTraits<1, FluidType::Mhd>>;
-            }
-        }
-    } else if (sim.fluid_type == FluidType::GlmMhd) {
-        fp_t glm_alpha = get_or<fp_t>(config, "simulation.glm_alpha", 0.1_fp);
-        bool glm_extended = get_or<bool>(config, "simulation.glm_extended_source", false);
-
-        if (sim.num_dim == 1) {
-            auto glm_fn = select_glm_fn<FluidTraits<1, FluidType::GlmMhd>>(glm_extended);
-            sim.compute_source_terms.push_back(SourceTerm{
-                .name = "GLM Source",
-                .fn = [glm_alpha, glm_fn] (const Simulation& sim) {
-                    glm_fn(sim, glm_alpha);
-                }
-            });
-        } else if (sim.num_dim == 2) {
-            auto glm_fn = select_glm_fn<FluidTraits<2, FluidType::GlmMhd>>(glm_extended);
-            sim.compute_source_terms.push_back(SourceTerm{
-                .name = "GLM Source",
-                .fn = [glm_alpha, glm_fn] (const Simulation& sim) {
-                    glm_fn(sim, glm_alpha);
-                }
-            });
-        } else if (sim.num_dim == 3) {
-            auto glm_fn = select_glm_fn<FluidTraits<3, FluidType::GlmMhd>>(glm_extended);
-            sim.compute_source_terms.push_back(SourceTerm{
-                .name = "GLM Source",
-                .fn = [glm_alpha, glm_fn] (const Simulation& sim) {
-                    glm_fn(sim, glm_alpha);
-                }
-            });
-        }
-
-    }
+    setup_base_field_divb_cleaning(sim, config);
+    setup_glm_divb_cleaning(sim, config);
 }
 
 }

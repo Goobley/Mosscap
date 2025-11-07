@@ -54,6 +54,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/MhdRotor.cpp"
     "source/ProblemGenerator/OrszagTangVortex.cpp"
     "source/ProblemGenerator/Quadrants3.cpp"
+    "source/ProblemGenerator/RingConduction.cpp"
     "source/ProblemGenerator/ShockTube2d.cpp"
     "source/ProblemGenerator/Solar1d.cpp"
 )
@@ -85,6 +86,7 @@ list(APPEND MOSSCAP_SOURCE_FILES
     "source/DexInterface.cpp"
     "source/DivBCleaning.cpp"
     "source/TimeDepPopulations.cpp"
+    "source/HyperbolicThermalConduction.cpp"
     ${MOSSCAP_SOURCE_TERMS}
     ${MOSSCAP_PROBLEMS}
     ${DEX_SOURCE_FILES}

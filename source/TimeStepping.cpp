@@ -10,25 +10,6 @@
 
 namespace Mosscap {
 
-template <TimeStepScheme scheme>
-std::function<void(Simulation&, fp_t)> select_fluidtraits_impl(const Simulation& sim) {
-    using Stepper = TimeStepper<scheme>;
-    std::function<void(Simulation&, fp_t)> test = Stepper::template time_step<FluidTraits<1, FluidType::Hydro>>;
-    static_assert(false, "Fix this");
-    std::map<std::pair<int, FluidType>, std::function<void(Simulation&, fp_t)>> impls = {
-        {{1, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<1, FluidType::Hydro>>},
-        {{2, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<2, FluidType::Hydro>>},
-        {{3, FluidType::Hydro}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::Hydro>>},
-        {{1, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<1, FluidType::Mhd>>},
-        {{2, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<2, FluidType::Mhd>>},
-        {{3, FluidType::Mhd}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::Mhd>>},
-        {{1, FluidType::GlmMhd}, TimeStepper<scheme>::template time_step<FluidTraits<1, FluidType::GlmMhd>>},
-        {{2, FluidType::GlmMhd}, TimeStepper<scheme>::template time_step<FluidTraits<2, FluidType::GlmMhd>>},
-        {{3, FluidType::GlmMhd}, TimeStepper<scheme>::template time_step<FluidTraits<3, FluidType::GlmMhd>>}
-    };
-    return impls[std::make_pair(sim.num_dim, sim.fluid_type)];
-}
-
 template <int NumDim, typename Lambda>
 void integrate_flux(const std::string& step_name, const GridSize& sz, const Fluxes& flux, const Lambda& updater) {
     int nx = sz.xc - 2 * sz.ng;
@@ -129,7 +110,13 @@ bool TimeStepper<TimeStepScheme::Rk2>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    sim.time_step = select_fluidtraits_impl<TimeStepScheme::Rk2>(sim);
+    sim.time_step = select_fluid_traits<Simulation&, fp_t>(
+        sim.num_dim,
+        sim.fluid_type,
+        []<typename FTraits>(FTraits, Simulation& sim, fp_t dt) {
+            return time_step<FTraits>(sim, dt);
+        }
+    );
 
     return true;
 }
@@ -223,7 +210,13 @@ bool TimeStepper<TimeStepScheme::SspRk3>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    sim.time_step = select_fluidtraits_impl<TimeStepScheme::SspRk3>(sim);
+    sim.time_step = select_fluid_traits<Simulation&, fp_t>(
+        sim.num_dim,
+        sim.fluid_type,
+        []<typename FTraits>(FTraits, Simulation& sim, fp_t dt) {
+            return time_step<FTraits>(sim, dt);
+        }
+    );
 
     return true;
 }
@@ -337,7 +330,14 @@ bool TimeStepper<TimeStepScheme::SspRk4>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    sim.time_step = select_fluidtraits_impl<TimeStepScheme::SspRk4>(sim);
+    sim.time_step = select_fluid_traits<Simulation&, fp_t>(
+        sim.num_dim,
+        sim.fluid_type,
+        []<typename FTraits>(FTraits, Simulation& sim, fp_t dt) {
+            return time_step<FTraits>(sim, dt);
+        }
+    );
+
     return true;
 }
 

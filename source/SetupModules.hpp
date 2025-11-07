@@ -3,6 +3,7 @@
 
 #include "Simulation.hpp"
 #include "DivBCleaning.hpp"
+#include "HyperbolicThermalConduction.hpp"
 #include "yaml-cpp/yaml.h"
 
 namespace Mosscap {
@@ -71,6 +72,12 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
         sim.fluxes.Fz = Fp4d("Fz", n_total, sz.zc, sz.yc, sz.xc);
     }
     sim.sources.S = Fp4d("S", n_hydro, sz.zc, sz.yc, sz.xc);
+    sim.state.mu0 = get_or<fp_t>(config, "simulation.mu0", sim.state.mu0);
+    sim.state.p_mass = get_or<fp_t>(config, "simulation.p_mass", sim.state.p_mass);
+
+    sim.state.cond.hypertc_kappa = get_or<fp_t>(config, "simulation.hypertc_kappa", sim.state.cond.hypertc_kappa);
+    sim.state.cond.limited = get_or<bool>(config, "simulation.hypertc_limit", false);
+    sim.state.cond.spitzer = get_or<bool>(config, "simulation.hypertc_spitzer", true);
 }
 
 void setup_boundaries(Simulation& sim, YAML::Node& config) {
@@ -303,6 +310,7 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path, const R
     setup_hydro_fns(sim, config);
     setup_timestepper(sim, config);
     setup_divb_cleaning(sim, config);
+    setup_hyperbolic_tc(sim, config);
     setup_eos(sim, config);
     setup_output(sim, config);
     setup_problem(sim, config);
