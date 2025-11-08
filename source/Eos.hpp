@@ -173,7 +173,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     constexpr int IB3 = MagneticField<(Axis + 2) % 3, FTraits>();
 
     if constexpr (FTraits::fluid_type == FluidType::HyperTcOnly) {
-        for (int i = 0; i < FTraits::num_var; ++i) {
+        for (int i = 0; i < FTraits::num_vars; ++i) {
             f(i) = 0.0_fp;
         }
         fp_t b2_in_plane = square(w(I(Prim::Bx)));

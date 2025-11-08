@@ -68,27 +68,33 @@ namespace Mosscap {
                 // evaluate T on the faces to get the gradient. This is similar
                 // to MURaM's approach. In this case T_{i+1/2} = 7/12 (T_i +
                 // T_{i+1}) - 1/12 (T_{i-1} + T_{i+2}), giving T_{i+1/2} -
-                // T_{i-1/2} = 8/12 (T_{i+1} - T_{i-1}) - 1/12 (T_{i+2} +
+                // T_{i-1/2} = 8/12 (T_{i+1} - T_{i-1}) - 1/12 (T_{i+2} -
                 // T_{i-2})
+
+
+                // 7/12 T_i + 7/12 T_i+ - 1/12 T_i- - 1/12 T_i++
+                // - 7/12 T_i- - 7/12 T_i + 1/12 T_i-- + 1/12 T_i+
+                // 8/12 T_i+ - 8/12 T_i- - 1/12 T_i++ + 1/12 T_i--
+                // 8/12 (T_i+ - T_i-) - 1/12 (T_i++ - T_i--)
 
                 constexpr fp_t w1 = 8.0_fp / 12.0_fp;
                 constexpr fp_t w2 = 1.0_fp / 12.0_fp;
                 fp_t B_gradT = W(I(Prim::Bx), k, j, i) * inv_dx * (
-                    w1 * (temperature(k, j, i+1) - temperature(k, j, i-1)) +
-                    w2 * (temperature(k, j, i+2) + temperature(k, j, i-2))
+                    w1 * (temperature(k, j, i+1) - temperature(k, j, i-1)) -
+                    w2 * (temperature(k, j, i+2) - temperature(k, j, i-2))
                 );
                 fp_t b2 = square(W(I(Prim::Bx), k, j, i));
                 if constexpr (FTraits::num_dim > 1) {
                     B_gradT += W(I(Prim::By), k, j, i) * inv_dx * (
-                        w1 * (temperature(k, j+1, i) - temperature(k, j-1, i)) +
-                        w2 * (temperature(k, j+2, i) + temperature(k, j-2, i))
+                        w1 * (temperature(k, j+1, i) - temperature(k, j-1, i)) -
+                        w2 * (temperature(k, j+2, i) - temperature(k, j-2, i))
                     );
                     b2 += square(W(I(Prim::By), k, j, i));
                 }
                 if constexpr (FTraits::num_dim > 2) {
                     B_gradT += W(I(Prim::Bz), k, j, i) * inv_dx * (
-                        w1 * (temperature(k+1, j, i) - temperature(k-1, j, i)) +
-                        w2 * (temperature(k+2, j, i) + temperature(k-2, j, i))
+                        w1 * (temperature(k+1, j, i) - temperature(k-1, j, i)) -
+                        w2 * (temperature(k+2, j, i) - temperature(k-2, j, i))
                     );
                     b2 += square(W(I(Prim::Bz), k, j, i));
                 }
