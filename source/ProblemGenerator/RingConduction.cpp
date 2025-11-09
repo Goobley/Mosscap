@@ -30,6 +30,8 @@ MOSSCAP_NEW_PROBLEM(ring_conduction) {
 
     constexpr fp_t pi = 3.14159265358979312_fp;
     constexpr fp_t k_B = 1.380649e-23_fp; // [J / K]
+    sim.state.p_mass = k_B;
+    sim.state.mu0 = 1.0_fp;
 
     sim.setup_ics = [](Simulation& sim) {
         const auto& state = sim.state;
@@ -47,8 +49,8 @@ MOSSCAP_NEW_PROBLEM(ring_conduction) {
                     theta += 2.0_fp * pi;
                 }
                 const fp_t r = std::sqrt(square(p(0)) + square(p(1)));
-                w(I(Prim::Bx)) = std::cos(theta + 0.5_fp * pi) * 1e-5_fp;
-                w(I(Prim::By)) = std::sin(theta + 0.5_fp * pi) * 1e-5_fp;
+                w(I(Prim::Bx)) = std::cos(theta + 0.5_fp * pi) * 1e-5_fp / (r + 0.1_fp);
+                w(I(Prim::By)) = std::sin(theta + 0.5_fp * pi) * 1e-5_fp / (r + 0.1_fp);
 
                 fp_t temperature = 10.0_fp;
                 if (r > 0.5_fp && r < 0.7_fp && theta > (11.0_fp / 12.0_fp) * pi && theta < (13.0_fp / 12.0_fp) * pi) {

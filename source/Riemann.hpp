@@ -20,6 +20,21 @@ constexpr const char* RiemannSolverName[] = {
 };
 constexpr int NumRiemannSolverType = sizeof(RiemannSolverName) / sizeof(RiemannSolverName[0]);
 
+template <typename FTraits>
+KOKKOS_INLINE_FUNCTION void fix_hypertconly_flux(const QtyView& flux) {
+    if constexpr (FTraits::fluid_type != FluidType::HyperTcOnly) {
+        return;
+    }
+
+    constexpr int n_hydro = FTraits::num_vars;
+    const fp_t heat_f = flux(FTraits::cons::Ene);
+    #pragma unroll
+    for (int i = 0; i < n_hydro; ++i) {
+        flux(i) = 0.0_fp;
+    }
+    flux(FTraits::cons::Ene) = heat_f;
+}
+
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>
 KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     using Prim = FTraits::prim;
@@ -45,6 +60,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
     for (int i = 0; i < n_hydro; ++i) {
         flux(i) = 0.5_fp * (fL(i) + fR(i) - max_c * (qR(i) - qL(i)));
     }
+    fix_hypertconly_flux<FTraits>(flux);
 }
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Hll, int> = 0>
@@ -105,6 +121,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
     for (int i = 0; i < n_hydro; ++i) {
         flux(i) = sM * (sR * fL(i) - sL * fR(i) + sR * sL * (qR(i) - qL(i)));
     }
+    fix_hypertconly_flux<FTraits>(flux);
 }
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Hllc, int> = 0>
