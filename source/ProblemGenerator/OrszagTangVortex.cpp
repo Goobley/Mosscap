@@ -47,14 +47,14 @@ MOSSCAP_NEW_PROBLEM(orszag_tang_vortex) {
         ));
     }
 
-    if (sim.fluid_type == FluidType::Hydro) {
+    if (sim.fluid_type == FluidType::Hydro || sim.fluid_type == FluidType::HyperTcOnly) {
         throw std::runtime_error("This is an MHD problem.");
     }
     sim.state.mu0 = 1.0_fp;
 
     sim.max_time = get_or<fp_t>(config, "timestep.max_time", 0.05_fp);
     sim.setup_ics = [](Simulation& sim) {
-        if (sim.fluid_type == FluidType::Mhd) {
+        if (is_instance(sim.fluid_type, FluidType::Mhd)) {
             initial_conditions<FluidType::Mhd>(sim);
         } else {
             initial_conditions<FluidType::GlmMhd>(sim);

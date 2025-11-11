@@ -62,20 +62,11 @@ namespace Mosscap {
                 if (cond.spitzer) {
                     sigma_T_52 *= square(temp) * std::sqrt(temp);
                 }
-                const fp_t sigma_T_72 = temp * sigma_T_52;
 
-                // NOTE(cmo): Use central 4th order compact differences to
-                // evaluate T on the faces to get the gradient. This is similar
-                // to MURaM's approach. In this case T_{i+1/2} = 7/12 (T_i +
-                // T_{i+1}) - 1/12 (T_{i-1} + T_{i+2}), giving T_{i+1/2} -
-                // T_{i-1/2} = 8/12 (T_{i+1} - T_{i-1}) - 1/12 (T_{i+2} -
-                // T_{i-2})
-
-
-                // 7/12 T_i + 7/12 T_i+ - 1/12 T_i- - 1/12 T_i++
-                // - 7/12 T_i- - 7/12 T_i + 1/12 T_i-- + 1/12 T_i+
-                // 8/12 T_i+ - 8/12 T_i- - 1/12 T_i++ + 1/12 T_i--
-                // 8/12 (T_i+ - T_i-) - 1/12 (T_i++ - T_i--)
+                // NOTE(cmo): Use central 4th order differences to
+                // evaluate grad T. This is similar
+                // to MURaM's approach.
+                // In this case grad T_i = 8/(12dx) (T_{i+1} - T_{i-1}) - 1/(12dx) (T_{i+2} - T_{i-2})
 
                 constexpr fp_t w1 = 8.0_fp / 12.0_fp;
                 constexpr fp_t w2 = 1.0_fp / 12.0_fp;
@@ -98,13 +89,15 @@ namespace Mosscap {
                     );
                     b2 += square(W(I(Prim::Bz), k, j, i));
                 }
-                B_gradT /= (std::sqrt(b2) + 1e-40_fp);
+                B_gradT /= std::max(std::sqrt(b2), 1e-60_fp);
+                const fp_t sigma_T_72 = temp * sigma_T_52;
                 fp_t tau = std::max(
                     4.0_fp * dt,
                     // NOTE(cmo): glm_ch _is_ the max wave propagation speed, which is what is needed here.
                     // TODO(cmo): Limiting?
-                    sigma_T_72 * square(max_cfl) * (eos.gamma - 1.0_fp) / (W(I(Prim::Pres), k, j, i) * glm_ch)
+                    sigma_T_72 * square(max_cfl) * (eos.gamma - 1.0_fp) / (W(I(Prim::Pres), k, j, i) * square(glm_ch))
                 );
+                // fp_t tau = 4.0_fp * dt;
                 S(I(Cons::HeatF), k, j, i) -= (sigma_T_52 * B_gradT + W(I(Cons::HeatF), k, j, i)) / tau;
             }
         );

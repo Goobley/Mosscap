@@ -60,6 +60,8 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     sim.state.num_tracers = n_extra;
     const int n_total = n_hydro + n_extra;
     state.Q = Fp4d("Q", n_total, sz.zc, sz.yc, sz.xc);
+    // NOTE(cmo): Zero this in case the ICs don't
+    state.Q = 0.0_fp;
     state.W = Fp4d("W", n_total, sz.zc, sz.yc, sz.xc);
     sim.recon_scratch.RR = Fp4d("RR", n_total, sz.zc, sz.yc, sz.xc);
     sim.recon_scratch.RL = Fp4d("RL", n_total, sz.zc, sz.yc, sz.xc);

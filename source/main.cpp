@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
                         .max_iter=200
                     },
                     IterateArgs {
-                        .dt = fp_t(dt),
+                        .dt = Mosscap::fp_t(dt),
                         .theta = sim.dex.interface_config.theta,
                     }
                 );

@@ -27,12 +27,14 @@ KOKKOS_INLINE_FUNCTION void fix_hypertconly_flux(const QtyView& flux) {
     }
 
     constexpr int n_hydro = FTraits::num_vars;
-    const fp_t heat_f = flux(FTraits::cons::Ene);
+    const fp_t ene = flux(FTraits::cons::Ene);
+    const fp_t heat_f = flux(FTraits::cons::HeatF);
     #pragma unroll
     for (int i = 0; i < n_hydro; ++i) {
         flux(i) = 0.0_fp;
     }
-    flux(FTraits::cons::Ene) = heat_f;
+    flux(FTraits::cons::Ene) = ene;
+    flux(FTraits::cons::HeatF) = heat_f;
 }
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>

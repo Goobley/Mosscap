@@ -20,6 +20,7 @@ cmake  \
       -DNETCDF_INCLUDE_PATH="$(nc-config --includedir)" \
       -DLDLIBS="$(nc-config --libs) -lz" \
       -DKokkos_ROOT="$(pwd)/../kokkos/" \
-      -DCMAKE_PREFIX_PATH="$(pwd)/../kokkos/lib/cmake" \
+      -DKokkosKernels_ROOT="$(pwd)/../kokkos-kernels/" \
+      -DCMAKE_PREFIX_PATH="$(pwd)/../kokkos/;$(pwd})/../kokkos-kernels/" \
       -DCMAKE_BUILD_TYPE="Debug" \
       ..

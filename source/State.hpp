@@ -35,7 +35,7 @@ struct Prim {
     static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
     static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
     static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
-    static constexpr i32 Psi = (Fluid != FluidType::GlmMhd || Fluid != FluidType::GlmMhdHyperTc) ? 3072 : 8;
+    static constexpr i32 Psi = (Fluid != FluidType::GlmMhd && Fluid != FluidType::GlmMhdHyperTc) ? 3072 : 8;
     static constexpr i32 HeatF = (Fluid == FluidType::MhdHyperTc || Fluid == FluidType::HyperTcOnly) ? 8 : (Fluid == FluidType::GlmMhdHyperTc) ? 9 : 4096;
 };
 
@@ -49,7 +49,7 @@ struct Cons {
     static constexpr i32 Bx = (Fluid == FluidType::Hydro) ? 2048 : 5;
     static constexpr i32 By = (Fluid == FluidType::Hydro) ? 2048 : 6;
     static constexpr i32 Bz = (Fluid == FluidType::Hydro) ? 2048 : 7;
-    static constexpr i32 Psi = (Fluid != FluidType::GlmMhd) ? 3072 : 8;
+    static constexpr i32 Psi = (Fluid != FluidType::GlmMhd && Fluid != FluidType::GlmMhdHyperTc) ? 3072 : 8;
     static constexpr i32 HeatF = (Fluid == FluidType::MhdHyperTc || Fluid == FluidType::HyperTcOnly) ? 8 : (Fluid == FluidType::GlmMhdHyperTc) ? 9 : 4096;
 };
 

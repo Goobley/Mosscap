@@ -328,13 +328,12 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
         ));
     }
 
+    FluidTraitsRt traits(sim.num_dim, sim.fluid_type);
     sim.setup_ics = [=](Simulation& sim) {
         if (sim.fluid_type == FluidType::Hydro) {
             initial_conditions<FluidTraits<num_dim, FluidType::Hydro>>(sim, config);
-        } else if (sim.fluid_type == FluidType::Mhd) {
+        } else if (traits.is_mhd) {
             initial_conditions<FluidTraits<num_dim, FluidType::Mhd>>(sim, config);
-        } else if (sim.fluid_type == FluidType::GlmMhd) {
-            initial_conditions<FluidTraits<num_dim, FluidType::GlmMhd>>(sim, config);
         } else {
             throw std::runtime_error("Unknown fluid type");
         }
@@ -345,19 +344,13 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
     BcParams bc_params {
         .g_y = g
     };
-    if (sim.fluid_type == FluidType::Hydro) {
-        sim.user_bc = [=](const Simulation& sim) {
-            fill_one_bc_hse<1, FluidTraits<num_dim, FluidType::Hydro>>(sim, bc_params);
-        };
-    } else if (sim.fluid_type == FluidType::Mhd) {
-        sim.user_bc = [=](const Simulation& sim) {
-            fill_one_bc_hse<1, FluidTraits<num_dim, FluidType::Mhd>>(sim, bc_params);
-        };
-    } else if (sim.fluid_type == FluidType::GlmMhd) {
-        sim.user_bc = [=](const Simulation& sim) {
-            fill_one_bc_hse<1, FluidTraits<num_dim, FluidType::GlmMhd>>(sim, bc_params);
-        };
-    }
+    sim.user_bc = select_fluid_traits<const Simulation&>(
+        sim.num_dim,
+        sim.fluid_type,
+        [=] <typename FTraits> (FTraits, const Simulation& sim) {
+            fill_one_bc_hse<1, FTraits>(sim, bc_params);
+        }
+    );
 }
 
 }

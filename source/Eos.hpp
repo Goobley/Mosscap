@@ -112,7 +112,7 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const
         w(I(Prim::Bz)) = q(I(Cons::Bz));
         e_mag = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
         e_mag /= (2.0_fp * mu0);
-        if constexpr (FTraits::fluid_type == FluidType::GlmMhd) {
+        if constexpr (is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
             w(I(Prim::Psi)) = q(I(Cons::Psi));
         }
         if constexpr (FTraits::has_hypertc) {
@@ -147,7 +147,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
         q(I(Cons::Bz)) = w(I(Prim::Bz));
         e_mag = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
         e_mag /= (2.0_fp * mu0);
-        if constexpr (FTraits::fluid_type == FluidType::GlmMhd) {
+        if constexpr (is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
             q(I(Cons::Psi)) = w(I(Prim::Psi));
         }
         if constexpr (FTraits::has_hypertc) {
@@ -183,7 +183,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
         if constexpr (FTraits::num_dim > 2)  {
             b2_in_plane += square(w(I(Prim::Bz)));
         }
-        f(I(Cons::Ene)) = w(I(Prim::HeatF)) * w(IB1) / (std::sqrt(b2_in_plane) + 1e-20_fp);
+        f(I(Cons::Ene)) = w(I(Prim::HeatF)) * w(IB1) / std::max(std::sqrt(b2_in_plane), 1e-60_fp);
         return;
     }
 
@@ -229,7 +229,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
         f(IB2) = w(IV1) * w(IB2) - w(IV2) * w(IB1);
         f(IB3) = w(IV1) * w(IB3) - w(IV3) * w(IB1);
 
-        if constexpr (FTraits::fluid_type == FluidType::GlmMhd) {
+        if constexpr (is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
             f(IB1) = w(I(Prim::Psi));
             f(I(Prim::Psi)) = square(c_h) * w(IB1);
         }
@@ -242,7 +242,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     if constexpr (FTraits::is_mhd) {
         f(I(Cons::Ene)) -= (vdotB * w(IB1)) * inv_mu0;
         if constexpr (FTraits::has_hypertc) {
-            f(I(Cons::Ene)) += w(I(Prim::HeatF)) * w(IB1) / (std::sqrt(b2_in_plane) + 1e-20_fp);
+            f(I(Cons::Ene)) += w(I(Prim::HeatF)) * w(IB1) / std::max(std::sqrt(b2_in_plane), 1e-60_fp);
             f(I(Cons::HeatF)) = 0.0_fp;
         }
     }

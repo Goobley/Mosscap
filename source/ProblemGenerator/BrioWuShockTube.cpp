@@ -46,7 +46,8 @@ void shock_tube_impl(Simulation& sim, int axis) {
 MOSSCAP_NEW_PROBLEM(brio_wu_shock_tube) {
     MOSSCAP_PROBLEM_PREAMBLE(brio_wu_shock_tube);
 
-    if (sim.fluid_type != FluidType::Mhd || sim.fluid_type != FluidType::GlmMhd) {
+    FluidTraitsRt traits(sim.num_dim, sim.fluid_type);
+    if (!traits.is_mhd) {
         throw std::runtime_error("This is an MHD problem.");
     }
     sim.state.mu0 = 1.0_fp;
