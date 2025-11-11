@@ -13,7 +13,7 @@ struct GravityVals {
 
 template <typename FTraits>
 void gravity_kernel(const Simulation& sim, const GravityVals& grav) {
-    using Cons = FTraits::cons;
+    using Cons = typename FTraits::cons;
 
     const auto& Q = sim.state.Q;
     const auto& S = sim.sources.S;

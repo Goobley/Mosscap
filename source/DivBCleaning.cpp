@@ -40,7 +40,7 @@ void glm_source(const Simulation& sim, fp_t glm_alpha) {
             const int k = nz == 1 ? ki : ki + 1;
             const int j = ny == 1 ? ji : ji + 1;
             const int i = ii + 1;
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
 
             // Q(I(Prim::Psi), k, j, i) *= coeff;
             // NOTE(cmo): Implement as source term, even though it's technically multiplicative damping
@@ -197,7 +197,7 @@ void apply_grad_phi(const Simulation& sim, Fp3d phi) {
         "B update",
         FlatLoop<3>(nz, ny, nx),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
             const int k = nz == 1 ? ki : ki + sz.ng;
             const int j = ny == 1 ? ji : ji + sz.ng;
             const int i = ii + sz.ng;
@@ -278,7 +278,7 @@ Fp3d compute_divb_impl(const Simulation& sim, fp_t* max_divb_out=nullptr) {
             const int j = ny == 1 ? ji : ji + Order;
             const int i = ii + Order;
 
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
             fp_t div = 0.0_fp;
             JasUse(Q, space_factor);
             if constexpr (Order == 1) {
@@ -336,7 +336,7 @@ Fp3d compute_divb(const Simulation& sim, fp_t* max_divb_out) {
 
 template <typename FTraits>
 KOKKOS_INLINE_FUNCTION fp_t compute_divB_upwind(const Fp4d& Q, const Fluxes& fluxes, fp_t inv_dx, int k, int j, int i) {
-    using Cons = FTraits::cons;
+    using Cons = typename FTraits::cons;
     // NOTE(cmo): Closer to pluto implementation
     // Cell left interface at idx i, right interface at i+1
     // Upwind b for the normal component of divergence (i.e. second derivative?)
@@ -381,8 +381,8 @@ void janhunen_cleaning(const Simulation& sim, fp_t divB_diff) {
             const int k = nz == 1 ? ki : ki + 2;
             const int j = ny == 1 ? ji : ji + 2;
             const int i = ii + 2;
-            using Cons = FTraits::cons;
-            using Prim = FTraits::prim;
+            using Cons = typename FTraits::cons;
+            using Prim = typename FTraits::prim;
 
             fp_t divB_i;
             JasUse(divB, divB_central, fluxes, Q, inv_dx);
@@ -430,8 +430,8 @@ void powell_cleaning(const Simulation& sim, fp_t divB_diff) {
             const int k = nz == 1 ? ki : ki + 2;
             const int j = ny == 1 ? ji : ji + 2;
             const int i = ii + 2;
-            using Cons = FTraits::cons;
-            using Prim = FTraits::prim;
+            using Cons = typename FTraits::cons;
+            using Prim = typename FTraits::prim;
 
             fp_t divB_i;
             JasUse(divB, divB_central, fluxes, Q, inv_dx);
@@ -489,7 +489,7 @@ void linde_cleaning(const Simulation& sim, fp_t divB_diff) {
             const int k = nz == 1 ? ki : ki + 2;
             const int j = ny == 1 ? ji : ji + 2;
             const int i = ii + 2;
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
 
             fp_t grad_divB_x;
             JasUse(divB_central, fluxes, divB, Q, space_factor);

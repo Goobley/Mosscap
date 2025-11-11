@@ -55,7 +55,7 @@ struct AnalyticLteH {
         const auto& Q = state.Q;
         const bool ionisation_e = include_ionisation_e;
         const fp_t inv_avg_mass = 1.0_fp / eos.avg_mass;
-        using Cons = FTraits::cons;
+        using Cons = typename FTraits::cons;
 
         // NOTE(cmo): Scheme similar to lare
         dex_parallel_for(

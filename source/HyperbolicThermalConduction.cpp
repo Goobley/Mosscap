@@ -19,7 +19,7 @@ namespace Mosscap {
                 "Compute temperature",
                 FlatLoop<3>(sz.zc, sz.yc, sz.xc),
                 KOKKOS_LAMBDA (int k, int j, int i) {
-                    using Prim = FTraits::prim;
+                    using Prim = typename FTraits::prim;
                     const fp_t nh_tot = W(I(Prim::Rho), k, j, i) / (eos.avg_mass * p_mass);
                     const fp_t pressure = W(I(Prim::Pres), k, j, i);
                     temperature(k, j, i) = temperature_si(pressure, nh_tot, eos.y);
@@ -34,7 +34,7 @@ namespace Mosscap {
                 "Compute temperature",
                 FlatLoop<3>(sz.zc, sz.yc, sz.xc),
                 KOKKOS_LAMBDA (int k, int j, int i) {
-                    using Prim = FTraits::prim;
+                    using Prim = typename FTraits::prim;
                     const fp_t nh_tot = W(I(Prim::Rho), k, j, i) / (eos.avg_mass * p_mass);
                     const fp_t pressure = W(I(Prim::Pres), k, j, i);
                     const fp_t y = eos.y_space(k, j, i);
@@ -51,8 +51,8 @@ namespace Mosscap {
             "Compute q (HeatF) source",
             FlatLoop<3>(nz, ny, nx),
             KOKKOS_LAMBDA (int ki, int ji, int ii) {
-                using Prim = FTraits::prim;
-                using Cons = FTraits::cons;
+                using Prim = typename FTraits::prim;
+                using Cons = typename FTraits::cons;
                 const int k = nz == 1 ? ki : ki + sz.ng;
                 const int j = ny == 1 ? ji : ji + sz.ng;
                 const int i = ii + sz.ng;

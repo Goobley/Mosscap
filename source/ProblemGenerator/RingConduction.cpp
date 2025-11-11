@@ -11,7 +11,7 @@ using Fluid = FluidTraits<num_dim, FluidType::HyperTcOnly>;
 
 MOSSCAP_NEW_PROBLEM(ring_conduction) {
     MOSSCAP_PROBLEM_PREAMBLE(ring_conduction);
-    using Prim = Fluid::prim;
+    using Prim = typename Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     if (sim.num_dim != num_dim) {
         throw std::runtime_error(fmt::format(

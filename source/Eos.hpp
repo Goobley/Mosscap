@@ -54,13 +54,13 @@ KOKKOS_INLINE_FUNCTION fp_t temperature_si(fp_t pressure, fp_t n_baryon, fp_t y 
 template <typename FTraits, typename WType>
 KOKKOS_INLINE_FUNCTION fp_t sound_speed(const fp_t gamma, const WType& w) {
     // NOTE(cmo): This uses the "standard" gamma = c_P / c_V
-    using Prim = FTraits::prim;
+    using Prim = typename FTraits::prim;
     return std::sqrt(gamma * w(I(Prim::Pres)) / w(I(Prim::Rho)));
 }
 
 template <typename FTraits, typename WType>
 KOKKOS_INLINE_FUNCTION fp_t total_pressure(const fp_t mu0, const WType& w) {
-    using Prim = FTraits::prim;
+    using Prim = typename FTraits::prim;
     fp_t pres = w(I(Prim::Pres));
     if constexpr (FTraits::is_mhd) {
         pres += 0.5_fp / mu0 * (square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz))));
@@ -70,7 +70,7 @@ KOKKOS_INLINE_FUNCTION fp_t total_pressure(const fp_t mu0, const WType& w) {
 
 template <typename FTraits, int Axis, typename WType>
 KOKKOS_INLINE_FUNCTION fp_t fast_wave_speed(const fp_t gamma, const fp_t mu0, const WType& w) {
-    using Prim = FTraits::prim;
+    using Prim = typename FTraits::prim;
     const fp_t irho = 1.0_fp / w(I(Prim::Rho));
     const fp_t cs2 = gamma * w(I(Prim::Pres)) * irho;
 
@@ -89,8 +89,8 @@ KOKKOS_INLINE_FUNCTION fp_t fast_wave_speed(const fp_t gamma, const fp_t mu0, co
 
 template <typename FTraits, typename QType, typename WType>
 KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const QType& q, const WType& w) {
-    using Prim = FTraits::prim;
-    using Cons = FTraits::cons;
+    using Prim = typename FTraits::prim;
+    using Cons = typename FTraits::cons;
     constexpr int NumDim = FTraits::is_mhd ? 3 : FTraits::num_dim;
 
     w(I(Prim::Rho)) = q(I(Cons::Rho));
@@ -125,8 +125,8 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const
 
 template <typename FTraits, typename WType, typename QType>
 KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const WType& w, const QType& q) {
-    using Prim = FTraits::prim;
-    using Cons = FTraits::cons;
+    using Prim = typename FTraits::prim;
+    using Cons = typename FTraits::cons;
     constexpr int NumDim = FTraits::is_mhd ? 3 : FTraits::num_dim;
 
     q(I(Cons::Rho)) = w(I(Prim::Rho));
@@ -161,8 +161,8 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
 
 template <typename FTraits, int Axis, typename WType, typename FType>
 KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const fp_t c_h, const WType& w, const FType& f) {
-    using Prim = FTraits::prim;
-    using Cons = FTraits::cons;
+    using Prim = typename FTraits::prim;
+    using Cons = typename FTraits::cons;
     constexpr int NumDim = FTraits::is_mhd ? 3 : FTraits::num_dim;
     constexpr int IV1 = Velocity<Axis, FTraits>();
     constexpr int IV2 = Velocity<(Axis + 1) % 3, FTraits>();

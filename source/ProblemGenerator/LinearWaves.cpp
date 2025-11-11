@@ -8,7 +8,7 @@ namespace Mosscap {
 
 template <typename FTraits>
 void linear_waves_impl(Simulation& sim, fp_t amp, fp_t vflow) {
-    using Prim = FTraits::prim;
+    using Prim = typename FTraits::prim;
     constexpr int n_hydro = FTraits::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;

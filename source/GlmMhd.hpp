@@ -12,7 +12,7 @@ KOKKOS_INLINE_FUNCTION void glm_set_mid_state(const fp_t c_h, WType& wL, WType& 
     if constexpr (!is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
         return;
     } else {
-        using Prim = FTraits::prim;
+        using Prim = typename FTraits::prim;
         constexpr int IB1 = MagneticField<Axis, FTraits>();
         const fp_t dB = wR(IB1) - wL(IB1);
         const fp_t dpsi = wR(I(Prim::Psi)) - wL(I(Prim::Psi));

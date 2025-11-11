@@ -17,8 +17,8 @@ struct RadLossCoeffs {
 
 template <typename FluidTraits>
 static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl) {
-    using Cons = Fluid::cons;
-    using Prim = Fluid::prim;
+    using Cons = typename Fluid::cons;
+    using Prim = typename Fluid::prim;
 
     const auto& eos = sim.eos;
     const auto& W = sim.state.W;
@@ -59,7 +59,7 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
             "{} only handles {}d problems", PROBLEM_NAME, num_dim
         ));
     }
-    using Prim = Fluid::prim;
+    using Prim = typename Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;

@@ -24,7 +24,7 @@ MOSSCAP_NEW_PROBLEM(circular_explosion) {
 
 
     sim.setup_ics = [](Simulation& sim) {
-        using Prim = Fluid::prim;
+        using Prim = typename Fluid::prim;
         constexpr int n_hydro = Fluid::num_vars;
         const auto& state = sim.state;
         const auto& eos = sim.eos;

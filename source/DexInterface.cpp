@@ -441,7 +441,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
 
             constexpr int n_hydro = FTraits::num_vars;
             yakl::SArray<fp_t, 1, n_hydro> w;
-            using Prim = FTraits::prim;
+            using Prim = typename FTraits::prim;
 
             for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
@@ -523,7 +523,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
-            using Prim = FTraits::prim;
+            using Prim = typename FTraits::prim;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
             const fp_t nh = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
@@ -631,7 +631,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
 
             constexpr int n_hydro = FTraits::num_vars;
             yakl::SArray<fp_t, 1, n_hydro> w;
-            using Prim = FTraits::prim;
+            using Prim = typename FTraits::prim;
 
             for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
@@ -715,7 +715,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
-            using Prim = FTraits::prim;
+            using Prim = typename FTraits::prim;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
             const fp_t nh = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
@@ -1579,7 +1579,7 @@ void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
 
     constexpr fp_t m_p = ConstantsF64::u;
     const auto& eos = sim.eos;
-    using Cons = FTraits::cons;
+    using Cons = typename FTraits::cons;
 
     dex_parallel_for(
         "nhtot -> rho",
@@ -1644,7 +1644,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
         return;
     }
 
-    using Cons = FTraits::cons;
+    using Cons = typename FTraits::cons;
 
     constexpr fp_t temperature_floor = 2.5e3_fp;
     constexpr fp_t total_abund = 1.0_fp;
@@ -1801,7 +1801,7 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
                 yakl::SArray<fp_t, 1, n_hydro> w;
                 QtyView q(Q, idx);
                 cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
-                using Prim = FTraits::prim;
+                using Prim = typename FTraits::prim;
 
                 const i64 flat_idx = i + j * sz.xc + k * sz.yc * sz.xc;
 

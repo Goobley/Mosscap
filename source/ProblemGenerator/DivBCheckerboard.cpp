@@ -7,7 +7,7 @@ namespace Mosscap {
 constexpr int num_dim = 2;
 void initial_conditions_checkerboard(Simulation& sim) {
     using Fluid = FluidTraits<num_dim, FluidType::Mhd>;
-    using Prim = Fluid::prim;
+    using Prim = typename Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;

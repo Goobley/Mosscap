@@ -8,7 +8,7 @@ constexpr int num_dim = 2;
 template <FluidType fluid_type>
 void initial_conditions(Simulation& sim) {
     using Fluid = FluidTraits<num_dim, fluid_type>;
-    using Prim = Fluid::prim;
+    using Prim = typename Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;

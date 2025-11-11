@@ -19,7 +19,7 @@ MOSSCAP_NEW_PROBLEM(quadrants_3) {
             "{} only handles {}d problems", PROBLEM_NAME, num_dim
         ));
     }
-    using Prim = Fluid::prim;
+    using Prim = typename Fluid::prim;
 
     sim.setup_ics = [] (Simulation& sim) {
         constexpr int n_hydro = Fluid::num_vars;

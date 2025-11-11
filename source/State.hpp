@@ -56,7 +56,7 @@ struct Cons {
 constexpr FluidType FLUID_WITH_MAX_VARS = FluidType::GlmMhdHyperTc;
 
 constexpr int get_num_hydro_vars(int num_dim, FluidType fluid = FluidType::Hydro)  {
-    int num_vars;
+    int num_vars = 10;
     switch (fluid) {
         case FluidType::Hydro: {
             num_vars = 2 + num_dim;
@@ -356,8 +356,8 @@ struct FluidTraitsRt {
         fluid_type(type)
     {
         invoke_fluid_traits(num_dim, fluid_type, [this]<typename FTraits>(FTraits) {
-            using Prim = FTraits::prim;
-            using Cons = FTraits::cons;
+            using Prim = typename FTraits::prim;
+            using Cons = typename FTraits::cons;
 
             prim.Rho = Prim::Rho;
             prim.Vx = Prim::Vx;

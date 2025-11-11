@@ -20,7 +20,7 @@ void ncwrap (int ierr, int line) {
 template <typename FTraits>
 void write_cons_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
     int ncid = nc.file.ncid;
-    using Cons = FTraits::cons;
+    using Cons = typename FTraits::cons;
     int irho = I(Cons::Rho);
     ncwrap(
         nc_put_att_int(ncid, NC_GLOBAL, "irho", NC_INT, 1, &irho),
@@ -86,7 +86,7 @@ void write_cons_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
 template <typename FTraits>
 void write_prim_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
     int ncid = nc.file.ncid;
-    using Prim = FTraits::prim;
+    using Prim = typename FTraits::prim;
     int irho = I(Prim::Rho);
     ncwrap(
         nc_put_att_int(ncid, NC_GLOBAL, "irho", NC_INT, 1, &irho),

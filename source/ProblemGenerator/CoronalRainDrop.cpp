@@ -31,7 +31,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
         kernel_name[Axis],
         FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
             constexpr int IM = Momentum<Axis, FTraits>();
             int coord[3] = {ii, ji, ki};
             for (int a = ng - 1; a > -1; --a) {
@@ -75,7 +75,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                 BoundaryType bound = (coord[Axis] < ng) ? start_bound : end_bound;
 
                 if (bound == BoundaryType::UserFn) {
-                    using Prim = FTraits::prim;
+                    using Prim = typename FTraits::prim;
                     yakl::SArray<fp_t, 1, FTraits::num_vars> w;
                     cons_to_prim<FTraits>(eos.gamma, state.mu0, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
@@ -114,7 +114,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
         kernel_name[Axis],
         FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
             constexpr int IM = Momentum<Axis, FTraits>();
             int coord[3] = {ii, ji, ki};
             for (int a = 2 * sz.ng - 1; a > sz.ng - 1; --a) {
@@ -158,7 +158,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                 BoundaryType bound = (coord[Axis] < ng) ? start_bound : end_bound;
 
                 if (bound == BoundaryType::UserFn) {
-                    using Prim = FTraits::prim;
+                    using Prim = typename FTraits::prim;
                     yakl::SArray<fp_t, 1, FTraits::num_vars> w;
                     cons_to_prim<FTraits>(eos.gamma, state.mu0, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
@@ -201,7 +201,7 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
 
 template <typename Fluid>
 static void initial_conditions(Simulation& sim, const YAML::Node& config) {
-    using Prim = Fluid::prim;
+    using Prim = typename Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     typedef yakl::Array<f64, 1, yakl::memHost> F64Host;
     const auto& state = sim.state;

@@ -120,7 +120,7 @@ struct TabulatedLteH {
         const auto& sz = state.sz;
         const auto& Q = state.Q;
 
-        using Cons = FTraits::cons;
+        using Cons = typename FTraits::cons;
 
         dex_parallel_for(
             "Update tabulated EOS",

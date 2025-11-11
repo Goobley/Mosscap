@@ -9,7 +9,7 @@ template <typename FTraits, typename WType>
 KOKKOS_INLINE_FUNCTION void glm_ch_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& max_ch) {
     // static_assert(FTraits::has_hypertc || is_instance(FTraits::fluid_type, FluidType::GlmMhd), "Only needed by GLM or HyperTc");
 
-    using Prim = FTraits::prim;
+    using Prim = typename FTraits::prim;
     constexpr i32 NumDim = FTraits::num_dim;
 
     fp_t cf = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
@@ -92,7 +92,7 @@ void global_cons_to_prim_impl(const Simulation& sim) {
             cons_to_prim<FTraits>(eos.gamma, state.mu0, QView, WView);
 
             // NOTE(cmo): For each tracer field, scale to mass density
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
             constexpr i32 n_hydro = FTraits::num_vars;
             const fp_t inv_rho = 1.0_fp / QView(I(Cons::Rho));
             for (int i = n_hydro; i < n_hydro + state.num_tracers; ++i) {
@@ -211,7 +211,7 @@ void compute_flux_impl(const Simulation& sim) {
                 flux_view
             );
 
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
             constexpr i32 n_hydro = FTraits::num_vars;
             for (int v = n_hydro; v < n_hydro + n_tracer; ++v) {
                 // NOTE(cmo): Upwind at the interface
@@ -253,7 +253,7 @@ make_flux_impl() {
 
 template <typename FTraits, CflScheme scheme, typename WType>
 KOKKOS_INLINE_FUNCTION void dt_reducer(const Eos& eos, const fp_t mu0, const WType& w, const fp_t dx, fp_t& running_dt) {
-    using Prim = FTraits::prim;
+    using Prim = typename FTraits::prim;
     constexpr i32 NumDim = FTraits::num_dim;
     fp_t cs = fast_wave_speed<FTraits, 0>(eos.gamma, mu0, w);
     fp_t vel = std::abs(w(I(Prim::Vx)));

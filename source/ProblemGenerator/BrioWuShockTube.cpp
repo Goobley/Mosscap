@@ -7,7 +7,7 @@ namespace Mosscap {
 template <int NumDim>
 void shock_tube_impl(Simulation& sim, int axis) {
     using Fluid = FluidTraits<NumDim, FluidType::Mhd>;
-    using Prim = Fluid::prim;
+    using Prim = typename Fluid::prim;
     constexpr int n_hydro = Fluid::num_vars;
     const auto& state = sim.state;
     const auto& eos = sim.eos;

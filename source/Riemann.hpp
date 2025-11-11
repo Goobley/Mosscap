@@ -39,8 +39,8 @@ KOKKOS_INLINE_FUNCTION void fix_hypertconly_flux(const QtyView& flux) {
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>
 KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
-    using Prim = FTraits::prim;
-    using Cons = FTraits::cons;
+    using Prim = typename FTraits::prim;
+    using Cons = typename FTraits::cons;
     constexpr int n_hydro = FTraits::num_vars;
     constexpr int IV = Velocity<Axis, FTraits>();
     glm_set_mid_state<Axis, FTraits>(c_h, wL, wR);
@@ -67,8 +67,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Hll, int> = 0>
 KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
-    using Prim = FTraits::prim;
-    using Cons = FTraits::cons;
+    using Prim = typename FTraits::prim;
+    using Cons = typename FTraits::cons;
     constexpr int n_hydro = FTraits::num_vars;
     constexpr int IV = Velocity<Axis, FTraits>();
 
@@ -129,8 +129,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Hllc, int> = 0>
 KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
     // NOTE(cmo): Not currently valid for MHD. At all.
-    using Prim = FTraits::prim;
-    using Cons = FTraits::cons;
+    using Prim = typename FTraits::prim;
+    using Cons = typename FTraits::cons;
     constexpr int NumDim = FTraits::num_dim;
     constexpr int n_hydro = FTraits::num_vars;
     constexpr int IV = Velocity<Axis, FTraits>();

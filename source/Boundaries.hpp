@@ -24,7 +24,7 @@ inline void fill_one_bc_impl(const State& state) {
         kernel_name[Axis],
         FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Cons = FTraits::cons;
+            using Cons = typename FTraits::cons;
             constexpr int IM = Momentum<Axis, FTraits>();
             int coord[3] = {ii, ji, ki};
             const int pencil_idx = coord[Axis];
