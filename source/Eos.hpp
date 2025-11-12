@@ -159,6 +159,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
     q(I(Cons::Ene)) = e_int + e_kin + e_mag;
 }
 
+constexpr bool HYPERTC_IN_FLUX_VECTOR = false;
 template <typename FTraits, int Axis, typename WType, typename FType>
 KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const fp_t c_h, const WType& w, const FType& f) {
     using Prim = typename FTraits::prim;
@@ -176,14 +177,16 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
         for (int i = 0; i < FTraits::num_vars; ++i) {
             f(i) = 0.0_fp;
         }
-        fp_t b2_in_plane = square(w(I(Prim::Bx)));
-        if constexpr (FTraits::num_dim > 1) {
-            b2_in_plane += square(w(I(Prim::By)));
+        if constexpr (HYPERTC_IN_FLUX_VECTOR) {
+            fp_t b2_in_plane = square(w(I(Prim::Bx)));
+            if constexpr (FTraits::num_dim > 1) {
+                b2_in_plane += square(w(I(Prim::By)));
+            }
+            if constexpr (FTraits::num_dim > 2)  {
+                b2_in_plane += square(w(I(Prim::Bz)));
+            }
+            f(I(Cons::Ene)) = w(I(Prim::HeatF)) * w(IB1) / std::max(std::sqrt(b2_in_plane), 1e-60_fp);
         }
-        if constexpr (FTraits::num_dim > 2)  {
-            b2_in_plane += square(w(I(Prim::Bz)));
-        }
-        f(I(Cons::Ene)) = w(I(Prim::HeatF)) * w(IB1) / std::max(std::sqrt(b2_in_plane), 1e-60_fp);
         return;
     }
 
@@ -242,7 +245,9 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     if constexpr (FTraits::is_mhd) {
         f(I(Cons::Ene)) -= (vdotB * w(IB1)) * inv_mu0;
         if constexpr (FTraits::has_hypertc) {
-            f(I(Cons::Ene)) += w(I(Prim::HeatF)) * w(IB1) / std::max(std::sqrt(b2_in_plane), 1e-60_fp);
+            if constexpr (HYPERTC_IN_FLUX_VECTOR) {
+                f(I(Cons::Ene)) += w(I(Prim::HeatF)) * w(IB1) / std::max(std::sqrt(b2_in_plane), 1e-60_fp);
+            }
             f(I(Cons::HeatF)) = 0.0_fp;
         }
     }

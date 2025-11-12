@@ -34,7 +34,9 @@ KOKKOS_INLINE_FUNCTION void fix_hypertconly_flux(const QtyView& flux) {
         flux(i) = 0.0_fp;
     }
     flux(FTraits::cons::Ene) = ene;
-    flux(FTraits::cons::HeatF) = heat_f;
+    if (HYPERTC_IN_FLUX_VECTOR) {
+        flux(FTraits::cons::HeatF) = heat_f;
+    }
 }
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>

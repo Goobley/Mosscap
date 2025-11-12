@@ -89,7 +89,8 @@ namespace Mosscap {
                     );
                     b2 += square(W(I(Prim::Bz), k, j, i));
                 }
-                B_gradT /= std::max(std::sqrt(b2), 1e-60_fp);
+                const fp_t inv_b_norm = 1.0_fp / std::max(std::sqrt(b2), 1e-60_fp);
+                B_gradT *= inv_b_norm;
                 const fp_t sigma_T_72 = temp * sigma_T_52;
                 fp_t tau = std::max(
                     4.0_fp * dt,
@@ -97,8 +98,23 @@ namespace Mosscap {
                     // TODO(cmo): Limiting?
                     sigma_T_72 * square(max_cfl) * (eos.gamma - 1.0_fp) / (W(I(Prim::Pres), k, j, i) * square(glm_ch))
                 );
-                // fp_t tau = 4.0_fp * dt;
                 S(I(Cons::HeatF), k, j, i) -= (sigma_T_52 * B_gradT + W(I(Cons::HeatF), k, j, i)) / tau;
+                if constexpr (!HYPERTC_IN_FLUX_VECTOR) {
+                    // NOTE(cmo): Add energy term consistent with the 4th order
+                    // FD scheme used for evaluating the source of q.
+                    auto Bq = [&] (int B, int k, int j, int i) {
+                        return W(B, k, j, i) * W(I(Prim::HeatF), k, j, i);
+                    };
+                    fp_t ene_res = w1 * (Bq(Prim::Bx, k, j, i+1) - Bq(Prim::Bx, k, j, i-1)) - w2 * (Bq(Prim::Bx, k, j, i+2) - Bq(Prim::Bx, k, j, i-2));
+                    if constexpr (FTraits::num_dim > 1) {
+                        ene_res += w1 * (Bq(Prim::By, k, j+1, i) - Bq(Prim::By, k, j-1, i)) - w2 * (Bq(Prim::By, k, j+2, i) - Bq(Prim::By, k, j-2, i));
+                    }
+                    if constexpr (FTraits::num_dim > 2) {
+                        ene_res += w1 * (Bq(Prim::Bz, k+1, j, i) - Bq(Prim::Bz, k-1, j, i)) - w2 * (Bq(Prim::Bz, k+2, j, i) - Bq(Prim::Bz, k-2, j, i));
+                    }
+                    ene_res *= inv_dx * inv_b_norm;
+                    S(I(Cons::Ene), k, j, i) -= ene_res;
+                }
             }
         );
     }
