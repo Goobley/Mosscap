@@ -9,13 +9,23 @@ enum class Reconstruction {
     Fog = 0, // first order Godunov
     Muscl, // piecewise linear method
     Ppm, // piecewise parabolic method
-    Weno5Z // 5th order weno
+    Weno5Z, // 5th order weno
+    Pdm3, // 3rd order Partial Donor Method
+    Pdm5, // 5th order Partial Donor Method
+    Pdm5Lei, // 5th order Partial Donor Method with Local Extrema Preservation
+    Pdm7, // 7th order Partial Donor Method
+    Pdm7Lei // 7th order Partial Donor Method with Local Extrema Preservation
 };
 constexpr const char* ReconstructionName[] = {
     "fog",
     "muscl",
     "ppm",
-    "weno5z"
+    "weno5z",
+    "pdm3",
+    "pdm5",
+    "pdm5lei",
+    "pdm7",
+    "pdm7lei",
 };
 constexpr int NumReconstructionType = sizeof(ReconstructionName) / sizeof(ReconstructionName[0]);
 
@@ -32,16 +42,31 @@ constexpr const char* SlopeLimiterName[] = {
 constexpr int NumSlopeLimiterType = sizeof(SlopeLimiterName) / sizeof(SlopeLimiterName[0]);
 
 constexpr bool is_limiter_agnostic(Reconstruction recon) {
+    bool result = false;
     switch (recon) {
         case Reconstruction::Fog: {
-            return true;
+            result = true;
+        } break;
+        case Reconstruction::Muscl: {
+            result = false;
+        } break;
+        case Reconstruction::Ppm: {
+            result = false;
         } break;
         case Reconstruction::Weno5Z: {
-            return true;
+            result = true;
         } break;
-        default:
-            return false;
+        case Reconstruction::Pdm3: {
+            result = true;
+        } break;
+        case Reconstruction::Pdm5: {
+            result = true;
+        } break;
+        case Reconstruction::Pdm7: {
+            result = true;
+        } break;
     }
+    return result;
 }
 
 constexpr int min_ghost_cells(Reconstruction recon) {
@@ -49,12 +74,17 @@ constexpr int min_ghost_cells(Reconstruction recon) {
         case Reconstruction::Fog: {
             return 1;
         } break;
+        case Reconstruction::Pdm3:
         case Reconstruction::Muscl: {
             return 2;
         } break;
         case Reconstruction::Ppm:
+        case Reconstruction::Pdm5:
         case Reconstruction::Weno5Z: {
             return 3;
+        }
+        case Reconstruction::Pdm7: {
+            return 4;
         }
     }
     return 1;
@@ -271,6 +301,156 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     denom = 6.0_fp * (alpha0 + alpha1 + alpha2);
 
     wR = (eno0 * alpha0 + eno1 * alpha1 + eno2 * alpha2) / denom;
+}
+
+template <Reconstruction recon, int Order>
+KOKKOS_INLINE_FUNCTION void pdm_core(const Stencil<Order>& s, fp_t wL_interp, fp_t wR_interp, fp_t& wL, fp_t& wR) {
+    // Enhanced partial donor cell method for hyperbolic equations in orthogonal curvilinear coordinates
+    // Luo et al, Computer Physics Communications, Vol 316, November 2025
+    // https://www.sciencedirect.com/science/article/pii/S0010465525003108
+
+    // NOTE(cmo); The A term in the paper. They seem to use 1.0 throughout. 0.0
+    // is original Donor method. 1.0 corresponds to a CFL of 1/3 so may be an
+    // issue in 4-step schemes at high CFL.
+    constexpr fp_t PDM_A = 1.0_fp;
+    // NOTE(cmo): Whether to add the non-clipping indicator based on the 2nd
+    // derivative to avoid clipping potentially real local extrema
+    // We don't do this for Pdm3 because it requires a wider stencil than that provides
+    constexpr bool do_local_extrema_indicator = recon == Reconstruction::Pdm5Lei || recon == Reconstruction::Pdm7Lei;
+
+    auto median = [](fp_t w_i, fp_t w_ip, fp_t w_interp) {
+        const fp_t w_max = std::max(w_i, w_ip);
+        const fp_t w_min = std::min(w_i, w_ip);
+        return std::max(w_min, std::min(w_interp, w_max));
+    };
+    const fp_t wR_med = median(s.at(0), s.at(1), wR_interp);
+    const fp_t wL_med = median(s.at(-1), s.at(0), wL_interp);
+    const fp_t dwR = PDM_A * (s.at(1) - s.at(0));
+    const fp_t dwL = PDM_A * (s.at(0) - s.at(-1));
+    const fp_t sign_left = std::copysign(1.0_fp, dwL);
+    const fp_t sign_right = std::copysign(1.0_fp, dwR);
+
+    wR = wR_med - sign_right * std::max(
+        0.0_fp,
+        std::abs(wR_med - s.at(0)) - std::abs(dwL) * std::abs(sign_left + sign_right)
+    );
+    wL = wL_med + sign_left * std::max(
+        0.0_fp,
+        std::abs(wL_med - s.at(0)) - std::abs(dwR) * std::abs(sign_left + sign_right)
+    );
+
+    if constexpr (do_local_extrema_indicator) {
+        const fp_t d1 = s.at(-1) - s.at(-2);
+        const fp_t d2 = s.at(0) - s.at(-1);
+        const fp_t d3 = s.at(1) - s.at(0);
+        const fp_t d4 = s.at(2) - s.at(1);
+
+        // NOTE(cmo): We are forcing bitwise ops here over classical boolean ones to make this op consistent over lanes.
+        // Check local extrema
+        const bool cond1 = ((d1 > 0) & (d2 > 0) & (d3 > 0) & (d4 > 0)) | ((d1 < 0) & (d2 < 0) & (d3 < 0) & (d4 < 0));
+        // Avoid oversharpening
+        const bool cond2 = (std::abs(d1) > std::abs(d2)) & (std::abs(d3) < std::abs(d4));
+
+        const fp_t lei = fp_t(cond1 && cond2);
+        wL = lei * wL_interp + (1.0_fp - lei) * wL;
+        wR = lei * wR_interp + (1.0_fp - lei) * wR;
+    }
+}
+
+template <Reconstruction recon, SlopeLimiter sl, int Axis, std::enable_if_t<recon == Reconstruction::Pdm3, int> = 0>
+KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const CellIndex& idx, fp_t& wL, fp_t& wR) {
+    // Enhanced partial donor cell method for hyperbolic equations in orthogonal curvilinear coordinates
+    // Luo et al, Computer Physics Communications, Vol 316, November 2025
+    // Implemented only the Cartesian method here
+    Stencil<1> s;
+    s.fill<Axis>(W, var, idx);
+
+    // NOTE(cmo): The coefficients for the i+1/2 interface classic interpolation
+    constexpr fp_t interp_coeffs[3] = {-1.0_fp / 6.0_fp, 5.0_fp / 6.0_fp, 1.0_fp / 3.0_fp};
+    const fp_t wR_interp = interp_coeffs[0] * s.at(-1) + interp_coeffs[1] * s.at(0) + interp_coeffs[2] * s.at(1);
+    const fp_t wL_interp = interp_coeffs[2] * s.at(-1) + interp_coeffs[1] * s.at(0) + interp_coeffs[0] * s.at(1);
+
+    pdm_core<recon>(s, wL_interp, wR_interp, wL, wR);
+}
+
+template <
+    Reconstruction recon,
+    SlopeLimiter sl,
+    int Axis,
+    std::enable_if_t<recon == Reconstruction::Pdm5 || recon == Reconstruction::Pdm5Lei, int> = 0
+>
+KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const CellIndex& idx, fp_t& wL, fp_t& wR) {
+    // Enhanced partial donor cell method for hyperbolic equations in orthogonal curvilinear coordinates
+    // Luo et al, Computer Physics Communications, Vol 316, November 2025
+    // Implemented only the Cartesian method here
+    Stencil<2> s;
+    s.fill<Axis>(W, var, idx);
+
+    // NOTE(cmo): The coefficients for the i+1/2 interface classic interpolation
+    constexpr fp_t interp_coeffs[5] = {
+        1.0_fp / 30.0_fp, -13.0_fp / 60.0_fp, 47.0_fp / 60.0_fp, 9.0_fp / 20.0_fp, -1.0_fp / 20.0_fp
+    };
+    const fp_t wR_interp = (
+        interp_coeffs[0] * s.at(-2) +
+        interp_coeffs[1] * s.at(-1) +
+        interp_coeffs[2] * s.at(0)  +
+        interp_coeffs[3] * s.at(1)  +
+        interp_coeffs[4] * s.at(2)
+    );
+    const fp_t wL_interp = (
+        interp_coeffs[4] * s.at(-2) +
+        interp_coeffs[3] * s.at(-1) +
+        interp_coeffs[2] * s.at(0)  +
+        interp_coeffs[1] * s.at(1)  +
+        interp_coeffs[0] * s.at(2)
+    );
+
+    pdm_core<recon>(s, wL_interp, wR_interp, wL, wR);
+}
+
+template <
+    Reconstruction recon,
+    SlopeLimiter sl,
+    int Axis,
+    std::enable_if_t<recon == Reconstruction::Pdm7 || recon == Reconstruction::Pdm7Lei, int> = 0
+>
+KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const CellIndex& idx, fp_t& wL, fp_t& wR) {
+    // Enhanced partial donor cell method for hyperbolic equations in orthogonal curvilinear coordinates
+    // Luo et al, Computer Physics Communications, Vol 316, November 2025
+    // Implemented only the Cartesian method here
+    Stencil<3> s;
+    s.fill<Axis>(W, var, idx);
+
+    // NOTE(cmo): The coefficients for the i+1/2 interface classic interpolation
+    constexpr fp_t interp_coeffs[7] = {
+        -1.0_fp / 140.0_fp,
+        5.0_fp / 84.0_fp,
+        -101.0_fp / 420.0_fp,
+        319.0_fp / 420.0_fp,
+        107.0_fp / 210.0_fp,
+        -19.0_fp / 210.0_fp,
+        1.0_fp / 105.0_fp
+    };
+    const fp_t wR_interp = (
+        interp_coeffs[0] * s.at(-3) +
+        interp_coeffs[1] * s.at(-2) +
+        interp_coeffs[2] * s.at(-1) +
+        interp_coeffs[3] * s.at(0)  +
+        interp_coeffs[4] * s.at(1)  +
+        interp_coeffs[5] * s.at(2)  +
+        interp_coeffs[6] * s.at(3)
+    );
+    const fp_t wL_interp = (
+        interp_coeffs[6] * s.at(-3) +
+        interp_coeffs[5] * s.at(-2) +
+        interp_coeffs[4] * s.at(-1) +
+        interp_coeffs[3] * s.at(0)  +
+        interp_coeffs[2] * s.at(1)  +
+        interp_coeffs[1] * s.at(2)  +
+        interp_coeffs[0] * s.at(3)
+    );
+
+    pdm_core<recon>(s, wL_interp, wR_interp, wL, wR);
 }
 
 }
