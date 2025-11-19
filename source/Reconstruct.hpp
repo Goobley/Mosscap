@@ -311,7 +311,7 @@ KOKKOS_INLINE_FUNCTION void pdm_core(const Stencil<Order>& s, fp_t wL_interp, fp
 
     // NOTE(cmo); The A term in the paper. They seem to use 1.0 throughout. 0.0
     // is original Donor method. 1.0 corresponds to a CFL of 1/3 so may be an
-    // issue in 4-step schemes at high CFL.
+    // issue in 4-step schemes at high CFL. It seems fine though.
     constexpr fp_t PDM_A = 1.0_fp;
     // NOTE(cmo): Whether to add the non-clipping indicator based on the 2nd
     // derivative to avoid clipping potentially real local extrema
