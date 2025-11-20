@@ -78,6 +78,10 @@ struct DexInterface {
     template <typename FTraits>
     void copy_pops_from_aux_fields(const Simulation&);
 
+    void copy_to_eos(const Simulation&);
+    template <typename FTraits>
+    void copy_to_eos(const Simulation&);
+
     void lte_init_aux_fields(const Simulation&);
     template <typename FTraits>
     void lte_init_aux_fields(const Simulation&);

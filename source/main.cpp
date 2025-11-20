@@ -91,6 +91,7 @@ int main(int argc, char** argv) {
                     }
                 );
                 sim.dex.copy_pops_to_aux_fields(sim);
+                sim.dex.copy_to_eos(sim);
                 sim.dex.integrate_rad_loss_split(sim);
             }
 

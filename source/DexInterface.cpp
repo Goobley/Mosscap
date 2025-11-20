@@ -1768,6 +1768,44 @@ void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
 }
 
 template <typename FTraits>
+void DexInterface::copy_to_eos(const Simulation& sim) {
+    if (!interface_config.advect || !interface_config.enable) {
+        return;
+    }
+
+    JasUnpack(state, mr_block_map, atmos, pops);
+    const auto& block_map = mr_block_map.block_map;
+    const auto& sz = sim.state.sz;
+    const auto& eos = sim.eos;
+
+    if (!sim.eos.y_space.initialized()) {
+        return;
+    }
+
+    dex_parallel_for(
+        "Pops -> y",
+        FlatLoop<2>(block_map.loop_bounds()),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(mr_block_map);
+            const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
+
+            const fp_t y = atmos.ne(ks) / atmos.nh_tot(ks);
+
+            eos.y_space(idx.k, idx.j, idx.i) = y;
+        }
+    );
+    Kokkos::fence();
+}
+
+void DexInterface::copy_to_eos(const Simulation& sim) {
+    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        return this->copy_to_eos<FTraits>(sim);
+    });
+}
+
+template <typename FTraits>
 void DexInterface::lte_init_aux_fields(const Simulation& sim) {
     if (!interface_config.advect || !interface_config.enable) {
         return;

@@ -290,6 +290,7 @@ void setup_dex(Simulation& sim, YAML::Node& config, bool is_restart) {
         }
         sim.dex.copy_nhtot_to_rho(sim);
         sim.dex.copy_pops_to_aux_fields(sim);
+        sim.dex.copy_to_eos(sim);
     }
     // NOTE(cmo): The first step conserves pressure, but from then on, we simply
     // load nhtot from rho and conserve charge
