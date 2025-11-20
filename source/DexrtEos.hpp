@@ -72,13 +72,17 @@ struct DexPressureEos {
                     e_mag = (square(Qv(I(Cons::Bx))) + square(Qv(I(Cons::By))) + square(Qv(I(Cons::Bz)))) / (2.0_fp * mu0);
                 }
                 const fp_t eint = Q(I(Cons::Ene), idx.k, idx.j, idx.i) - e_kin - e_mag;
-                const fp_t prev_pressure = (eos.gamma - 1.0_fp) * eint;
-                const fp_t temperature = temperature_si(prev_pressure, total_abund * nh_tot, prev_y);
-                const fp_t limited_temperature = std::max(temperature, temperature_threshold);
+                // const fp_t prev_pressure = (eos.gamma - 1.0_fp) * eint;
+                // const fp_t temperature = temperature_si(prev_pressure, total_abund * nh_tot, prev_y);
+                // const fp_t limited_temperature = std::max(temperature, temperature_threshold);
                 // const fp_t delta_eint = eint * delta_E_factor;
-                const fp_t new_pressure = nh_tot * (total_abund + y) * limited_temperature * k_B;
+                // const fp_t new_pressure = nh_tot * (total_abund + y) * limited_temperature * k_B;
+                // Q(I(Cons::Ene), idx.k, idx.j, idx.i) = new_pressure / (eos.gamma - 1.0_fp) + e_kin + e_mag;
 
-                Q(I(Cons::Ene), idx.k, idx.j, idx.i) = new_pressure / (eos.gamma - 1.0_fp) + e_kin + e_mag;
+                // NOTE(cmo): Minimum change to make energy consistent with
+                // ionisation state (energy changes handled in radiative losses)
+                const fp_t new_eint = eint * (1.0_fp + y) / (1.0_fp + prev_y);
+                Q(I(Cons::Ene), idx.k, idx.j, idx.i) = new_eint + e_kin + e_mag;
             }
         );
         Kokkos::fence();
