@@ -97,9 +97,6 @@ void allocate_rad_loss(DexState& state) {
     if (config.rad_loss == RadLossType::None) {
         return;
     }
-    if (config.rad_loss == RadLossType::PerWavelength) {
-        throw std::runtime_error("Currently only supporting Integrated rad loss.");
-    }
     i64 num_cells = mr_block_map.block_map.get_num_active_cells();
     i32 wave_dim = adata.wavelength.extent(0);
 
@@ -1648,12 +1645,49 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
 
     constexpr fp_t temperature_floor = 2.5e3_fp;
     constexpr fp_t total_abund = 1.0_fp;
-    JasUnpack(state, mr_block_map, atmos, rad_loss);
+    JasUnpack(state, mr_block_map, atmos);
     const auto& block_map = mr_block_map.block_map;
     const auto& Q = sim.state.Q;
     const auto& sz = sim.state.sz;
     JasUnpack(sim, dt, eos);
     const auto& gamma = eos.gamma;
+
+    yakl::Array<RadLossFp, 1, yakl::memDevice> rad_loss;
+    if (state.config.rad_loss == RadLossType::Integrated) {
+        rad_loss = yakl::Array<RadLossFp, 1, yakl::memDevice>("rad loss sum", state.rad_loss.data(), state.rad_loss.extent(1));
+    } else {
+        if (state.config.store_J_on_cpu) {
+            yakl::Array<RadLossFp, 1, yakl::memHost> rad_loss_h("rad loss sum", state.rad_loss.extent(1));
+            rad_loss_h = FP(0.0);
+            JasUnpack(state, rad_loss_cpu);
+
+            dex_parallel_for<Kokkos::DefaultHostExecutionSpace>(
+                "Sum rad loss over wavelength",
+                FlatLoop<1>(rad_loss_h.extent(0)),
+                KOKKOS_LAMBDA (i64 ks) {
+                    for (int la = 0; la < rad_loss_cpu.extent(0); ++la) {
+                        rad_loss_h(ks) += rad_loss_cpu(la, ks);
+                    }
+                }
+            );
+            Kokkos::fence();
+            rad_loss = rad_loss_h.createDeviceCopy();
+        } else {
+            rad_loss = yakl::Array<RadLossFp, 1, yakl::memDevice>("rad loss sum", state.rad_loss.extent(1));
+            const auto rad_loss_w = state.rad_loss;
+            rad_loss = FP(0.0);
+            dex_parallel_for(
+                "Sum rad loss over wavelength",
+                FlatLoop<1>(rad_loss.extent(0)),
+                KOKKOS_LAMBDA (i64 ks) {
+                    for (int la = 0; la < rad_loss_w.extent(0); ++la) {
+                        rad_loss(ks) += rad_loss_w(la, ks);
+                    }
+                }
+            );
+            Kokkos::fence();
+        }
+    }
 
     typedef Kokkos::MinLoc<fp_t, i64> MinLoc;
     MinLoc::value_type minloc;
@@ -1667,7 +1701,8 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
             CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
 
             // Calculated in kW/m3;
-            fp_t delta_E = -rad_loss(0, ks) * 1e3 * dt;
+            fp_t delta_E = 0.0_fp;
+            delta_E = -rad_loss(ks) * 1e3_fp * dt;
 
             const fp_t eint_pre = atmos.pressure(ks) / (gamma - 1.0_fp);
             fp_t eint_post = eint_pre + delta_E;
@@ -1918,6 +1953,10 @@ fp_t DexInterface::min_characteristic_cooling_time() {
     constexpr fp_t igm1 = FP(1.0) / (gamma - FP(1.0));
     using namespace ConstantsFP;
 
+    if (state.config.rad_loss == RadLossType::PerWavelength) {
+        throw std::runtime_error("Currently only supporting Integrated rad loss.");
+    }
+
     fp_t result;
     dex_parallel_reduce(
         "Max characteristic cooling",
@@ -1938,6 +1977,10 @@ fp_t DexInterface::min_characteristic_cooling_time() {
 void DexInterface::update_temperature_rad_eq(fp_t delta_t) {
     JasUnpack(state, atmos, rad_loss);
     const fp_t threshold = state.config.threshold_temperature;
+
+    if (state.config.rad_loss == RadLossType::PerWavelength) {
+        throw std::runtime_error("Currently only supporting Integrated rad loss.");
+    }
 
     fp_t max_temp_change;
     dex_parallel_reduce(
