@@ -758,7 +758,12 @@ bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::stri
         const auto& model_config = config.atom_configs[i];
         crtaf_models.emplace_back(parse_crtaf_model<f64>(p, model_config));
     }
-    AtomicDataHostDevice<dfp_t> atomic_data = to_atomic_data<dfp_t, f64>(crtaf_models);
+    AtomicDataHostDevice<dfp_t> atomic_data = to_atomic_data<dfp_t, f64>(
+        crtaf_models,
+        ToAtomicDataOptions{
+            .limit_line_edge_bins=state.config.limit_line_edge_bins
+        }
+    );
     state.adata = atomic_data.device;
     state.adata_host = atomic_data.host;
     state.have_h = atomic_data.have_h_model;
@@ -1522,6 +1527,7 @@ void save_results(
     if (out_cfg.nh_tot && state.atmos.nh_tot.initialized()) {
         maybe_rehydrate_and_write(state.atmos.nh_tot, convert_name("nh_tot"), {});
         maybe_rehydrate_and_write(state.atmos.temperature, convert_name("temperature"), {});
+        maybe_rehydrate_and_write(state.atmos.ne, convert_name("ne"), {});
     }
     // if (out_cfg.psi_star && casc_state.psi_star.initialized()) {
     //     nc.write(casc_state.psi_star, convert_name("psi_star"), {"casc_shape"});
