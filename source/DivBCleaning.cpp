@@ -573,11 +573,13 @@ void setup_base_field_divb_cleaning(Simulation& sim, YAML::Node& config) {
 
     fp_t divb_diff = get_or<fp_t>(config, "simulation.divb_diff", 0.2_fp);
     if (scheme == DivBCleaningScheme::Projection) {
-        sim.clean_divb = select_fluid_traits<const Simulation&>(
+        sim.clean_divb = invoke_fluid_traits(
             sim.num_dim,
             sim.fluid_type,
-            [] <typename FTraits> (FTraits, const Simulation& sim) {
-                return magnetic_field_projection_gs<FTraits>(sim);
+            [] <typename FTraits> (FTraits) -> std::function<void(const Simulation&)> {
+                return [] (const Simulation& sim) {
+                    return magnetic_field_projection_gs<FTraits>(sim);
+                };
             }
         );
     } else {
@@ -605,14 +607,17 @@ void setup_glm_divb_cleaning(Simulation& sim, YAML::Node& config) {
     fp_t glm_alpha = get_or<fp_t>(config, "simulation.glm_alpha", 0.1_fp);
     bool glm_extended = get_or<bool>(config, "simulation.glm_extended_source", false);
 
-    auto glm_source_fn = select_fluid_traits<const Simulation&>(
+    auto glm_source_fn = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        [glm_alpha, glm_extended] <typename FTraits> (FTraits, const Simulation& sim) {
-            if (glm_extended) {
-                return glm_source<FTraits, true>(sim, glm_alpha);
-            }
-            return glm_source<FTraits, false>(sim, glm_alpha);
+        [glm_alpha, glm_extended] <typename FTraits>
+        (FTraits) -> std::function<void(const Simulation&)> {
+            return [glm_alpha, glm_extended] (const Simulation& sim) {
+                if (glm_extended) {
+                    return glm_source<FTraits, true>(sim, glm_alpha);
+                }
+                return glm_source<FTraits, false>(sim, glm_alpha);
+            };
         }
     );
     sim.compute_source_terms.push_back(SourceTerm{

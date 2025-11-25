@@ -48,11 +48,13 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
         .z = get_or<fp_t>(config, "sources.gravity.z", 0.0_fp)
     };
 
-    auto apply_gravity = select_fluid_traits<const Simulation&>(
+    auto apply_gravity = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        [=]<typename FTraits>(FTraits, const Simulation& sim) {
-            return gravity_kernel<FTraits>(sim, grav);
+        [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
+            return [=] (const Simulation& sim) {
+                return gravity_kernel<FTraits>(sim, grav);
+            };
         }
     );
 

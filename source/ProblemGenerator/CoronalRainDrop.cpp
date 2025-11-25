@@ -344,11 +344,13 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
     BcParams bc_params {
         .g_y = g
     };
-    sim.user_bc = select_fluid_traits<const Simulation&>(
+    sim.user_bc = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        [=] <typename FTraits> (FTraits, const Simulation& sim) {
-            fill_one_bc_hse<1, FTraits>(sim, bc_params);
+        [=] <typename FTraits> (FTraits) -> std::function<void(const Simulation&)> {
+            return [=] (const Simulation& sim) {
+                fill_one_bc_hse<1, FTraits>(sim, bc_params);
+            };
         }
     );
 }

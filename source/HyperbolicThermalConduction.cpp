@@ -125,11 +125,13 @@ namespace Mosscap {
             return;
         }
 
-        auto hypertc_source_fn = select_fluid_traits<const Simulation&>(
+        auto hypertc_source_fn = invoke_fluid_traits(
             sim.num_dim,
             sim.fluid_type,
-            [] <typename FTraits> (FTraits, const Simulation& sim) {
-                return hypertc_update_heatf<FTraits>(sim);
+            [] <typename FTraits> (FTraits) -> std::function<void(const Simulation&)> {
+                return [] (const Simulation& sim) {
+                    return hypertc_update_heatf<FTraits>(sim);
+                };
             }
         );
         sim.compute_source_terms.push_back(SourceTerm{

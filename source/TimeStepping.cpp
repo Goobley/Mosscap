@@ -110,11 +110,13 @@ bool TimeStepper<TimeStepScheme::Rk2>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    sim.time_step = select_fluid_traits<Simulation&, fp_t>(
+    sim.time_step = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        []<typename FTraits>(FTraits, Simulation& sim, fp_t dt) {
-            return time_step<FTraits>(sim, dt);
+        []<typename FTraits>(FTraits) -> std::function<void(Simulation&, fp_t)> {
+            return [] (Simulation& sim, fp_t dt) {
+                return time_step<FTraits>(sim, dt);
+            };
         }
     );
 
@@ -210,11 +212,13 @@ bool TimeStepper<TimeStepScheme::SspRk3>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    sim.time_step = select_fluid_traits<Simulation&, fp_t>(
+    sim.time_step = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        []<typename FTraits>(FTraits, Simulation& sim, fp_t dt) {
-            return time_step<FTraits>(sim, dt);
+        []<typename FTraits>(FTraits) -> std::function<void(Simulation&, fp_t)> {
+            return [] (Simulation& sim, fp_t dt) {
+                return time_step<FTraits>(sim, dt);
+            };
         }
     );
 
@@ -330,11 +334,13 @@ bool TimeStepper<TimeStepScheme::SspRk4>::init(Simulation& sim) {
             sim.state.Q.extent(3)
         )
     );
-    sim.time_step = select_fluid_traits<Simulation&, fp_t>(
+    sim.time_step = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        []<typename FTraits>(FTraits, Simulation& sim, fp_t dt) {
-            return time_step<FTraits>(sim, dt);
+        []<typename FTraits>(FTraits) -> std::function<void(Simulation&, fp_t)> {
+            return [] (Simulation& sim, fp_t dt) {
+                return time_step<FTraits>(sim, dt);
+            };
         }
     );
 
