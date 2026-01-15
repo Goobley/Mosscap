@@ -231,6 +231,7 @@ KOKKOS_INLINE_FUNCTION void reconstruct(const Fp4d& W, const int var, const Cell
     // NOTE(cmo): Enforce monotonicity -- following McCorquodale & Collela
     // (2011) for the latter cases without flattening (based on Collela & Sekora
     // 2008) as written in Castro (Almgren+ 2010)
+    // https://www.aanda.org/articles/aa/full_html/2024/06/aa48882-23 is a good reference too
     if ((wR - s.at(0)) * (s.at(0) - wL) <= 0.0_fp) {
         wL = s.at(0);
         wR = s.at(0);

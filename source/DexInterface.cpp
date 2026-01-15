@@ -1649,7 +1649,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
 
     using Cons = typename FTraits::cons;
 
-    constexpr fp_t temperature_floor = 2.5e3_fp;
+    constexpr fp_t temperature_floor = 2.0e3_fp;
     constexpr fp_t total_abund = 1.0_fp;
     JasUnpack(state, mr_block_map, atmos);
     const auto& block_map = mr_block_map.block_map;

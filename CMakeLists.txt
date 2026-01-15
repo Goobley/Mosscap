@@ -53,6 +53,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/LinearWaves.cpp"
     "source/ProblemGenerator/MhdRotor.cpp"
     "source/ProblemGenerator/OrszagTangVortex.cpp"
+    "source/ProblemGenerator/PureCoronalCondensation.cpp"
     "source/ProblemGenerator/Quadrants3.cpp"
     "source/ProblemGenerator/RingConduction.cpp"
     "source/ProblemGenerator/ShockTube2d.cpp"
