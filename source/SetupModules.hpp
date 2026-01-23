@@ -82,6 +82,35 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     sim.state.cond.spitzer = get_or<bool>(config, "simulation.hypertc_spitzer", true);
 }
 
+template <typename FTraits>
+void load_constant_boundary(
+    const yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FLUID_WITH_MAX_VARS>>& arr,
+    const YAML::Node& node
+) {
+    using Cons3 = Cons<3, FLUID_WITH_MAX_VARS>;
+    using C = FTraits::cons;
+    arr(I(C::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
+    arr(I(C::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
+    if constexpr (FTraits::is_mhd || FTraits::num_dim > 1) {
+        arr(I(C::MomY)) = node[I(Cons3::MomY)].as<fp_t>();
+    }
+    if constexpr (FTraits::is_mhd || FTraits::num_dim > 2) {
+        arr(I(C::MomZ)) = node[I(Cons3::MomZ)].as<fp_t>();
+    }
+    arr(I(C::Ene)) = node[I(Cons3::Ene)].as<fp_t>();
+    if constexpr (FTraits::is_mhd) {
+        arr(I(C::Bx)) = node[I(Cons3::Bx)].as<fp_t>();
+        arr(I(C::By)) = node[I(Cons3::By)].as<fp_t>();
+        arr(I(C::Bz)) = node[I(Cons3::Bz)].as<fp_t>();
+        if constexpr (is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
+            arr(I(C::Psi)) = node[I(Cons3::Psi)].as<fp_t>();
+        }
+        if constexpr (FTraits::has_hypertc) {
+            arr(I(C::HeatF)) = node[I(Cons3::HeatF)].as<fp_t>();
+        }
+    }
+}
+
 void setup_boundaries(Simulation& sim, YAML::Node& config) {
     auto& bound = sim.state.boundaries;
 
@@ -101,8 +130,6 @@ void setup_boundaries(Simulation& sim, YAML::Node& config) {
         set_boundary(bound.ze, "ze");
     }
 
-    // TODO(cmo): Check if any are constant, and load the values if so.
-    // TODO(cmo): Make MHD consistent
     auto check_and_load_constant = [&](
         const BoundaryType boundary,
         const decltype(bound.xs_const)& arr,
@@ -113,26 +140,12 @@ void setup_boundaries(Simulation& sim, YAML::Node& config) {
             const auto name = fmt::format("{}_const", bdry);
             if (config["boundary"][name]){
                 if (config["boundary"][name].IsSequence()) {
-                    using Cons3 = Cons<3, FluidType::Hydro>;
-                    auto node = config["boundary"][fmt::format("{}_const", bdry)];
-                    if (sim.num_dim == 1) {
-                        using Cons1 = Cons<1, FluidType::Hydro>;
-                        arr(I(Cons1::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
-                        arr(I(Cons1::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
-                        arr(I(Cons1::Ene)) = node[I(Cons3::Ene)].as<fp_t>();
-                    } else if (sim.num_dim == 2) {
-                        using Cons2 = Cons<2, FluidType::Hydro>;
-                        arr(I(Cons2::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
-                        arr(I(Cons2::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
-                        arr(I(Cons2::MomY)) = node[I(Cons3::MomY)].as<fp_t>();
-                        arr(I(Cons2::Ene)) = node[I(Cons3::Ene)].as<fp_t>();
-                    } else {
-                        arr(I(Cons3::Rho)) = node[I(Cons3::Rho)].as<fp_t>();
-                        arr(I(Cons3::MomX)) = node[I(Cons3::MomX)].as<fp_t>();
-                        arr(I(Cons3::MomY)) = node[I(Cons3::MomY)].as<fp_t>();
-                        arr(I(Cons3::MomZ)) = node[I(Cons3::MomZ)].as<fp_t>();
-                        arr(I(Cons3::Ene)) = node[I(Cons3::Ene)].as<fp_t>();
-                    }
+                    invoke_fluid_traits(
+                        sim.num_dim,
+                        sim.fluid_type,
+                        [&]<typename FTraits>(FTraits) {
+                            load_constant_boundary<FTraits>(arr, config["boundary"][name]);
+                        });
                 } else {
                     std::string vals = get_or<std::string>(config, fmt::format("boundary.{}_const", bdry), "xxx");
                     if (vals == "xxx") {
