@@ -1,7 +1,7 @@
 #include "ProblemGenerator.hpp"
 #include "../Hydro.hpp"
 #include "../MosscapConfig.hpp"
-#include "../SourceTerms/Gravity.hpp"
+#include "../SourceTerms/Sponge.hpp"
 
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
@@ -155,6 +155,10 @@ MOSSCAP_NEW_PROBLEM(pure_coronal_condensation) {
             setup_boundaries<FTraits>(sim, config);
         }
     );
+
+    if (get_or<bool>(config, "problem.enable_sponge", false)) {
+        setup_sponge(sim, config);
+    }
 }
 
 }
