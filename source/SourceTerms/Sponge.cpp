@@ -99,7 +99,7 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
 
             const auto& Q0 = *eq_state;
             for (int v = 0; v < S.extent(0); ++v) {
-                S(v, k, j, i) = - sigma * (Q(v, k, j, i) - Q0(v));
+                S(v, k, j, i) += - sigma * (Q(v, k, j, i) - Q0(v));
             }
         }
     );
