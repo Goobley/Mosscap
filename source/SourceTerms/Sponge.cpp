@@ -35,6 +35,7 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
     const auto& Q = sim.state.Q;
     const auto& S = sim.sources.S;
     const auto& sz = sim.state.sz;
+    const auto& dt = sim.dt;
 
     dex_parallel_for(
         "Apply sponge",
@@ -61,9 +62,9 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
             const decltype(state.boundaries.xs_const)* eq_state = nullptr;
             if (!in_x) {
                 if (pos(0) < sponge.xs) {
-                    sigma_x = sponge.A * std::exp(sponge.B * (pos(0) - sponge.xs));
+                    sigma_x = sponge.A * std::exp(sponge.B * std::abs(pos(0) - sponge.xs));
                 } else {
-                    sigma_x = sponge.A * std::exp(-sponge.B * (pos(0) - sponge.xe));
+                    sigma_x = sponge.A * std::exp(sponge.B * std::abs(pos(0) - sponge.xe));
                 }
                 if (sigma_x > max_sigma) {
                     max_sigma = sigma_x;
@@ -72,9 +73,9 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
             }
             if (!in_y) {
                 if (pos(1) < sponge.ys) {
-                    sigma_y = sponge.A * std::exp(sponge.B * (pos(1) - sponge.ys));
+                    sigma_y = sponge.A * std::exp(sponge.B * std::abs(pos(1) - sponge.ys));
                 } else {
-                    sigma_y = sponge.A * std::exp(-sponge.B * (pos(1) - sponge.ye));
+                    sigma_y = sponge.A * std::exp(sponge.B * std::abs(pos(1) - sponge.ye));
                 }
                 if (sigma_y > max_sigma) {
                     max_sigma = sigma_y;
@@ -83,9 +84,9 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
             }
             if (!in_z) {
                 if (pos(2) < sponge.zs) {
-                    sigma_z = sponge.A * std::exp(sponge.B * (pos(2) - sponge.zs));
+                    sigma_z = sponge.A * std::exp(sponge.B * std::abs(pos(2) - sponge.zs));
                 } else {
-                    sigma_z = sponge.A * std::exp(-sponge.B * (pos(2) - sponge.ze));
+                    sigma_z = sponge.A * std::exp(sponge.B * std::abs(pos(2) - sponge.ze));
                 }
                 if (sigma_z > max_sigma) {
                     max_sigma = sigma_z;
@@ -99,7 +100,7 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
 
             const auto& Q0 = *eq_state;
             for (int v = 0; v < S.extent(0); ++v) {
-                S(v, k, j, i) += - sigma * (Q(v, k, j, i) - Q0(v));
+                S(v, k, j, i) += - sigma * (Q(v, k, j, i) - Q0(v)) / dt;
             }
         }
     );
