@@ -8,12 +8,12 @@ static constexpr int num_dim = 2;
 
 namespace Mosscap {
 
-struct BcParams {
+struct HseBcParams {
     fp_t g_y;
 };
 
 template <int Axis, typename FTraits>
-static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
+static void fill_one_bc_hse(const Simulation& sim, const HseBcParams& driver) {
     static_assert(Axis < 3, "What are you doing?");
     const auto& state = sim.state;
     const auto& sz = state.sz;
@@ -341,7 +341,7 @@ MOSSCAP_NEW_PROBLEM(coronal_rain_drop_2d) {
 
     setup_gravity(sim, config);
     const fp_t g = get_or<fp_t>(config, "sources.gravity.y", -274.0_fp);
-    BcParams bc_params {
+    HseBcParams bc_params {
         .g_y = g
     };
     sim.user_bc = invoke_fluid_traits(

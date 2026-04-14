@@ -9,12 +9,16 @@ static constexpr int num_dim = 2;
 
 namespace Mosscap {
 
-struct BcParams {
+struct HseBcParams {
     fp_t g_y;
 };
 
+struct ConstantBoundaryParams {
+    Fp2d Qbound;
+};
+
 template <int Axis, typename FTraits>
-static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
+static void fill_one_bc_hse(const Simulation& sim, const HseBcParams& driver) {
     static_assert(Axis < 3, "What are you doing?");
     const auto& state = sim.state;
     const auto& sz = state.sz;
@@ -80,7 +84,8 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                     yakl::SArray<fp_t, 1, FTraits::num_vars> w;
                     cons_to_prim<FTraits>(eos.gamma, state.mu0, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
-                    fp_t p = w(I(Prim::Pres)) - 0.5_fp * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * driver.g_y * state.dx;
+                    // fp_t p = w(I(Prim::Pres)) - 0.5_fp * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * driver.g_y * state.dx;
+                    fp_t p = w(I(Prim::Pres)) - Q_prev(I(Cons::Rho)) * driver.g_y * state.dx;
                     // add that contribution to rho and eint
                     // flip or set momentum to 0
 
@@ -163,7 +168,8 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
                     yakl::SArray<fp_t, 1, FTraits::num_vars> w;
                     cons_to_prim<FTraits>(eos.gamma, state.mu0, Q_prev, w);
                     // NOTE(cmo): The following is hardcoded to 1D for now
-                    fp_t p = w(I(Prim::Pres)) + 0.5_fp * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * driver.g_y * state.dx;
+                    // fp_t p = w(I(Prim::Pres)) + 0.5_fp * (Q_view(I(Cons::Rho)) + Q_prev(I(Cons::Rho))) * driver.g_y * state.dx;
+                    fp_t p = w(I(Prim::Pres)) + Q_prev(I(Cons::Rho)) * driver.g_y * state.dx;
                     // const fp_t dP_dz = h_mass * gravity;
                     // add that contribution to rho and eint
                     // flip or set momentum to 0
@@ -198,6 +204,147 @@ static void fill_one_bc_hse(const Simulation& sim, const BcParams& driver) {
         }
     );
     Kokkos::fence();
+}
+
+template <typename FTraits>
+static void fill_xbc_static(const Simulation& sim, const ConstantBoundaryParams& bound) {
+    JasUnpack(sim, state);
+    JasUnpack(state, sz, Q);
+    int launch_dims[3] = {sz.xc, sz.yc, sz.zc};
+    launch_dims[0] = 2 * sz.ng;
+    if (state.boundaries.xs != BoundaryType::UserFn && state.boundaries.xe != BoundaryType::UserFn) {
+        return;
+    }
+    dex_parallel_for(
+        "Fill y bound",
+        FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
+        KOKKOS_LAMBDA (int ki, int ji, int ii) {
+            int i = ii;
+            if (ii >= sz.ng) {
+                i = sz.xc - 1 - (ii - sz.ng);
+                if (state.boundaries.xe != BoundaryType::UserFn) {
+                    return;
+                }
+            } else if (state.boundaries.xs != BoundaryType::UserFn) {
+                return;
+            }
+
+            for (int v = 0; v < Q.extent(0); ++v) {
+                Q(v, ki, ji, i) = bound.Qbound(v, ji);
+            }
+        }
+    );
+    Kokkos::fence();
+}
+
+struct InitialStratification {
+    yakl::Array<f64, 1, yakl::memDevice> rho_z;
+    yakl::Array<f64, 1, yakl::memDevice> p_z;
+};
+
+template <typename FTraits>
+static InitialStratification background_hse_stratification(const Simulation& sim, const YAML::Node& config) {
+    static constexpr f64 h_mass = 1.6737830080950003e-27;
+    static constexpr f64 k_B = 1.380649e-23;
+    JasUnpack(sim, state);
+    JasUnpack(state, sz);
+    const fp_t T_0 = get_or<fp_t>(config, "problem.base_temperature", 1.2e6_fp);
+    const fp_t P_0 = get_or<fp_t>(config, "problem.base_pressure", 0.07_fp);
+    const fp_t g = get_or<fp_t>(config, "sources.gravity.y", -274.0_fp);
+    const fp_t rho_0 = P_0 / (2.0_fp * k_B * T_0) * h_mass;
+    fmt::println("Base coronal density {:.2e} kg/m3", rho_0);
+    const fp_t mean_mass = 1.0_fp;
+    const fp_t H = k_B * T_0 / (mean_mass * h_mass * -g);
+    const f64 dy = state.dx;
+
+    typedef yakl::Array<f64, 1, yakl::memHost> F64Host;
+    F64Host rho("rho", sz.yc);
+    F64Host pressure("pressure", sz.yc);
+    for (int i = 0; i <= sz.ng; ++i) {
+        rho(sz.ng) = rho_0;
+        pressure(sz.ng) = P_0;
+    }
+    for (int i = sz.ng + 1; i < sz.yc; ++i) {
+        const f64 dP_dy_base = rho(i - 1) * g;
+        const f64 P_half = pressure(i - 1) + dP_dy_base * 0.5 * dy;
+        const f64 T_half = T_0;
+        // NOTE(cmo): Assuming fully ionised background
+        const f64 rho_half = 0.5_fp * P_half / (k_B * T_half) * (mean_mass * h_mass);
+
+        const f64 dP_dy_mid = rho_half * g;
+        pressure(i) = pressure(i - 1) + dP_dy_mid * dy;
+        rho(i) = 0.5_fp * pressure(i) / (k_B * T_0) * (mean_mass * h_mass);
+        // try to refine guess for FV scheme
+        int iter = 0;
+        for (iter = 0; iter < 100; ++iter) {
+            const fp_t old_pressure = pressure(i);
+            // https://iopscience.iop.org/article/10.1086/342754/fulltext/
+            // Eq 40 + 41
+            if (i == sz.ng + 1) {
+                pressure(i) = pressure(i - 1) + 0.5 * g * dy * (rho(i) + rho(i - 1));
+            } else {
+                pressure(i) = pressure(i - 1) + 1.0/12.0 * g * dy * (5 * rho(i) + 8 * rho(i - 1) - rho(i-2));
+            }
+            if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-5) {
+                break;
+            }
+            rho(i) = 0.5_fp * pressure(i) / (k_B * T_0) * (mean_mass * h_mass);
+        }
+        if (iter == 100) {
+            fmt::println("No converge: {}", i);
+        }
+    }
+    const auto rho_z = rho.createDeviceCopy();
+    const auto p_z = pressure.createDeviceCopy();
+    return InitialStratification {
+        .rho_z = rho_z,
+        .p_z = p_z
+    };
+}
+
+template <typename FTraits>
+static Fp2d
+background_hse_stratification_cons(
+    const Simulation& sim,
+    const InitialStratification& strat,
+    const YAML::Node& config
+) {
+    using Prim = typename FTraits::prim;
+    constexpr int n_hydro = FTraits::num_vars;
+    const auto& state = sim.state;
+    const auto& sz = state.sz;
+    const auto& eos = sim.eos;
+
+    const fp_t bx0 = get_or<fp_t>(config, "problem.bx0", 0.0);
+    const fp_t by0 = get_or<fp_t>(config, "problem.by0", 0.0);
+    const fp_t bz0 = get_or<fp_t>(config, "problem.bz0", 0.0);
+
+    Fp2d result("y strat", n_hydro, sz.yc);
+    auto reshaped = result.reshape(n_hydro, 1, sz.yc, 1);
+    dex_parallel_for(
+        "Fill y bc",
+        FlatLoop<1>(sz.yc),
+        KOKKOS_LAMBDA (int j) {
+            yakl::SArray<fp_t, 1, n_hydro> w(0.0);
+            w(I(Prim::Rho)) = strat.rho_z(j);
+            w(I(Prim::Pres)) = strat.p_z(j);
+
+            JasUse(bx0, by0, bz0);
+            if constexpr (FTraits::is_mhd) {
+                w(I(Prim::Bx)) = bx0;
+                w(I(Prim::By)) = by0;
+                w(I(Prim::Bz)) = bz0;
+            }
+            CellIndex idx {
+                .i = 0,
+                .j = j,
+                .k = 0
+            };
+            prim_to_cons<FTraits>(eos.gamma, state.mu0, w, QtyView(reshaped, idx));
+        }
+    );
+    Kokkos::fence();
+    return result;
 }
 
 template <typename Fluid>
@@ -238,42 +385,8 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     const fp_t H = k_B * T_0 / (mean_mass * h_mass * -g);
     const f64 dy = state.dx;
 
-    F64Host rho("rho", sz.yc);
-    F64Host pressure("pressure", sz.yc);
-    rho(sz.ng) = rho_0;
-    pressure(sz.ng) = P_0;
-    for (int i = sz.ng + 1; i < sz.yc; ++i) {
-        const f64 dP_dy_base = rho(i - 1) * g;
-        const f64 P_half = pressure(i - 1) + dP_dy_base * 0.5 * dy;
-        const f64 T_half = T_0;
-        // NOTE(cmo): Assuming fully ionised background
-        const f64 rho_half = 0.5_fp * P_half / (k_B * T_half) * (mean_mass * h_mass);
-
-        const f64 dP_dy_mid = rho_half * g;
-        pressure(i) = pressure(i - 1) + dP_dy_mid * dy;
-        rho(i) = 0.5_fp * pressure(i) / (k_B * T_0) * (mean_mass * h_mass);
-        // try to refine guess for FV scheme
-        int iter = 0;
-        for (iter = 0; iter < 100; ++iter) {
-            const fp_t old_pressure = pressure(i);
-            // https://iopscience.iop.org/article/10.1086/342754/fulltext/
-            // Eq 40 + 41
-            if (i == sz.ng + 1) {
-                pressure(i) = pressure(i - 1) + 0.5 * g * dy * (rho(i) + rho(i - 1));
-            } else {
-                pressure(i) = pressure(i - 1) + 1.0/12.0 * g * dy * (5 * rho(i) + 8 * rho(i - 1) - rho(i-2));
-            }
-            if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-5) {
-                break;
-            }
-            rho(i) = 0.5_fp * pressure(i) / (k_B * T_0) * (mean_mass * h_mass);
-        }
-        if (iter == 100) {
-            fmt::println("No converge: {}", i);
-        }
-    }
-    const auto rho_z = rho.createDeviceCopy();
-    const auto p_z = pressure.createDeviceCopy();
+    auto strat = background_hse_stratification<Fluid>(sim, config);
+    JasUnpack(strat, rho_z, p_z);
 
     dex_parallel_for(
         FlatLoop<2>(sz.zc, sz.xc),
@@ -430,7 +543,7 @@ MOSSCAP_NEW_PROBLEM(simple_mrti_condensation) {
 
     setup_gravity(sim, config);
     const fp_t g = get_or<fp_t>(config, "sources.gravity.y", -274.0_fp);
-    BcParams bc_params {
+    HseBcParams bc_params {
         .g_y = g
     };
 
@@ -442,7 +555,18 @@ MOSSCAP_NEW_PROBLEM(simple_mrti_condensation) {
         sim.num_dim,
         sim.fluid_type,
         [=] <typename FTraits> (FTraits) -> std::function<void(const Simulation&)> {
+
+            const fp_t P_0 = get_or<fp_t>(config, "problem.base_pressure", 0.07_fp);
+            const fp_t T_0 = get_or<fp_t>(config, "problem.base_temperature", 1.2e6_fp);
+            InitialStratification strat = background_hse_stratification<FTraits>(sim, config);
+            Fp2d Qbound = background_hse_stratification_cons<FTraits>(sim, strat, config);
+            ConstantBoundaryParams y_bound {
+                .Qbound = Qbound
+            };
+
             return [=] (const Simulation& sim) {
+                // NOTE(cmo): order of application matters here
+                fill_xbc_static<FTraits>(sim, y_bound);
                 fill_one_bc_hse<1, FTraits>(sim, bc_params);
             };
         }

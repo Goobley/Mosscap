@@ -2,19 +2,30 @@
 #include "../Hydro.hpp"
 #include "../MosscapConfig.hpp"
 #include "../SourceTerms/Sponge.hpp"
+#include "../SourceTerms/TownsendThinLoss.hpp"
 
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
 
 namespace Mosscap {
 
-static constexpr fp_t rho_0_d = 5e-12_fp;
-static constexpr fp_t P_0_d = 0.165_fp;
-static constexpr fp_t rho_b0_d = 5e-10_fp;
-static constexpr fp_t b0_d = 10e-4_fp;
+static constexpr fp_t T_0_d = 1.2e6_fp;
+static constexpr fp_t P_0_d = 0.07_fp;
+static constexpr fp_t T_blob_d = 10e3_fp;
 static constexpr fp_t x0_d = 0.0_fp;
-static constexpr fp_t z0_d = 15e6_fp;
+static constexpr fp_t y0_d = 10e6_fp;
 static constexpr fp_t delta_d = 0.5e6_fp;
+static constexpr fp_t width_d = 2e6_fp;
+static constexpr fp_t tr_width_d = 2e5_fp;
+
+static constexpr const char * blob_types[] = {
+    "gaussian",
+    "tanh"
+};
+enum class BlobType {
+    Gaussian,
+    Tanh
+};
 
 template <typename Fluid>
 static void initial_conditions(Simulation& sim, const YAML::Node& config) {
@@ -27,18 +38,27 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
 
     static constexpr f64 h_mass = 1.6737830080950003e-27;
     static constexpr f64 k_B = 1.380649e-23;
-    const fp_t rho_0 = get_or<fp_t>(config, "problem.base_density", rho_0_d);
+
+    const std::string blob_type_s = get_or<std::string>(config, "problem.blob_type", "gaussian");
+    BlobType blob_type = find_associated_enum<BlobType>(blob_types, sizeof(blob_types)/sizeof(blob_types[0]), blob_type_s);
+    const fp_t T_0 = get_or<fp_t>(config, "problem.base_temperature", T_0_d);
     const fp_t P_0 = get_or<fp_t>(config, "problem.base_pressure", P_0_d);
-    const fp_t rho_b0 = get_or<fp_t>(config, "problem.blob_density", rho_b0_d);
+    const fp_t T_blob = get_or<fp_t>(config, "problem.blob_temperature", T_blob_d);
 
     const fp_t x0 = get_or<fp_t>(config, "problem.blob_x0", x0_d);
-    const fp_t z0 = get_or<fp_t>(config, "problem.blob_z0", z0_d);
-    const fp_t delta = get_or<fp_t>(config, "problem.blob_delta", delta_d);
-    const fp_t b0 = get_or<fp_t>(config, "problem.b0", b0_d); // 10 G
+    const fp_t y0 = get_or<fp_t>(config, "problem.blob_y0", y0_d);
+    const fp_t blob_width_x = get_or<fp_t>(config, "problem.blob_width_x", width_d);
+    const fp_t blob_width_y = get_or<fp_t>(config, "problem.blob_width_y", width_d);
+    const fp_t tr_width = get_or<fp_t>(config, "problem.tr_width", tr_width_d);
+    const fp_t delta = get_or<fp_t>(config, "problem.delta", delta_d);
 
-    // Coronal background temperature = P_0 / (n k_B) -- fully ionised
-    const fp_t T_0 = P_0 / (2.0_fp * rho_0 / h_mass * k_B);
-    fmt::println("Base coronal temperature {:.2e} K", T_0);
+    const fp_t bx0 = get_or<fp_t>(config, "problem.bx0", 0.0);
+    const fp_t by0 = get_or<fp_t>(config, "problem.by0", 0.0);
+    const fp_t bz0 = get_or<fp_t>(config, "problem.bz0", 0.0);
+
+    // Coronal background density = P_0 / (2 * k_B T_0) * h_mass -- fully ionised
+    const fp_t rho_0 = P_0 / (2.0_fp * k_B * T_0) * h_mass;
+    fmt::println("Base coronal density {:.2e} kg/m3", rho_0);
     const fp_t mean_mass = 1.0_fp;
 
     dex_parallel_for(
@@ -51,12 +71,34 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
             w(I(Prim::Pres)) = P_0;
 
             vec3 p = state.get_pos(i, j, k);
-            const fp_t gauss_factor = std::exp(-(square(p(0) - x0) + square(p(1) - z0)) / square(delta));
-            w(I(Prim::Rho)) += rho_b0 * gauss_factor;
 
-            JasUse(b0);
+            // NOTE(cmo): 1.0 at peak blob density, 0.0 for corona
+            fp_t blob_scale = 0.0_fp;
+            if (blob_type == BlobType::Gaussian) {
+                blob_scale = std::exp(-(square(p(0) - x0) + square(p(1) - y0)) / square(delta));
+            } else if (blob_type == BlobType::Tanh) {
+                const fp_t fn_x = 0.5 * (
+                    std::tanh((p(0) - x0 + 0.5 * blob_width_x) / tr_width)
+                    - std::tanh((p(0) - x0 - 0.5 * blob_width_x) / tr_width)
+                );
+                const fp_t fn_y = 0.5 * (
+                    std::tanh((p(1) - y0 + 0.5 * blob_width_y) / tr_width)
+                    - std::tanh((p(1) - y0 - 0.5 * blob_width_y) / tr_width)
+                );
+                blob_scale = fn_x * fn_y;
+            }
+
+            fp_t temp_full = T_0;
+            if (blob_scale > 1e-8_fp) {
+                temp_full = T_blob + (T_0 - T_blob) * (1.0 - blob_scale);
+            }
+            w(I(Prim::Rho)) = w(I(Prim::Pres)) / (2.0_fp * k_B * temp_full) * h_mass;
+
+            JasUse(bx0, by0, bz0);
             if constexpr (Fluid::is_mhd) {
-                w(I(Prim::Bx)) = b0;
+                w(I(Prim::Bx)) = bx0;
+                w(I(Prim::By)) = by0;
+                w(I(Prim::Bz)) = bz0;
             }
 
             CellIndex idx {
@@ -86,16 +128,25 @@ static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
             return;
         }
 
-        const fp_t rho_0 = get_or<fp_t>(config, "problem.base_density", rho_0_d);
+        const fp_t T_0 = get_or<fp_t>(config, "problem.base_temperature", T_0_d);
         const fp_t P_0 = get_or<fp_t>(config, "problem.base_pressure", P_0_d);
-        const fp_t b0 = get_or<fp_t>(config, "problem.b0", b0_d); // 10 G
+
+        const fp_t bx0 = get_or<fp_t>(config, "problem.bx0", 0.0);
+        const fp_t by0 = get_or<fp_t>(config, "problem.by0", 0.0);
+        const fp_t bz0 = get_or<fp_t>(config, "problem.bz0", 0.0);
+
+        static constexpr f64 h_mass = 1.6737830080950003e-27;
+        static constexpr f64 k_B = 1.380649e-23;
+        const fp_t rho_0 = P_0 / (2.0_fp * k_B * T_0) * h_mass;
 
         yakl::SArray<fp_t, 1, FTraits::num_vars> w(0.0_fp);
         using Prim = FTraits::prim;
         w(I(Prim::Rho)) = rho_0;
         w(I(Prim::Pres)) = P_0;
         if (FTraits::is_mhd) {
-            w(I(Prim::Bx)) = b0;
+            w(I(Prim::Bx)) = bx0;
+            w(I(Prim::By)) = by0;
+            w(I(Prim::Bz)) = bz0;
         }
         yakl::SArray<fp_t, 1, FTraits::num_vars> q(0.0_fp);
         prim_to_cons<FTraits>(sim.eos.gamma, sim.state.mu0, w, q);
@@ -159,6 +210,8 @@ MOSSCAP_NEW_PROBLEM(pure_coronal_condensation) {
     if (get_or<bool>(config, "problem.enable_sponge", false)) {
         setup_sponge(sim, config);
     }
+
+    setup_thin_loss(sim, config);
 }
 
 }

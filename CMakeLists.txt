@@ -63,6 +63,7 @@ list (APPEND MOSSCAP_PROBLEMS
 list (APPEND MOSSCAP_SOURCE_TERMS
     "source/SourceTerms/Gravity.cpp"
     "source/SourceTerms/Sponge.cpp"
+    "source/SourceTerms/TownsendThinLoss.cpp"
 )
 list(APPEND DEX_SOURCE_FILES
     "DexRT/source/PromweaverBoundary.cpp"

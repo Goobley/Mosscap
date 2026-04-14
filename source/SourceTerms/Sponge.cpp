@@ -24,6 +24,12 @@ struct SpongeParams {
     fp_t zs;
     /// damp for z >= ze
     fp_t ze;
+    /// Use values from edge of grid rather than constant
+    bool use_edge_vals;
+    /// Damp the GLM psi term to 0 when use_edge_vals is enabled
+    bool damp_psi_to_zero;
+    /// Ignore the GLM psi term (don't damp them)
+    bool ignore_psi;
 };
 
 template <typename FTraits>
@@ -59,7 +65,7 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
             fp_t sigma_y = 0.0_fp;
             fp_t sigma_z = 0.0_fp;
             fp_t max_sigma = 0.0_fp;
-            const decltype(state.boundaries.xs_const)* eq_state = nullptr;
+            const decltype(state.boundaries.xs_const) eq_state(0.0);
             if (!in_x) {
                 if (pos(0) < sponge.xs) {
                     sigma_x = sponge.A * std::exp(sponge.B * std::abs(pos(0) - sponge.xs));
@@ -68,7 +74,16 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
                 }
                 if (sigma_x > max_sigma) {
                     max_sigma = sigma_x;
-                    eq_state = (pos(0) < sponge.xs) ? &state.boundaries.xs_const : &state.boundaries.xe_const;
+                    if (sponge.use_edge_vals) {
+                        i32 x_idx = (pos(0) < sponge.xs) ? sz.ng : sz.xc - sz.ng - 1;
+                        for (int v = 0; v < S.extent(0); ++v) {
+                            eq_state(v) = Q(v, k, j, x_idx);
+                        }
+                    } else {
+                        for (int v = 0; v < S.extent(0); ++v) {
+                            eq_state(v) = (pos(0) < sponge.xs) ? state.boundaries.xs_const(v) : state.boundaries.xe_const(v);
+                        }
+                    }
                 }
             }
             if (!in_y) {
@@ -79,7 +94,16 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
                 }
                 if (sigma_y > max_sigma) {
                     max_sigma = sigma_y;
-                    eq_state = (pos(1) < sponge.ys) ? &state.boundaries.ys_const : &state.boundaries.ye_const;
+                    if (sponge.use_edge_vals) {
+                        i32 y_idx = (pos(1) < sponge.ys) ? sz.ng : sz.yc - sz.ng - 1;
+                        for (int v = 0; v < S.extent(0); ++v) {
+                            eq_state(v) = Q(v, k, y_idx, i);
+                        }
+                    } else {
+                        for (int v = 0; v < S.extent(0); ++v) {
+                            eq_state(v) = (pos(1) < sponge.ys) ? state.boundaries.ys_const(v) : state.boundaries.ye_const(v);
+                        }
+                    }
                 }
             }
             if (!in_z) {
@@ -90,15 +114,33 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
                 }
                 if (sigma_z > max_sigma) {
                     max_sigma = sigma_z;
-                    eq_state = (pos(2) < sponge.zs) ? &state.boundaries.zs_const : &state.boundaries.ze_const;
+                    if (sponge.use_edge_vals) {
+                        i32 z_idx = (pos(2) < sponge.zs) ? sz.ng : sz.zc - sz.ng - 1;
+                        for (int v = 0; v < S.extent(0); ++v) {
+                            eq_state(v) = Q(v, z_idx, j, i);
+                        }
+                    } else {
+                        for (int v = 0; v < S.extent(0); ++v) {
+                            eq_state(v) = (pos(2) < sponge.zs) ? state.boundaries.zs_const(v) : state.boundaries.ze_const(v);
+                        }
+                    }
                 }
             }
-            const fp_t sigma = std::max(sigma_x, std::max(sigma_y, sigma_z));
-            if (!eq_state) {
-                return;
+            const fp_t sigma = std::min(std::max(sigma_x, std::max(sigma_y, sigma_z)), 1.0_fp);
+            // if (sigma <= 0.0_fp) {
+            //     return;
+            // }
+
+            if constexpr (is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
+                if (sponge.damp_psi_to_zero) {
+                    eq_state(I(Cons::Psi)) = 0.0_fp;
+                }
+                if (sponge.ignore_psi) {
+                    eq_state(I(Cons::Psi)) = Q(I(Cons::Psi), k, j, i);
+                }
             }
 
-            const auto& Q0 = *eq_state;
+            const auto& Q0 = eq_state;
             for (int v = 0; v < S.extent(0); ++v) {
                 S(v, k, j, i) += - sigma * (Q(v, k, j, i) - Q0(v)) / dt;
             }
@@ -118,8 +160,14 @@ void setup_sponge(Simulation& sim, YAML::Node& config) {
         .ys = get_or<fp_t>(config, "sources.sponge.ys", 0.0_fp),
         .ye = get_or<fp_t>(config, "sources.sponge.ye", 1.0_fp),
         .zs = get_or<fp_t>(config, "sources.sponge.zs", 0.0_fp),
-        .ze = get_or<fp_t>(config, "sources.sponge.ze", 1.0_fp)
+        .ze = get_or<fp_t>(config, "sources.sponge.ze", 1.0_fp),
+        .use_edge_vals = get_or<bool>(config, "sources.sponge.use_edge_vals", true),
+        .damp_psi_to_zero = get_or<bool>(config, "sources.sponge.damp_psi_to_zero", true),
+        .ignore_psi = get_or<bool>(config, "sources.sponge.ignore_psi", false)
     };
+    if (sponge.damp_psi_to_zero && sponge.ignore_psi) {
+        throw std::runtime_error("Cannot set both damp_psi_to_zero and ignore_psi in Sponge.");
+    }
     auto apply_sponge = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
