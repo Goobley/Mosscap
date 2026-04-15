@@ -369,14 +369,15 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     const fp_t blob_width_y = get_or<fp_t>(config, "problem.blob_width_y", 3e6_fp);
     const fp_t tr_width = get_or<fp_t>(config, "problem.tr_width", 2e5_fp);
 
-    const fp_t bx0 = get_or<fp_t>(config, "problem.bx0", 0.0);
-    const fp_t by0 = get_or<fp_t>(config, "problem.by0", 0.0);
-    const fp_t bz0 = get_or<fp_t>(config, "problem.bz0", 0.0);
-    const fp_t pert_scale = get_or<fp_t>(config, "problem.vel_pert_scale", 10.0);
+    const fp_t bx0 = get_or<fp_t>(config, "problem.bx0", 0.0_fp);
+    const fp_t by0 = get_or<fp_t>(config, "problem.by0", 0.0_fp);
+    const fp_t bz0 = get_or<fp_t>(config, "problem.bz0", 0.0_fp);
+    const fp_t pert_scale = get_or<fp_t>(config, "problem.vel_pert_scale", 10.0_fp);
     const u64 seed = get_or<u64>(config, "problem.seed", 1234567UL);
 
     const bool col_by_col = get_or<bool>(config, "problem.column_by_column_hse", false);
-    const fp_t bz_blob_multiplier = get_or<fp_t>(config, "problem.bz_blob_multiplier", 1.0);
+    const fp_t bz_blob_multiplier = get_or<fp_t>(config, "problem.bz_blob_multiplier", 1.0_fp);
+    const fp_t scale_height_blob = get_or<fp_t>(config, "problem.blob_scale_height", 5e6_fp);
 
     // Coronal background density = P_0 / (2 * k_B T_0) * h_mass -- fully ionised
     const fp_t rho_0 = P_0 / (2.0_fp * k_B * T_0) * h_mass;
@@ -508,7 +509,13 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
                             yakl::Random rng(seed + k * sz.yc * sz.xc + j * sz.xc + i);
                             w(I(Prim::Vy)) = pert_scale * (rng.genFP<fp_t>() - 0.5_fp);
                         }
-                        w(I(Prim::Bz)) *= std::max(bz_blob_multiplier * prod, 1.0_fp);
+                        // NOTE(cmo): We need a decrease in Bz to support the blob.
+                        fp_t bz = bz0 * std::exp(-(p(1) - (y0 - 0.5 * blob_width_y)) / scale_height_blob);
+                        // fp_t bz = bz0 * bz_blob_multiplier + (bz0 - bz0 * bz_blob_multiplier) * (1.0 - prod);
+                        w(I(Prim::Bz)) = bz;
+                    }
+                    if (p(1) > y0 + 0.5 * blob_width_y) {
+                        w(I(Prim::Bz)) = bz0 * std::exp(-blob_width_y / scale_height_blob);
                     }
                     CellIndex idx {
                         .i = i,
