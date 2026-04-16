@@ -266,33 +266,42 @@ static InitialStratification background_hse_stratification(const Simulation& sim
     }
     for (int i = sz.ng + 1; i < sz.yc; ++i) {
         const f64 dP_dy_base = rho(i - 1) * g;
-        const f64 P_half = pressure(i - 1) + dP_dy_base * 0.5 * dy;
+        const f64 P_half = pressure(i - 1) + dP_dy_base * dy;
         const f64 T_half = T_0;
         // NOTE(cmo): Assuming fully ionised background
         const f64 rho_half = 0.5_fp * P_half / (k_B * T_half) * (mean_mass * h_mass);
+        // first order
+        pressure(i) = P_half;
+        rho(i) = rho_half;
 
-        const f64 dP_dy_mid = rho_half * g;
-        pressure(i) = pressure(i - 1) + dP_dy_mid * dy;
-        rho(i) = 0.5_fp * pressure(i) / (k_B * T_0) * (mean_mass * h_mass);
-        // try to refine guess for FV scheme
-        int iter = 0;
-        for (iter = 0; iter < 100; ++iter) {
-            const fp_t old_pressure = pressure(i);
-            // https://iopscience.iop.org/article/10.1086/342754/fulltext/
-            // Eq 40 + 41
-            if (i == sz.ng + 1) {
-                pressure(i) = pressure(i - 1) + 0.5 * g * dy * (rho(i) + rho(i - 1));
-            } else {
-                pressure(i) = pressure(i - 1) + 1.0/12.0 * g * dy * (5 * rho(i) + 8 * rho(i - 1) - rho(i-2));
-            }
-            if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-5) {
-                break;
-            }
-            rho(i) = 0.5_fp * pressure(i) / (k_B * T_0) * (mean_mass * h_mass);
-        }
-        if (iter == 100) {
-            fmt::println("No converge: {}", i);
-        }
+        // const f64 dP_dy_base = rho(i - 1) * g;
+        // const f64 P_half = pressure(i - 1) + dP_dy_base * 0.5 * dy;
+        // const f64 T_half = T_0;
+        // // NOTE(cmo): Assuming fully ionised background
+        // const f64 rho_half = 0.5_fp * P_half / (k_B * T_half) * (mean_mass * h_mass);
+
+        // const f64 dP_dy_mid = rho_half * g;
+        // pressure(i) = pressure(i - 1) + dP_dy_mid * dy;
+        // rho(i) = 0.5_fp * pressure(i) / (k_B * T_0) * (mean_mass * h_mass);
+        // // try to refine guess for FV scheme
+        // int iter = 0;
+        // for (iter = 0; iter < 100; ++iter) {
+        //     const fp_t old_pressure = pressure(i);
+        //     // https://iopscience.iop.org/article/10.1086/342754/fulltext/
+        //     // Eq 40 + 41
+        //     if (i == sz.ng + 1) {
+        //         pressure(i) = pressure(i - 1) + 0.5 * g * dy * (rho(i) + rho(i - 1));
+        //     } else {
+        //         pressure(i) = pressure(i - 1) + 1.0/12.0 * g * dy * (5 * rho(i) + 8 * rho(i - 1) - rho(i-2));
+        //     }
+        //     if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-5) {
+        //         break;
+        //     }
+        //     rho(i) = 0.5_fp * pressure(i) / (k_B * T_0) * (mean_mass * h_mass);
+        // }
+        // if (iter == 100) {
+        //     fmt::println("No converge: {}", i);
+        // }
     }
     const auto rho_z = rho.createDeviceCopy();
     const auto p_z = pressure.createDeviceCopy();
@@ -376,6 +385,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     const u64 seed = get_or<u64>(config, "problem.seed", 1234567UL);
 
     const bool col_by_col = get_or<bool>(config, "problem.column_by_column_hse", false);
+    const bool bz_pressure = get_or<bool>(config, "problem.balance_pressure_with_bz", false);
     const fp_t bz_blob_multiplier = get_or<fp_t>(config, "problem.bz_blob_multiplier", 1.0_fp);
     const fp_t scale_height_blob = get_or<fp_t>(config, "problem.blob_scale_height", 5e6_fp);
 
@@ -510,12 +520,40 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
                             w(I(Prim::Vy)) = pert_scale * (rng.genFP<fp_t>() - 0.5_fp);
                         }
                         // NOTE(cmo): We need a decrease in Bz to support the blob.
-                        fp_t bz = bz0 * std::exp(-(p(1) - (y0 - 0.5 * blob_width_y)) / scale_height_blob);
-                        // fp_t bz = bz0 * bz_blob_multiplier + (bz0 - bz0 * bz_blob_multiplier) * (1.0 - prod);
+                        fp_t bz = w(I(Prim::Bz));
+                        if (bz_pressure) {
+                        //     yakl::SArray<fp_t, 1, n_hydro> w_prev(0.0_fp);
+                        //     cons_to_prim<Fluid>(
+                        //         eos.gamma,
+                        //         state.mu0,
+                        //         QtyView(state.Q, CellIndex{.i = i, .j = std::max(j - 1, sz.ng), .k = k}),
+                        //         w_prev
+                        //     );
+                        //     const fp_t p_err = w(I(Prim::Pres)) - w_prev(I(Prim::Pres)) - w_prev(I(Prim::Rho)) * g * dy;
+                        //     // NOTE(cmo): Assuming bz only/dominant
+                        //     bz = w_prev(I(Prim::Bz)) - state.mu0 * dy * p_err / w_prev(I(Prim::Bz));
+                        //     // bz = std::min(std::max(bz, -10e-4_fp), 10e-4_fp);
+                        } else {
+                            bz = bz0 * std::exp(-(p(1) - (y0 - 0.5 * blob_width_y)) / scale_height_blob);
+                            // fp_t bz = bz0 * bz_blob_multiplier + (bz0 - bz0 * bz_blob_multiplier) * (1.0 - prod);
+                        }
                         w(I(Prim::Bz)) = bz;
                     }
-                    if (p(1) > y0 + 0.5 * blob_width_y) {
+                    if (!bz_pressure && fn_x > 1e-4 && (p(1) > y0 + 0.5 * blob_width_y)) {
                         w(I(Prim::Bz)) = bz0 * std::exp(-blob_width_y / scale_height_blob);
+                    }
+                    if (bz_pressure && j > sz.ng) {
+                        yakl::SArray<fp_t, 1, n_hydro> w_prev(0.0_fp);
+                        cons_to_prim<Fluid>(
+                            eos.gamma,
+                            state.mu0,
+                            QtyView(state.Q, CellIndex{.i = i, .j = std::max(j - 1, 0), .k = k}),
+                            w_prev
+                        );
+                        const fp_t p_err = w(I(Prim::Pres)) - w_prev(I(Prim::Pres)) - w_prev(I(Prim::Rho)) * g * dy;
+                        // NOTE(cmo): Assuming bz only/dominant
+                        w(I(Prim::Bz)) = w_prev(I(Prim::Bz)) - state.mu0 * dy * p_err / w_prev(I(Prim::Bz));
+                        // bz = std::min(std::max(bz, -10e-4_fp), 10e-4_fp);
                     }
                     CellIndex idx {
                         .i = i,
