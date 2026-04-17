@@ -119,6 +119,7 @@ struct TabulatedLteH {
         const auto& eos = sim.eos;
         const auto& sz = state.sz;
         const auto& Q = state.Q;
+        Kokkos::abort("This is not currently correct. Don't use it.");
 
         using Cons = typename FTraits::cons;
 

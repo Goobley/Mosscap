@@ -28,7 +28,8 @@ struct Eos {
     bool is_constant;
     fp_t gamma;
     fp_t y; // ion_frac
-    fp_t avg_mass;
+    fp_t avg_mass = 1.0_fp;
+    fp_t total_abund = 1.0_fp;
     Fp3d y_space;
     Fp3d T_space;
 
@@ -95,6 +96,7 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const
 
     w(I(Prim::Rho)) = q(I(Cons::Rho));
     w(I(Prim::Vx)) = q(I(Cons::MomX)) / q(I(Cons::Rho));
+    w(I(Prim::IonE)) = q(I(Cons::IonE));
     fp_t v2_sum = square(w(I(Prim::Vx)));
     if constexpr (NumDim > 1) {
         w(I(Prim::Vy)) = q(I(Cons::MomY)) / q(I(Cons::Rho));
@@ -105,6 +107,7 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const
         v2_sum += square(w(I(Prim::Vz)));
     }
     const fp_t e_kin = 0.5_fp * q(I(Cons::Rho)) * v2_sum;
+    const fp_t e_ion = w(I(Prim::Rho)) * w(I(Prim::IonE));
     fp_t e_mag = 0.0_fp;
     if constexpr (FTraits::is_mhd) {
         w(I(Prim::Bx)) = q(I(Cons::Bx));
@@ -119,8 +122,7 @@ KOKKOS_INLINE_FUNCTION void cons_to_prim(const fp_t gamma, const fp_t mu0, const
             w(I(Prim::HeatF)) = q(I(Cons::HeatF));
         }
     }
-    // NOTE(cmo): Will probably need to bring EosView back in some capacity to handle ionisation energy
-    w(I(Prim::Pres)) = (gamma - 1.0_fp) * ((q(I(Cons::Ene)) - e_kin - e_mag));
+    w(I(Prim::Pres)) = (gamma - 1.0_fp) * (q(I(Cons::Ene)) - e_kin - e_mag - e_ion);
 }
 
 template <typename FTraits, typename WType, typename QType>
@@ -131,6 +133,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
 
     q(I(Cons::Rho)) = w(I(Prim::Rho));
     q(I(Cons::MomX)) = w(I(Prim::Rho)) * w(I(Prim::Vx));
+    q(I(Cons::IonE)) = w(I(Prim::IonE));
     fp_t v2_sum = square(w(I(Prim::Vx)));
     if constexpr (NumDim > 1) {
         q(I(Cons::MomY)) = w(I(Prim::Rho)) * w(I(Prim::Vy));
@@ -140,6 +143,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
         q(I(Cons::MomZ)) = w(I(Prim::Rho)) * w(I(Prim::Vz));
         v2_sum += square(w(I(Prim::Vz)));
     }
+    const fp_t e_ion = w(I(Prim::Rho)) * w(I(Prim::IonE));
     fp_t e_mag = 0.0_fp;
     if constexpr (FTraits::is_mhd) {
         q(I(Cons::Bx)) = w(I(Prim::Bx));
@@ -156,7 +160,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
     }
     const fp_t e_kin = 0.5_fp * w(I(Prim::Rho)) * v2_sum;
     const fp_t e_int = w(I(Prim::Pres)) / (gamma - 1.0_fp);
-    q(I(Cons::Ene)) = e_int + e_kin + e_mag;
+    q(I(Cons::Ene)) = e_int + e_kin + e_mag + e_ion;
 }
 
 constexpr bool HYPERTC_IN_FLUX_VECTOR = false;
@@ -194,6 +198,7 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     fp_t e_kin = 0.0_fp;
     f(I(Cons::Rho)) = mass_flux;
     f(I(Cons::MomX)) = mass_flux * w(I(Prim::Vx));
+    f(I(Cons::IonE)) = 0.0_fp;
     e_kin += square(w(I(Prim::Vx)));
     if constexpr (NumDim > 1) {
         f(I(Cons::MomY)) = mass_flux * w(I(Prim::Vy));
@@ -239,7 +244,8 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     }
 
     f(IM1) += p_tot;
-    const fp_t e_tot = w(I(Prim::Pres)) / (gamma - 1.0_fp) + e_kin + e_mag;
+    const fp_t e_ion = w(I(Prim::Rho)) * w(I(Prim::IonE));
+    const fp_t e_tot = w(I(Prim::Pres)) / (gamma - 1.0_fp) + e_kin + e_mag + e_ion;
     f(I(Cons::Ene)) = (e_tot + p_tot) * w(IV1);
 
     if constexpr (FTraits::is_mhd) {

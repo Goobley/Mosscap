@@ -107,7 +107,8 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
                     // if (Q_edge(IM) > 0.0_fp) {
                     //     Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     // }
-                    Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::IonE)) = Q_edge(I(Cons::IonE));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho)) + Q_view(I(Cons::IonE)) * Q_view(I(Cons::Rho));
                     // for (int var = 0; var < state.Q.extent(0); ++var) {
                     //     Q_view(var) = Q_edge(var);
                     // }
@@ -185,7 +186,8 @@ static void fill_one_bc_hse(const Simulation& sim, const OurWaveDriver& driver) 
                     if (Q_edge(IM) > 0.0_fp) {
                         Q_view(IM) = Q_edge(IM) / Q_edge(I(Cons::Rho)) * Q_view(I(Cons::Rho));
                     }
-                    Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho));
+                    Q_view(I(Cons::IonE)) = Q_edge(I(Cons::IonE));
+                    Q_view(I(Cons::Ene)) = p / (eos.gamma - 1.0_fp) + square(Q_view(IM)) / Q_view(I(Cons::Rho)) + Q_view(I(Cons::IonE)) * Q_view(I(Cons::Rho));
                     // for (int var = 0; var < state.Q.extent(0); ++var) {
                     //     Q_view(var) = Q_edge(var);
                     // }
@@ -310,12 +312,14 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
             temperature(i) = interp(state.get_pos(i)(0) + z(0), z, temperature_profile);
         }
         fmt::println("Max temperature {:.3e}", temperature(sz.xc - sz.ng - 1));
-        nhtot(sz.ng) = base_nh;
-        y(sz.ng) = y_from_nhtot(nhtot(sz.ng), temperature(sz.ng));
-        if (ideal) {
-            y(sz.ng) = ion_frac;
+        for (int i = 0; i < sz.ng + 1; ++i) {
+            nhtot(i) = base_nh;
+            y(i) = y_from_nhtot(nhtot(i), temperature(i));
+            if (ideal) {
+                y(i) = ion_frac;
+            }
+            pressure(i) = base_nh * (1.0 + y(i)) * k_B * temperature(i);
         }
-        pressure(sz.ng) = base_nh * (1.0 + y(sz.ng)) * k_B * temperature(sz.ng);
         fmt::println("P: {}, y: {}, nhtot {:e}", pressure(sz.ng), y(sz.ng), nhtot(sz.ng));
 
         const f64 dz = state.dx;
@@ -357,17 +361,20 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
 
         F64Host rho("rho", sz.xc);
         F64Host eint("eint", sz.xc);
+        F64Host eion("eion", sz.xc);
         bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
         AnalyticLteH lte_eos;
         lte_eos.init(include_ionisation_energy);
-        for (int i = sz.ng; i < sz.xc; ++i) {
+        for (int i = 0; i < sz.xc; ++i) {
             rho(i) = nhtot(i) * mean_mass;
             eint(i) = lte_eos.internal_energy(eos.gamma, eos.avg_mass, rho(i), y(i), temperature(i));
+            eion(i) = lte_eos.ionisation_energy(eos.gamma, eos.avg_mass, rho(i), y(i), temperature(i));
         }
 
         {
             auto rho_d = rho.createDeviceCopy();
             auto eint_d = eint.createDeviceCopy();
+            auto eion_d = eion.createDeviceCopy();
             const auto& Q = state.Q;
             using Cons = typename Fluid::cons;
 
@@ -375,14 +382,15 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
                 "Setup Q",
                 FlatLoop<3>(sz.zc, sz.yc, sz.xc),
                 KOKKOS_LAMBDA (int k, int j, int i) {
-                    int ii = std::max(i, sz.ng);
-                    Q(I(Cons::Rho), k, j, i) = rho_d(ii);
-                    Q(I(Cons::Ene), k, j, i) = eint_d(ii);
+                    Q(I(Cons::Rho), k, j, i) = rho_d(i);
+                    Q(I(Cons::Ene), k, j, i) = eint_d(i);
+                    Q(I(Cons::IonE), k, j, i) = eion_d(i) / rho_d(i);
                     Q(I(Cons::MomX), k, j, i) = 0.0_fp;
                 }
             );
             Kokkos::fence();
         }
+        fmt::println("Finished setup");
     };
 
     setup_gravity(sim, config);

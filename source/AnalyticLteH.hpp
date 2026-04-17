@@ -47,6 +47,15 @@ struct AnalyticLteH {
         return eint;
     }
 
+    KOKKOS_INLINE_FUNCTION fp_t ionisation_energy(fp_t gamma, fp_t avg_mass, fp_t rho, fp_t y, fp_t T) {
+        const fp_t inv_avg_mass = 1.0_fp / avg_mass;
+        fp_t e_ion = 0.0_fp;
+        if (include_ionisation_e) {
+            e_ion += y * rho * (chi_H / h_mass) * inv_avg_mass;
+        }
+        return e_ion;
+    }
+
     template <typename FTraits>
     inline void update_eos(const Simulation& sim) const {
         const auto& state = sim.state;
@@ -88,6 +97,7 @@ struct AnalyticLteH {
                 };
 
                 if (temp_bounds[0] > temp_bounds[1]) {
+                    printf("%e > %e!!!\n", temp_bounds[0], temp_bounds[1]);
                     Kokkos::abort("Temperature bounds flipped!");
                 }
 
@@ -116,6 +126,7 @@ struct AnalyticLteH {
 
                 eos.y_space(k, j, i) = y;
                 eos.T_space(k, j, i) = temp;
+                Q(I(Cons::IonE), k, j, i) = ionisation_e ? y * (chi_H / h_mass) * inv_avg_mass : 0.0_fp;
                 // eos.gamma_e_space(k, j, i) = 1.0_fp + pressure / eint;
             }
         );
