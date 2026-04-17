@@ -243,10 +243,12 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
     bool advect = get_or<bool>(config, "dex.advect", false);
     bool time_dependent = get_or<bool>(config, "dex.time_dep_update", false);
     fp_t theta = get_or<fp_t>(config, "dex.theta", 1.0_fp);
+    bool update_ion_e = get_or<bool>(config, "dex.update_ion_e", true);
 
     sim.dex.interface_config.advect = advect;
     sim.dex.interface_config.rad_loss = rad_loss;
     sim.dex.interface_config.time_dependent_updates = time_dependent;
+    sim.dex.interface_config.update_ion_e = update_ion_e;
     sim.dex.interface_config.theta = theta;
     sim.dex.init_config(sim, config, config_path);
 }

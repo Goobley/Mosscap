@@ -17,9 +17,9 @@ enum class EosType {
     Ideal = 0,
     AnalyticLteH,
     TabulatedLteH,
-    DexPressure,
+    TracerEos,
 };
-constexpr const char* EosTypeName[] = {"ideal", "analyticlteh", "tabulatedlteh", "dexpressure"};
+constexpr const char* EosTypeName[] = {"ideal", "analyticlteh", "tabulatedlteh", "tracereos"};
 constexpr int NumEosType = sizeof(EosTypeName) / sizeof(EosTypeName[0]);
 
 struct Simulation;
@@ -44,7 +44,7 @@ struct Eos {
 
     bool init_analytic_lte_h(fp_t gamma, Simulation& sim, bool include_ionisation_energy);
     bool init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& table_path);
-    bool init_dexrt(fp_t gamma, Simulation& sim);
+    bool init_tracer(fp_t gamma, Simulation& sim);
 };
 
 KOKKOS_INLINE_FUNCTION fp_t temperature_si(fp_t pressure, fp_t n_baryon, fp_t y = 1.0_fp) {

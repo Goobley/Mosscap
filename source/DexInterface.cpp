@@ -1648,15 +1648,17 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
     }
 
     using Cons = typename FTraits::cons;
+    using Prim = typename FTraits::prim;
 
     constexpr fp_t temperature_floor = 2.0e3_fp;
-    constexpr fp_t total_abund = 1.0_fp;
-    JasUnpack(state, mr_block_map, atmos);
+    const fp_t total_abund = sim.eos.total_abund;
+    JasUnpack(state, mr_block_map, atmos, pops, adata);
     const auto& block_map = mr_block_map.block_map;
     const auto& Q = sim.state.Q;
     const auto& sz = sim.state.sz;
     JasUnpack(sim, dt, eos);
     const auto& gamma = eos.gamma;
+    const auto& mu0 = sim.state.mu0;
 
     yakl::Array<RadLossFp, 1, yakl::memDevice> rad_loss;
     if (state.config.rad_loss == RadLossType::Integrated) {
@@ -1695,6 +1697,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
         }
     }
 
+    const bool update_ion_e = interface_config.update_ion_e;
     typedef Kokkos::MinLoc<fp_t, i64> MinLoc;
     MinLoc::value_type minloc;
     dex_parallel_reduce(
@@ -1710,20 +1713,45 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
             fp_t delta_E = 0.0_fp;
             delta_E = -rad_loss(ks) * 1e3_fp * dt;
 
-            const fp_t eint_pre = atmos.pressure(ks) / (gamma - 1.0_fp);
-            fp_t eint_post = eint_pre + delta_E;
-            fp_t pressure_post = eint_post * (gamma - 1.0_fp);
-            fp_t temperature_post = pressure_post / (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks)));
-            temperature_post = std::max(temperature_post, temperature_floor);
-            pressure_post = (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks))) * temperature_post;
-            eint_post = pressure_post / (gamma - 1.0_fp);
+            if (update_ion_e) {
+                QtyView Qv(Q, idx);
+                Qv(I(Cons::Ene)) += delta_E;
+                fp_t ion_e = 0.0_fp;
+                for (int l = 0; l < pops.extent(0); ++l) {
+                    ion_e += pops(l, ks) * adata.energy(l) * ConstantsF64::eV;
+                }
+                Qv(I(Cons::IonE)) = ion_e / Qv(I(Cons::Rho));
+                yakl::SArray<fp_t, 1, FTraits::num_vars> w(0.0_fp);
+                cons_to_prim<FTraits>(gamma, mu0, Qv, w);
+                const fp_t temperature_post = w(I(Prim::Pres)) / (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks)));
+                if (temperature_post < temperature_floor) {
+                    const fp_t temperature_deficit = temperature_floor - temperature_post;
+                    const fp_t pressure_deficit = temperature_deficit * (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks)));
+                    const fp_t energy_deficit = pressure_deficit / (gamma - 1.0_fp);
+                    Qv(I(Cons::Ene)) += energy_deficit;
+                }
 
-            if (temperature_post < min_loc.val) {
-                min_loc.val = temperature_post;
-                min_loc.loc = ks;
+                if (temperature_post < min_loc.val) {
+                    min_loc.val = temperature_post;
+                    min_loc.loc = ks;
+                }
+
+            } else {
+                const fp_t eint_pre = atmos.pressure(ks) / (gamma - 1.0_fp);
+                fp_t eint_post = eint_pre + delta_E;
+                fp_t pressure_post = eint_post * (gamma - 1.0_fp);
+                fp_t temperature_post = pressure_post / (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks)));
+                temperature_post = std::max(temperature_post, temperature_floor);
+                pressure_post = (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks))) * temperature_post;
+                eint_post = pressure_post / (gamma - 1.0_fp);
+
+                if (temperature_post < min_loc.val) {
+                    min_loc.val = temperature_post;
+                    min_loc.loc = ks;
+                }
+
+                Q(I(Cons::Ene), idx.k, idx.j, idx.i) += (eint_post - eint_pre);
             }
-
-            Q(I(Cons::Ene), idx.k, idx.j, idx.i) += (eint_post - eint_pre);
         },
         MinLoc(minloc)
     );

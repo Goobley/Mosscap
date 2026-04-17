@@ -23,6 +23,7 @@ struct DexMosscapConfig {
     bool enable = false;
     bool rad_loss = false;
     bool time_dependent_updates = false;
+    bool update_ion_e = true;
     i32 max_mip_level = 0;
     i32 field_start_idx = 0;
     fp_t theta = 1.0_fp;

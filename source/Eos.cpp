@@ -30,9 +30,9 @@ bool Eos::init(Simulation& sim, const YAML::Node& config) {
             std::string eos_table = get_or<std::string>(config, "eos.table_path", "mosscap_lte_h_tables.nc");
             return init_tabulated_lte_h(gamma, sim, eos_table);
         } break;
-        case EosType::DexPressure: {
+        case EosType::TracerEos: {
             fp_t gamma = get_or<fp_t>(config, "eos.gamma", 5.0_fp / 3.0_fp);
-            return init_dexrt(gamma, sim);
+            return init_tracer(gamma, sim);
         } break;
     }
 
@@ -79,12 +79,12 @@ bool Eos::init_tabulated_lte_h(fp_t gamma_, Simulation& sim, const std::string& 
     return true;
 }
 
-bool Eos::init_dexrt(fp_t gamma_, Simulation& sim) {
+bool Eos::init_tracer(fp_t gamma_, Simulation& sim) {
     is_constant = false;
     gamma = gamma_;
 
     if (sim.num_dim != 2 && sim.dex.interface_config.enable) {
-        throw std::runtime_error("Dex EOS only supports 2D models with dex enabled.");
+        throw std::runtime_error("Tracer EOS only supports 2D models with dex enabled.");
     }
 
     const auto& sz = sim.state.sz;
@@ -92,7 +92,7 @@ bool Eos::init_dexrt(fp_t gamma_, Simulation& sim) {
     y_space = 1.0_fp;
 
     DexPressureEos dex_eos;
-    dex_eos.init();
+    dex_eos.init(sim);
 
     sim.update_eos = [dex_eos](const Simulation& sim) {
         invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
