@@ -50,6 +50,11 @@ void write_cons_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
         nc_put_att_int(ncid, NC_GLOBAL, "iene", NC_INT, 1, &iene),
         __LINE__
     );
+    int iione = I(Cons::IonE);
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "iione", NC_INT, 1, &iione),
+        __LINE__
+    );
     if constexpr (FTraits::is_mhd) {
         int ibx = I(Cons::Bx);
         ncwrap(
@@ -114,6 +119,11 @@ void write_prim_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
     int ipre = I(Prim::Pres);
     ncwrap(
         nc_put_att_int(ncid, NC_GLOBAL, "ipre", NC_INT, 1, &ipre),
+        __LINE__
+    );
+    int iione = I(Cons::IonE);
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "iione", NC_INT, 1, &iione),
         __LINE__
     );
     if constexpr (FTraits::is_mhd) {
