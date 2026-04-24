@@ -37,7 +37,7 @@ struct AnalyticLteH {
         return true;
     }
 
-    KOKKOS_INLINE_FUNCTION fp_t internal_energy(fp_t gamma, fp_t avg_mass, fp_t rho, fp_t y, fp_t T) {
+    KOKKOS_INLINE_FUNCTION fp_t internal_energy(fp_t gamma, fp_t avg_mass, fp_t rho, fp_t y, fp_t T) const {
         const fp_t inv_avg_mass = 1.0_fp / avg_mass;
         fp_t eint  = rho * (k_B / h_mass) * inv_avg_mass * (1.0_fp + y) * T;
         eint /= (gamma - 1.0_fp);
@@ -47,7 +47,7 @@ struct AnalyticLteH {
         return eint;
     }
 
-    KOKKOS_INLINE_FUNCTION fp_t ionisation_energy(fp_t gamma, fp_t avg_mass, fp_t rho, fp_t y, fp_t T) {
+    KOKKOS_INLINE_FUNCTION fp_t ionisation_energy(fp_t gamma, fp_t avg_mass, fp_t rho, fp_t y, fp_t T) const {
         const fp_t inv_avg_mass = 1.0_fp / avg_mass;
         fp_t e_ion = 0.0_fp;
         if (include_ionisation_e) {

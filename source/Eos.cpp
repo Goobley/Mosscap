@@ -13,6 +13,7 @@ bool Eos::init(Simulation& sim, const YAML::Node& config) {
     std::string eos_str = get_or<std::string>(config, "eos.type", "ideal");
     EosType type = find_associated_enum<EosType>(EosTypeName, NumEosType, eos_str);
     avg_mass = get_or<fp_t>(config, "eos.avg_mass", 1.0_fp);
+    this->type = type;
 
     switch (type) {
         case EosType::Ideal: {
@@ -23,6 +24,7 @@ bool Eos::init(Simulation& sim, const YAML::Node& config) {
         case EosType::AnalyticLteH: {
             fp_t gamma = get_or<fp_t>(config, "eos.gamma", 5.0_fp / 3.0_fp);
             bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
+            has_ion_e = include_ionisation_energy;
             return init_analytic_lte_h(gamma, sim, include_ionisation_energy);
         } break;
         case EosType::TabulatedLteH: {
@@ -32,6 +34,8 @@ bool Eos::init(Simulation& sim, const YAML::Node& config) {
         } break;
         case EosType::TracerEos: {
             fp_t gamma = get_or<fp_t>(config, "eos.gamma", 5.0_fp / 3.0_fp);
+            has_ion_e = true;
+
             return init_tracer(gamma, sim);
         } break;
     }

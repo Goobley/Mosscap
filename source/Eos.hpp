@@ -26,12 +26,14 @@ struct Simulation;
 
 struct Eos {
     bool is_constant;
+    bool has_ion_e = false;
     fp_t gamma;
     fp_t y; // ion_frac
     fp_t avg_mass = 1.0_fp;
     fp_t total_abund = 1.0_fp;
     Fp3d y_space;
     Fp3d T_space;
+    EosType type;
 
     bool init(Simulation& sim, const YAML::Node& config);
 

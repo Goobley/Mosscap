@@ -3,6 +3,7 @@
 #include "../MosscapConfig.hpp"
 #include "../SourceTerms/Sponge.hpp"
 #include "../SourceTerms/TownsendThinLoss.hpp"
+#include "../AnalyticLteH.hpp"
 
 // NOTE(cmo): This is a 2d problem
 static constexpr int num_dim = 2;
@@ -61,6 +62,15 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     fmt::println("Base coronal density {:.2e} kg/m3", rho_0);
     const fp_t mean_mass = 1.0_fp;
 
+    bool use_lte = false;
+    AnalyticLteH lte_eos;
+    if (eos.type == EosType::AnalyticLteH) {
+        use_lte = true;
+        bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
+        lte_eos.init(include_ionisation_energy);
+    }
+
+
     dex_parallel_for(
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
         KOKKOS_LAMBDA (int k, int j, int i) {
@@ -93,6 +103,19 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
                 temp_full = T_blob + (T_0 - T_blob) * (1.0 - blob_scale);
             }
             w(I(Prim::Rho)) = w(I(Prim::Pres)) / (2.0_fp * k_B * temp_full) * h_mass;
+            if (use_lte) {
+                const fp_t ntot = w(I(Prim::Pres)) / (k_B * temp_full);
+                const fp_t y = y_from_ntot(ntot, temp_full);
+                const fp_t nhtot = ntot / (eos.total_abund + y);
+                w(I(Prim::Rho)) = nhtot * eos.avg_mass * h_mass;
+                w(I(Prim::IonE)) = lte_eos.ionisation_energy(
+                    eos.gamma,
+                    eos.avg_mass,
+                    w(I(Prim::Rho)),
+                    y,
+                    temp_full
+                ) / w(I(Prim::Rho));
+            }
 
             JasUse(bx0, by0, bz0);
             if constexpr (Fluid::is_mhd) {
@@ -114,6 +137,8 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
 template <typename FTraits>
 static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
     auto& bound = sim.state.boundaries;
+    bool has_ion_e = sim.eos.has_ion_e;
+    const fp_t avg_mass = sim.eos.avg_mass;
     auto check_and_set_constant = [&](
             const BoundaryType boundary,
             const decltype(bound.xs_const)& arr,
@@ -137,6 +162,7 @@ static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
 
         static constexpr f64 h_mass = 1.6737830080950003e-27;
         static constexpr f64 k_B = 1.380649e-23;
+        static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
         const fp_t rho_0 = P_0 / (2.0_fp * k_B * T_0) * h_mass;
 
         yakl::SArray<fp_t, 1, FTraits::num_vars> w(0.0_fp);
@@ -148,6 +174,8 @@ static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
             w(I(Prim::By)) = by0;
             w(I(Prim::Bz)) = bz0;
         }
+        // NOTE(cmo): Assume fully ionised.
+        w(I(Prim::IonE)) = has_ion_e ? chi_H / (h_mass * avg_mass) : 0.0_fp;
         yakl::SArray<fp_t, 1, FTraits::num_vars> q(0.0_fp);
         prim_to_cons<FTraits>(sim.eos.gamma, sim.state.mu0, w, q);
 
@@ -162,6 +190,7 @@ static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
             arr(I(C::MomZ)) = q(I(Cons3::MomZ));
         }
         arr(I(C::Ene)) = q(I(Cons3::Ene));
+        arr(I(C::IonE)) = q(I(Cons3::IonE));
         if constexpr (FTraits::is_mhd) {
             arr(I(C::Bx)) = q(I(Cons3::Bx));
             arr(I(C::By)) = q(I(Cons3::By));

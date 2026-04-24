@@ -121,7 +121,7 @@ void write_prim_header(yakl::SimpleNetCDF& nc, const Simulation& sim) {
         nc_put_att_int(ncid, NC_GLOBAL, "ipre", NC_INT, 1, &ipre),
         __LINE__
     );
-    int iione = I(Cons::IonE);
+    int iione = I(Prim::IonE);
     ncwrap(
         nc_put_att_int(ncid, NC_GLOBAL, "iione", NC_INT, 1, &iione),
         __LINE__
