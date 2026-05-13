@@ -147,9 +147,11 @@ static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
             const decltype(bound.xs_const)& arr,
             const std::string& bdry
     ) {
-        if (boundary != BoundaryType::Constant) {
-            return;
-        }
+        // NOTE(cmo): These may be set for the sponge layer, even if the
+        // boundary isn't constant.
+        // if (boundary != BoundaryType::Constant) {
+        //     return;
+        // }
         // NOTE(cmo): If it's not problem_supplied, then ignore
         const auto name = fmt::format("{}_const", bdry);
         if (config["boundary"][name].IsSequence()) {
