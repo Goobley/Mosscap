@@ -143,7 +143,7 @@ struct DexPressureEos {
                 if (opts.use_tracer_energy) {
                     fp_t ion_e = 0.0_fp;
                     for (int l = 0; l < tracer_energy.extent(0); ++l) {
-                        ion_e = tracer_energy(l) * Qv(l + ne_idx);
+                        ion_e += tracer_energy(l) * Qv(l + ne_idx);
                     }
                     Qv(I(Cons::IonE)) = ion_e / rho;
                 } else {

@@ -27,6 +27,7 @@ struct DexMosscapConfig {
     i32 max_mip_level = 0;
     i32 field_start_idx = 0;
     fp_t theta = 1.0_fp;
+    fp_t temperature_floor = 2e3_fp;
 };
 
 struct DexConvergence {

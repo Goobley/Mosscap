@@ -18,6 +18,9 @@ static constexpr fp_t y0_d = 10e6_fp;
 static constexpr fp_t delta_d = 0.5e6_fp;
 static constexpr fp_t width_d = 2e6_fp;
 static constexpr fp_t tr_width_d = 2e5_fp;
+static constexpr f64 h_mass = 1.6737830080950003e-27;
+static constexpr f64 k_B = 1.380649e-23;
+static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
 
 static constexpr const char * blob_types[] = {
     "gaussian",
@@ -36,9 +39,6 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     const auto& state = sim.state;
     const auto& sz = state.sz;
     const auto& eos = sim.eos;
-
-    static constexpr f64 h_mass = 1.6737830080950003e-27;
-    static constexpr f64 k_B = 1.380649e-23;
 
     const std::string blob_type_s = get_or<std::string>(config, "problem.blob_type", "gaussian");
     BlobType blob_type = find_associated_enum<BlobType>(blob_types, sizeof(blob_types)/sizeof(blob_types[0]), blob_type_s);
@@ -60,7 +60,6 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     // Coronal background density = P_0 / (2 * k_B T_0) * h_mass -- fully ionised
     const fp_t rho_0 = P_0 / (2.0_fp * k_B * T_0) * h_mass;
     fmt::println("Base coronal density {:.2e} kg/m3", rho_0);
-    const fp_t mean_mass = 1.0_fp;
 
     bool use_lte = false;
     AnalyticLteH lte_eos;
@@ -69,6 +68,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
         bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
         lte_eos.init(include_ionisation_energy);
     }
+    fp_t avg_mass = sim.eos.avg_mass;
 
 
     dex_parallel_for(
@@ -115,6 +115,9 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
                     y,
                     temp_full
                 ) / w(I(Prim::Rho));
+            } else if (eos.has_ion_e) {
+                // NOTE(cmo): Assume we start at fully ionised or another module will correct it
+                w(I(Prim::IonE)) = chi_H / (h_mass * avg_mass);
             }
 
             JasUse(bx0, by0, bz0);
@@ -160,9 +163,6 @@ static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
         const fp_t by0 = get_or<fp_t>(config, "problem.by0", 0.0);
         const fp_t bz0 = get_or<fp_t>(config, "problem.bz0", 0.0);
 
-        static constexpr f64 h_mass = 1.6737830080950003e-27;
-        static constexpr f64 k_B = 1.380649e-23;
-        static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
         const fp_t rho_0 = P_0 / (2.0_fp * k_B * T_0) * h_mass;
 
         yakl::SArray<fp_t, 1, FTraits::num_vars> w(0.0_fp);
@@ -174,7 +174,12 @@ static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
             w(I(Prim::By)) = by0;
             w(I(Prim::Bz)) = bz0;
         }
-        // NOTE(cmo): Assume fully ionised.
+        // NOTE(cmo): The sponge layer only applies to the core variables that
+        // have sources allocated, since it is applied via the sources array.
+        // Thus, the sponge does not mess with the tracers, but the boundaries
+        // still need to be filled. Let's do that via symmetric bcs, but set
+        // use_edge_vals to false in the sponge layer.
+        // NOTE(cmo): Assume fully ionised just H.
         w(I(Prim::IonE)) = has_ion_e ? chi_H / (h_mass * avg_mass) : 0.0_fp;
         yakl::SArray<fp_t, 1, FTraits::num_vars> q(0.0_fp);
         prim_to_cons<FTraits>(sim.eos.gamma, sim.state.mu0, w, q);

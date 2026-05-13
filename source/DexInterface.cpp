@@ -3,6 +3,7 @@
 #include "Simulation.hpp"
 #include "JasPP.hpp"
 #include "TimeDepPopulations.hpp"
+#include "MosscapConfig.hpp"
 // NOTE(cmo): The reason Kokkos sort was failing before was due to the (never
 // used If, Then, Else in JasPP)
 #include "Kokkos_Sort.hpp"
@@ -344,7 +345,6 @@ void DexInterface::initial_worker_atmos_setup() {
 
 
     if (state.mpi_state.rank != 0) {
-        // NOTE(cmo): We just have one of these chained for each boundary type -- they don't do anything if this configuration doesn't need them to.
         // NOTE(cmo): This doesn't actually know that things will be allocated sparse
         CascadeRays c0_rays;
         c0_rays.num_probes(0) = state.atmos.num_x;
@@ -796,6 +796,7 @@ bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::stri
     state.incl_quad.wmuy = wmuy.createDeviceCopy();
 
     interface_config.enable = true;
+    interface_config.temperature_floor = get_or<fp_t>(cfg, "eos.min_temperature", 2e3_fp);
 
     run_worker_loop();
     return true;
@@ -1890,9 +1891,11 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
     const i32 tracer_start = interface_config.field_start_idx;
     for (int ia = 0; ia < state.atoms.size(); ++ia) {
         const auto& atom = state.atoms[ia];
+        const auto& level_start = state.adata_host.level_start(ia);
+        // TODO(cmo): i think we need to move tracer_strat for the other fields
         const auto flat_pops = std::remove_cvref_t<decltype(Q)>(
             "flat_tracer_pops",
-            &Q(tracer_start + 1, 0, 0, 0),
+            &Q(tracer_start + level_start + 1, 0, 0, 0),
             atom.energy.size(),
             Q.extent(1),
             Q.extent(2),

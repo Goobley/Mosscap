@@ -35,8 +35,9 @@ bool Eos::init(Simulation& sim, const YAML::Node& config) {
         case EosType::TracerEos: {
             fp_t gamma = get_or<fp_t>(config, "eos.gamma", 5.0_fp / 3.0_fp);
             has_ion_e = true;
+            fp_t temperature_floor = get_or<fp_t>(config, "eos.min_temperature", 2e3);
 
-            return init_tracer(gamma, sim);
+            return init_tracer(gamma, sim, temperature_floor);
         } break;
     }
 
@@ -83,7 +84,7 @@ bool Eos::init_tabulated_lte_h(fp_t gamma_, Simulation& sim, const std::string& 
     return true;
 }
 
-bool Eos::init_tracer(fp_t gamma_, Simulation& sim) {
+bool Eos::init_tracer(fp_t gamma_, Simulation& sim, fp_t min_temperature) {
     is_constant = false;
     gamma = gamma_;
 
@@ -96,7 +97,7 @@ bool Eos::init_tracer(fp_t gamma_, Simulation& sim) {
     y_space = 1.0_fp;
 
     DexPressureEos dex_eos;
-    dex_eos.init(sim);
+    dex_eos.init(sim, min_temperature);
 
     sim.update_eos = [dex_eos](const Simulation& sim) {
         invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
