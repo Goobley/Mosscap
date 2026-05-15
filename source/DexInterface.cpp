@@ -205,6 +205,7 @@ void DexInterface::broadcast_atmosphere() {
             .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
         };
         allocate_cell_count_based_terms(state, num_active_cells);
+        Kokkos::fence();
     }
 
     // NOTE(cmo): broadcast all the things
@@ -240,9 +241,7 @@ void DexInterface::broadcast_atmosphere() {
         casc_state.mip_chain.init(state, state.mr_block_map.buffer_len(), c0.wave_batch);
     }
 
-    if (interface_config.advect) {
-        MPI_Bcast(state.pops.data(), state.pops.size(), get_FpMpi(), 0, comm);
-    }
+    MPI_Bcast(state.pops.data(), state.pops.size(), get_FpMpi(), 0, comm);
     if (interface_config.time_dependent_updates && state.mpi_state.rank != 0) {
         prev_pops = state.pops.createDeviceCopy();
     }
@@ -404,6 +403,8 @@ void DexInterface::run_worker_loop() {
         };
         iterate(conv, args);
     }
+    yakl::finalize();
+    Kokkos::finalize();
     exit(0);
 #endif
 }
@@ -1138,6 +1139,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
     }
     // NOTE(cmo): We only need to do this after the final iteration.
     wave_dist.reduce_rad_loss(&state);
+    wave_dist.reduce_J(&state);
 
     num_iter = i;
 
