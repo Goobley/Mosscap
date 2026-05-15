@@ -1931,7 +1931,7 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
                     atom.stage,
                     temperature,
                     ne,
-                    nh,
+                    nh * atom.abundance,
                     flat_pops,
                     flat_idx
                 );
