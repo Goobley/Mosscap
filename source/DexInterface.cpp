@@ -28,6 +28,424 @@ int get_dexrt_dimensionality() {
 
 namespace Mosscap {
 
+/// Add Dex's metadata to the file using attributes. The netcdf layer needs extending to do this, so I'm just throwing it in manually.
+void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file) {
+    const auto ncwrap = [&] (int ierr, int line) {
+        if (ierr != NC_NOERR) {
+            state.println("NetCDF Error writing attributes at main.cpp:{}", line);
+            state.println("{}",nc_strerror(ierr));
+            yakl::yakl_throw(nc_strerror(ierr));
+        }
+    };
+    int ncid = file.file.ncid;
+    if (ncid == -999) {
+        throw std::runtime_error("File appears to have been closed before writing attributes!");
+    }
+
+    std::string name = "dexrt (2d)";
+    ncwrap(
+        nc_put_att_text(ncid, NC_GLOBAL, "program", name.size(), name.c_str()),
+        __LINE__
+    );
+
+    std::string precision = "f64";
+#ifdef DEXRT_SINGLE_PREC
+    precision = "f32";
+#endif
+    ncwrap(
+        nc_put_att_text(ncid, NC_GLOBAL, "rt_precision", precision.size(), precision.c_str()),
+        __LINE__
+    );
+    std::string method(RcConfigurationNames[int(RC_CONFIG)]);
+    ncwrap(
+        nc_put_att_text(ncid, NC_GLOBAL, "RC_method", method.size(), method.c_str()),
+        __LINE__
+    );
+
+    if (RC_CONFIG == RcConfiguration::ParallaxFixInner) {
+        i32 inner_parallax_merge_lim = INNER_PARALLAX_MERGE_ABOVE_CASCADE;
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "inner_parallax_merge_above_cascade", NC_INT, 1, &inner_parallax_merge_lim),
+            __LINE__
+        );
+    }
+    if (RC_CONFIG == RcConfiguration::ParallaxFix) {
+        i32 parallax_merge_lim = PARALLAX_MERGE_ABOVE_CASCADE;
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "parallax_merge_above_cascade", NC_INT, 1, &parallax_merge_lim),
+            __LINE__
+        );
+    }
+
+    std::string raymarch_type(RaymarchTypeNames[int(RAYMARCH_TYPE)]);
+    ncwrap(
+        nc_put_att_text(ncid, NC_GLOBAL, "raymarch_type", raymarch_type.size(), raymarch_type.c_str()),
+        __LINE__
+    );
+    if (RAYMARCH_TYPE == RaymarchType::LineSweep) {
+        i32 line_sweep_on_and_above = LINE_SWEEP_START_CASCADE;
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "line_sweep_start_cascade", NC_INT, 1, &line_sweep_on_and_above),
+            __LINE__
+        );
+    }
+
+    f64 probe0_length = PROBE0_LENGTH;
+    ncwrap(
+        nc_put_att_double(ncid, NC_GLOBAL, "probe0_length", NC_DOUBLE, 1, &probe0_length),
+        __LINE__
+    );
+    i32 probe0_num_rays = PROBE0_NUM_RAYS;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "probe0_num_rays", NC_INT, 1, &probe0_num_rays),
+        __LINE__
+    );
+    i32 probe0_spacing = PROBE0_SPACING;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "probe0_spacing", NC_INT, 1, &probe0_spacing),
+        __LINE__
+    );
+    i32 cascade_branching = CASCADE_BRANCHING_FACTOR;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "cascade_branching_factor", NC_INT, 1, &cascade_branching),
+        __LINE__
+    );
+    i32 multiple_branching_factors = VARY_BRANCHING_FACTOR;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "multiple_branching_factors", NC_INT, 1, &multiple_branching_factors),
+        __LINE__
+    );
+    if (VARY_BRANCHING_FACTOR) {
+        i32 upper_branching = UPPER_BRANCHING_FACTOR;
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "upper_branching_factor", NC_INT, 1, &upper_branching),
+            __LINE__
+        );
+        i32 branch_switch = BRANCHING_FACTOR_SWITCH;
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "branching_factor_switch", NC_INT, 1, &branch_switch),
+            __LINE__
+        );
+    }
+    i32 max_cascade = state.config.max_cascade;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "max_cascade", NC_INT, 1, &max_cascade),
+        __LINE__
+    );
+    i32 last_casc_to_inf = LAST_CASCADE_TO_INFTY;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "last_casc_to_infty", NC_INT, 1, &last_casc_to_inf),
+        __LINE__
+    );
+    f64 last_casc_dist = LAST_CASCADE_MAX_DIST;
+    ncwrap(
+        nc_put_att_double(ncid, NC_GLOBAL, "last_cascade_max_distance", NC_DOUBLE, 1, &last_casc_dist),
+        __LINE__
+    );
+    i32 preaverage = PREAVERAGE;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "preaverage", NC_INT, 1, &preaverage),
+        __LINE__
+    );
+    i32 dir_by_dir = DIR_BY_DIR;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "dir_by_dir", NC_INT, 1, &dir_by_dir),
+        __LINE__
+    );
+    i32 pingpong = PINGPONG_BUFFERS;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "pingpong_buffers", NC_INT, 1, &pingpong),
+        __LINE__
+    );
+    i32 store_tau_cascades = STORE_TAU_CASCADES;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "store_tau_cascades", NC_INT, 1, &store_tau_cascades),
+        __LINE__
+    );
+    f64 thermal_vel_frac = ANGLE_INVARIANT_THERMAL_VEL_FRAC;
+    ncwrap(
+        nc_put_att_double(ncid, NC_GLOBAL, "angle_invariant_thermal_vel_frac", NC_DOUBLE, 1, &thermal_vel_frac),
+        __LINE__
+    );
+    i32 conserve_pressure_nr = CONSERVE_PRESSURE_NR;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "conserve_pressure_nr", NC_INT, 1, &conserve_pressure_nr),
+        __LINE__
+    );
+    i32 extra_safe_source_fn = EXTRA_SAFE_SOURCE_FN;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "extra_safe_source_fn", NC_INT, 1, &extra_safe_source_fn),
+        __LINE__
+    );
+    i32 report_nan_intensity = REPORT_NAN_INTENSITY;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "report_nan_intensity", NC_INT, 1, &report_nan_intensity),
+        __LINE__
+    );
+
+
+    i32 warp_size = DEXRT_WARP_SIZE;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "warp_size", NC_INT, 1, &warp_size),
+        __LINE__
+    );
+    i32 wave_batch = WAVE_BATCH;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "wave_batch", NC_INT, 1, &wave_batch),
+        __LINE__
+    );
+    i32 num_incl = NUM_INCL;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "num_incl", NC_INT, 1, &num_incl),
+        __LINE__
+    );
+    f64 incl_rays[NUM_INCL];
+    f64 incl_weights[NUM_INCL];
+    for (int i = 0; i < NUM_INCL; ++i) {
+        incl_rays[i] = INCL_RAYS[i];
+        incl_weights[i] = INCL_WEIGHTS[i];
+    }
+    ncwrap(
+        nc_put_att_double(ncid, NC_GLOBAL, "incl_rays", NC_DOUBLE, num_incl, incl_rays),
+        __LINE__
+    );
+    ncwrap(
+        nc_put_att_double(ncid, NC_GLOBAL, "incl_weights", NC_DOUBLE, num_incl, incl_weights),
+        __LINE__
+    );
+    i32 num_atom = state.adata_host.num_level.extent(0);
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "num_atom", NC_INT, 1, &num_atom),
+        __LINE__
+    );
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "num_level", NC_INT, num_atom, state.adata_host.num_level.get_data()),
+        __LINE__
+    );
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "num_line", NC_INT, state.adata_host.num_line.extent(0), state.adata_host.num_line.get_data()),
+        __LINE__
+    );
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "line_start", NC_INT, state.adata_host.line_start.extent(0), state.adata_host.line_start.get_data()),
+        __LINE__
+    );
+    yakl::Array<f64, 1, yakl::memHost> lambda0("lambda0", state.adata_host.lines.extent(0));
+    for (int i = 0; i < lambda0.extent(0); ++i) {
+        lambda0(i) = state.adata_host.lines(i).lambda0;
+    }
+    ncwrap(
+        nc_put_att_double(ncid, NC_GLOBAL, "lambda0", NC_DOUBLE, lambda0.extent(0), lambda0.get_data()),
+        __LINE__
+    );
+
+    // NOTE(cmo): Hack to save timing data. These functions only print to stdout -- want to redirect that.
+    auto cout_buf = std::cout.rdbuf();
+    std::ostringstream timer_buffer;
+    std::cout.rdbuf(timer_buffer.rdbuf());
+    yakl::timer_finalize();
+    std::cout.rdbuf(cout_buf);
+    std::string timer_data = timer_buffer.str();
+    ncwrap(
+        nc_put_att_text(ncid, NC_GLOBAL, "timing", timer_data.size(), timer_data.c_str()),
+        __LINE__
+    );
+    // ncwrap(
+    //     nc_put_att_int(ncid, NC_GLOBAL, "num_iter", NC_INT, 1, &num_iter),
+    //     __LINE__
+    // );
+
+    std::string output_format = state.config.output.sparse ? "sparse" : "full";
+    ncwrap(
+        nc_put_att_text(ncid, NC_GLOBAL, "output_format", output_format.size(), output_format.c_str()),
+        __LINE__
+    );
+    i32 final_dense_fs = state.config.final_dense_fs;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "final_dense_fs", NC_INT, 1, &final_dense_fs),
+        __LINE__
+    );
+
+    std::string line_scheme_name(LineCoeffCalcNames[int(LINE_SCHEME)]);
+    ncwrap(
+        nc_put_att_text(ncid, NC_GLOBAL, "line_calculation_scheme", line_scheme_name.size(), line_scheme_name.c_str()),
+        __LINE__
+    );
+
+    i32 block_size = BLOCK_SIZE;
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "block_size", NC_INT, 1, &block_size),
+        __LINE__
+    );
+    i32 nx_blocks = state.mr_block_map.block_map.num_x_tiles();
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "num_x_blocks", NC_INT, 1, &nx_blocks),
+        __LINE__
+    );
+    i32 nz_blocks = state.mr_block_map.block_map.num_z_tiles();
+    ncwrap(
+        nc_put_att_int(ncid, NC_GLOBAL, "num_z_blocks", NC_INT, 1, &nz_blocks),
+        __LINE__
+    );
+
+    if constexpr (LINE_SCHEME == LineCoeffCalc::VelocityInterp) {
+        i32 interp_bins = INTERPOLATE_DIRECTIONAL_BINS;
+        ncwrap(
+            nc_put_att_int(ncid, NC_GLOBAL, "interpolate_directional_bins", NC_INT, 1, &interp_bins),
+            __LINE__
+        );
+
+        f64 interp_max_width = INTERPOLATE_DIRECTIONAL_MAX_THERMAL_WIDTH;
+        ncwrap(
+            nc_put_att_double(ncid, NC_GLOBAL, "interpolate_direction_max_thermal_width", NC_DOUBLE, 1, &interp_max_width),
+            __LINE__
+        );
+    }
+
+    ncwrap(
+        nc_put_att_int(
+            ncid, NC_GLOBAL, "mip_levels", NC_INT,
+            state.config.max_cascade+1,
+            state.config.mip_config.mip_levels.data()
+        ),
+        __LINE__
+    );
+
+    // std::string git_hash(GIT_HASH);
+    // ncwrap(
+    //     nc_put_att_text(ncid, NC_GLOBAL, "git_hash", git_hash.size(), git_hash.c_str()),
+    //     __LINE__
+    // );
+
+    f64 voxel_scale = state.atmos.voxel_scale;
+    ncwrap(
+        nc_put_att_double(ncid, NC_GLOBAL, "voxel_scale", NC_DOUBLE, 1, &voxel_scale),
+        __LINE__
+    );
+
+    const auto& config_path(state.config.own_path);
+    ncwrap(
+        nc_put_att_text(ncid, NC_GLOBAL, "config_path", config_path.size(), config_path.c_str()),
+        __LINE__
+    );
+}
+
+static void save_results_worker(
+    const DexState& state,
+    bool single_file,
+    i32 num_iter,
+    i32 time_idx
+) {
+    const auto& config = state.config;
+    const auto& out_cfg = config.output;
+    yakl::SimpleNetCDF nc;
+    nc.create(fmt::format("dex_r{:03d}_{:05d}.nc", state.mpi_state.rank, time_idx), yakl::NETCDF_MODE_REPLACE);
+
+    add_netcdf_attributes(state, nc);
+
+    const auto& block_map = state.mr_block_map.block_map;
+
+    if (single_file) {
+        nc.write1(num_iter, "dex_num_iter", time_idx, "time");
+    } else {
+        nc.write(num_iter, "dex_num_iter");
+    }
+
+    bool sparse_J = state.config.sparse_calculation && (state.J.extent(1) == state.atmos.temperature.extent(0));
+    auto convert_name = [&](const std::string& name) {
+        if (single_file) {
+            return fmt::format("{}_{}", name, time_idx);
+        }
+        return name;
+    };
+
+    auto maybe_rehydrate_and_write = [&](
+        auto arr,
+        const std::string& name,
+        std::vector<std::string> leading_dim_names
+    ) {
+        auto& dim_names = leading_dim_names;
+        if (out_cfg.sparse) {
+            dim_names.insert(dim_names.end(), {convert_name("ks")});
+            nc.write(arr, name, dim_names);
+        } else {
+            auto hydrated = rehydrate_sparse_quantity(block_map, arr);
+            dim_names.insert(dim_names.end(), {"z_dex", "x_dex"});
+            nc.write(hydrated, name, dim_names);
+        }
+    };
+
+    if (out_cfg.J) {
+        if (config.store_J_on_cpu) {
+            if (sparse_J) {
+                maybe_rehydrate_and_write(state.J_cpu, convert_name("J"), {"wavelength"});
+            } else {
+                auto J_full = state.J_cpu.reshape(state.J_cpu.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
+                nc.write(J_full, convert_name("J"), {"wavelength", "z_dex", "x_dex"});
+            }
+        } else {
+            if (sparse_J) {
+                maybe_rehydrate_and_write(state.J, convert_name("J"), {"wavelength"});
+            } else {
+                auto J_full = state.J.reshape(state.J.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
+                nc.write(J_full, convert_name("J"), {"wavelength", "z_dex", "x_dex"});
+            }
+        }
+        nc.write(state.max_block_mip, convert_name("max_mip_block"), {"wavelength_batch", "tile_z", "tile_x"});
+    }
+
+    if (out_cfg.wavelength && state.adata.wavelength.initialized()) {
+        nc.write(state.adata.wavelength, "wavelength", {"wavelength"});
+    }
+    if (out_cfg.pops && state.pops.initialized()) {
+        maybe_rehydrate_and_write(state.pops, convert_name("pops"), {"level"});
+    }
+    if (out_cfg.lte_pops) {
+        auto lte_pops = state.pops.createDeviceObject();
+        compute_lte_pops(&state, lte_pops);
+        yakl::fence();
+        maybe_rehydrate_and_write(lte_pops, convert_name("lte_pops"), {"level"});
+    }
+    if (out_cfg.ne && state.atmos.ne.initialized()) {
+        maybe_rehydrate_and_write(state.atmos.ne, convert_name("ne"), {});
+    }
+    if (out_cfg.nh_tot && state.atmos.nh_tot.initialized()) {
+        maybe_rehydrate_and_write(state.atmos.nh_tot, convert_name("nh_tot"), {});
+        maybe_rehydrate_and_write(state.atmos.temperature, convert_name("temperature"), {});
+        maybe_rehydrate_and_write(state.atmos.ne, convert_name("ne"), {});
+    }
+    // if (out_cfg.psi_star && casc_state.psi_star.initialized()) {
+    //     nc.write(casc_state.psi_star, convert_name("psi_star"), {"casc_shape"});
+    // }
+    if (out_cfg.active) {
+        // NOTE(cmo): Currently active is always written dense
+        const auto& active_char = reify_active_c0(block_map);
+        nc.write(active_char, convert_name("active"), {"z_dex", "x_dex"});
+    }
+    // for (int casc : out_cfg.cascades) {
+    //     // NOTE(cmo): The validity of these + necessary warning were checked/output in the config parsing step
+    //     std::string name = fmt::format("I_C{}", casc);
+    //     std::string shape = fmt::format("casc_shape_{}", casc);
+    //     nc.write(casc_state.i_cascades[casc], name, {shape});
+    //     if constexpr (STORE_TAU_CASCADES) {
+    //         name = fmt::format("tau_C{}", casc);
+    //         nc.write(casc_state.tau_cascades[casc], name, {shape});
+    //     }
+    // }
+    if (out_cfg.sparse) {
+        nc.write(block_map.active_tiles, convert_name("morton_tiles"), {convert_name("num_active_tiles")});
+    }
+
+    if (out_cfg.rad_loss) {
+        std::string leading_dim = config.rad_loss == RadLossType::Integrated ? "wavelength_integrated" : "wavelength";
+        if (config.store_J_on_cpu) {
+            maybe_rehydrate_and_write(state.rad_loss_cpu, convert_name("rad_loss"), {leading_dim});
+        } else {
+            maybe_rehydrate_and_write(state.rad_loss, convert_name("rad_loss"), {leading_dim});
+        }
+    }
+}
+
 template <typename Lambda, typename ...Args>
 static auto invoke_fluid_traits_2d(
     int num_dim,
@@ -379,6 +797,7 @@ void DexInterface::run_worker_loop() {
 
     initial_worker_atmos_setup();
 
+    i32 time_idx = 0;
     while (true) {
         int should_continue;
         MPI_Bcast(&should_continue, 1, MPI_INT, 0, state.mpi_state.comm);
@@ -402,6 +821,8 @@ void DexInterface::run_worker_loop() {
             .first_iter = bool(int_args[1])
         };
         iterate(conv, args);
+        save_results_worker(state, false, 0, time_idx);
+        time_idx += 1;
     }
     yakl::finalize();
     Kokkos::finalize();
@@ -1144,308 +1565,6 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
     num_iter = i;
 
     return max_change <= tol.convergence;
-}
-
-/// Add Dex's metadata to the file using attributes. The netcdf layer needs extending to do this, so I'm just throwing it in manually.
-void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file) {
-    const auto ncwrap = [&] (int ierr, int line) {
-        if (ierr != NC_NOERR) {
-            state.println("NetCDF Error writing attributes at main.cpp:{}", line);
-            state.println("{}",nc_strerror(ierr));
-            yakl::yakl_throw(nc_strerror(ierr));
-        }
-    };
-    int ncid = file.file.ncid;
-    if (ncid == -999) {
-        throw std::runtime_error("File appears to have been closed before writing attributes!");
-    }
-
-    std::string name = "dexrt (2d)";
-    ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "program", name.size(), name.c_str()),
-        __LINE__
-    );
-
-    std::string precision = "f64";
-#ifdef DEXRT_SINGLE_PREC
-    precision = "f32";
-#endif
-    ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "rt_precision", precision.size(), precision.c_str()),
-        __LINE__
-    );
-    std::string method(RcConfigurationNames[int(RC_CONFIG)]);
-    ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "RC_method", method.size(), method.c_str()),
-        __LINE__
-    );
-
-    if (RC_CONFIG == RcConfiguration::ParallaxFixInner) {
-        i32 inner_parallax_merge_lim = INNER_PARALLAX_MERGE_ABOVE_CASCADE;
-        ncwrap(
-            nc_put_att_int(ncid, NC_GLOBAL, "inner_parallax_merge_above_cascade", NC_INT, 1, &inner_parallax_merge_lim),
-            __LINE__
-        );
-    }
-    if (RC_CONFIG == RcConfiguration::ParallaxFix) {
-        i32 parallax_merge_lim = PARALLAX_MERGE_ABOVE_CASCADE;
-        ncwrap(
-            nc_put_att_int(ncid, NC_GLOBAL, "parallax_merge_above_cascade", NC_INT, 1, &parallax_merge_lim),
-            __LINE__
-        );
-    }
-
-    std::string raymarch_type(RaymarchTypeNames[int(RAYMARCH_TYPE)]);
-    ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "raymarch_type", raymarch_type.size(), raymarch_type.c_str()),
-        __LINE__
-    );
-    if (RAYMARCH_TYPE == RaymarchType::LineSweep) {
-        i32 line_sweep_on_and_above = LINE_SWEEP_START_CASCADE;
-        ncwrap(
-            nc_put_att_int(ncid, NC_GLOBAL, "line_sweep_start_cascade", NC_INT, 1, &line_sweep_on_and_above),
-            __LINE__
-        );
-    }
-
-    f64 probe0_length = PROBE0_LENGTH;
-    ncwrap(
-        nc_put_att_double(ncid, NC_GLOBAL, "probe0_length", NC_DOUBLE, 1, &probe0_length),
-        __LINE__
-    );
-    i32 probe0_num_rays = PROBE0_NUM_RAYS;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "probe0_num_rays", NC_INT, 1, &probe0_num_rays),
-        __LINE__
-    );
-    i32 probe0_spacing = PROBE0_SPACING;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "probe0_spacing", NC_INT, 1, &probe0_spacing),
-        __LINE__
-    );
-    i32 cascade_branching = CASCADE_BRANCHING_FACTOR;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "cascade_branching_factor", NC_INT, 1, &cascade_branching),
-        __LINE__
-    );
-    i32 multiple_branching_factors = VARY_BRANCHING_FACTOR;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "multiple_branching_factors", NC_INT, 1, &multiple_branching_factors),
-        __LINE__
-    );
-    if (VARY_BRANCHING_FACTOR) {
-        i32 upper_branching = UPPER_BRANCHING_FACTOR;
-        ncwrap(
-            nc_put_att_int(ncid, NC_GLOBAL, "upper_branching_factor", NC_INT, 1, &upper_branching),
-            __LINE__
-        );
-        i32 branch_switch = BRANCHING_FACTOR_SWITCH;
-        ncwrap(
-            nc_put_att_int(ncid, NC_GLOBAL, "branching_factor_switch", NC_INT, 1, &branch_switch),
-            __LINE__
-        );
-    }
-    i32 max_cascade = state.config.max_cascade;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "max_cascade", NC_INT, 1, &max_cascade),
-        __LINE__
-    );
-    i32 last_casc_to_inf = LAST_CASCADE_TO_INFTY;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "last_casc_to_infty", NC_INT, 1, &last_casc_to_inf),
-        __LINE__
-    );
-    f64 last_casc_dist = LAST_CASCADE_MAX_DIST;
-    ncwrap(
-        nc_put_att_double(ncid, NC_GLOBAL, "last_cascade_max_distance", NC_DOUBLE, 1, &last_casc_dist),
-        __LINE__
-    );
-    i32 preaverage = PREAVERAGE;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "preaverage", NC_INT, 1, &preaverage),
-        __LINE__
-    );
-    i32 dir_by_dir = DIR_BY_DIR;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "dir_by_dir", NC_INT, 1, &dir_by_dir),
-        __LINE__
-    );
-    i32 pingpong = PINGPONG_BUFFERS;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "pingpong_buffers", NC_INT, 1, &pingpong),
-        __LINE__
-    );
-    i32 store_tau_cascades = STORE_TAU_CASCADES;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "store_tau_cascades", NC_INT, 1, &store_tau_cascades),
-        __LINE__
-    );
-    f64 thermal_vel_frac = ANGLE_INVARIANT_THERMAL_VEL_FRAC;
-    ncwrap(
-        nc_put_att_double(ncid, NC_GLOBAL, "angle_invariant_thermal_vel_frac", NC_DOUBLE, 1, &thermal_vel_frac),
-        __LINE__
-    );
-    i32 conserve_pressure_nr = CONSERVE_PRESSURE_NR;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "conserve_pressure_nr", NC_INT, 1, &conserve_pressure_nr),
-        __LINE__
-    );
-    i32 extra_safe_source_fn = EXTRA_SAFE_SOURCE_FN;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "extra_safe_source_fn", NC_INT, 1, &extra_safe_source_fn),
-        __LINE__
-    );
-    i32 report_nan_intensity = REPORT_NAN_INTENSITY;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "report_nan_intensity", NC_INT, 1, &report_nan_intensity),
-        __LINE__
-    );
-
-
-    i32 warp_size = DEXRT_WARP_SIZE;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "warp_size", NC_INT, 1, &warp_size),
-        __LINE__
-    );
-    i32 wave_batch = WAVE_BATCH;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "wave_batch", NC_INT, 1, &wave_batch),
-        __LINE__
-    );
-    i32 num_incl = NUM_INCL;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "num_incl", NC_INT, 1, &num_incl),
-        __LINE__
-    );
-    f64 incl_rays[NUM_INCL];
-    f64 incl_weights[NUM_INCL];
-    for (int i = 0; i < NUM_INCL; ++i) {
-        incl_rays[i] = INCL_RAYS[i];
-        incl_weights[i] = INCL_WEIGHTS[i];
-    }
-    ncwrap(
-        nc_put_att_double(ncid, NC_GLOBAL, "incl_rays", NC_DOUBLE, num_incl, incl_rays),
-        __LINE__
-    );
-    ncwrap(
-        nc_put_att_double(ncid, NC_GLOBAL, "incl_weights", NC_DOUBLE, num_incl, incl_weights),
-        __LINE__
-    );
-    i32 num_atom = state.adata_host.num_level.extent(0);
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "num_atom", NC_INT, 1, &num_atom),
-        __LINE__
-    );
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "num_level", NC_INT, num_atom, state.adata_host.num_level.get_data()),
-        __LINE__
-    );
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "num_line", NC_INT, state.adata_host.num_line.extent(0), state.adata_host.num_line.get_data()),
-        __LINE__
-    );
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "line_start", NC_INT, state.adata_host.line_start.extent(0), state.adata_host.line_start.get_data()),
-        __LINE__
-    );
-    yakl::Array<f64, 1, yakl::memHost> lambda0("lambda0", state.adata_host.lines.extent(0));
-    for (int i = 0; i < lambda0.extent(0); ++i) {
-        lambda0(i) = state.adata_host.lines(i).lambda0;
-    }
-    ncwrap(
-        nc_put_att_double(ncid, NC_GLOBAL, "lambda0", NC_DOUBLE, lambda0.extent(0), lambda0.get_data()),
-        __LINE__
-    );
-
-    // NOTE(cmo): Hack to save timing data. These functions only print to stdout -- want to redirect that.
-    auto cout_buf = std::cout.rdbuf();
-    std::ostringstream timer_buffer;
-    std::cout.rdbuf(timer_buffer.rdbuf());
-    yakl::timer_finalize();
-    std::cout.rdbuf(cout_buf);
-    std::string timer_data = timer_buffer.str();
-    ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "timing", timer_data.size(), timer_data.c_str()),
-        __LINE__
-    );
-    // ncwrap(
-    //     nc_put_att_int(ncid, NC_GLOBAL, "num_iter", NC_INT, 1, &num_iter),
-    //     __LINE__
-    // );
-
-    std::string output_format = state.config.output.sparse ? "sparse" : "full";
-    ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "output_format", output_format.size(), output_format.c_str()),
-        __LINE__
-    );
-    i32 final_dense_fs = state.config.final_dense_fs;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "final_dense_fs", NC_INT, 1, &final_dense_fs),
-        __LINE__
-    );
-
-    std::string line_scheme_name(LineCoeffCalcNames[int(LINE_SCHEME)]);
-    ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "line_calculation_scheme", line_scheme_name.size(), line_scheme_name.c_str()),
-        __LINE__
-    );
-
-    i32 block_size = BLOCK_SIZE;
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "block_size", NC_INT, 1, &block_size),
-        __LINE__
-    );
-    i32 nx_blocks = state.mr_block_map.block_map.num_x_tiles();
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "num_x_blocks", NC_INT, 1, &nx_blocks),
-        __LINE__
-    );
-    i32 nz_blocks = state.mr_block_map.block_map.num_z_tiles();
-    ncwrap(
-        nc_put_att_int(ncid, NC_GLOBAL, "num_z_blocks", NC_INT, 1, &nz_blocks),
-        __LINE__
-    );
-
-    if constexpr (LINE_SCHEME == LineCoeffCalc::VelocityInterp) {
-        i32 interp_bins = INTERPOLATE_DIRECTIONAL_BINS;
-        ncwrap(
-            nc_put_att_int(ncid, NC_GLOBAL, "interpolate_directional_bins", NC_INT, 1, &interp_bins),
-            __LINE__
-        );
-
-        f64 interp_max_width = INTERPOLATE_DIRECTIONAL_MAX_THERMAL_WIDTH;
-        ncwrap(
-            nc_put_att_double(ncid, NC_GLOBAL, "interpolate_direction_max_thermal_width", NC_DOUBLE, 1, &interp_max_width),
-            __LINE__
-        );
-    }
-
-    ncwrap(
-        nc_put_att_int(
-            ncid, NC_GLOBAL, "mip_levels", NC_INT,
-            state.config.max_cascade+1,
-            state.config.mip_config.mip_levels.data()
-        ),
-        __LINE__
-    );
-
-    // std::string git_hash(GIT_HASH);
-    // ncwrap(
-    //     nc_put_att_text(ncid, NC_GLOBAL, "git_hash", git_hash.size(), git_hash.c_str()),
-    //     __LINE__
-    // );
-
-    f64 voxel_scale = state.atmos.voxel_scale;
-    ncwrap(
-        nc_put_att_double(ncid, NC_GLOBAL, "voxel_scale", NC_DOUBLE, 1, &voxel_scale),
-        __LINE__
-    );
-
-    const auto& config_path(state.config.own_path);
-    ncwrap(
-        nc_put_att_text(ncid, NC_GLOBAL, "config_path", config_path.size(), config_path.c_str()),
-        __LINE__
-    );
 }
 
 void save_results(
