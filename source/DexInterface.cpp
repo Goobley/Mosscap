@@ -330,122 +330,6 @@ void add_netcdf_attributes(const DexState& state, const yakl::SimpleNetCDF& file
     );
 }
 
-static void save_results_worker(
-    const DexState& state,
-    bool single_file,
-    i32 num_iter,
-    i32 time_idx
-) {
-    const auto& config = state.config;
-    const auto& out_cfg = config.output;
-    yakl::SimpleNetCDF nc;
-    nc.create(fmt::format("dex_r{:03d}_{:05d}.nc", state.mpi_state.rank, time_idx), yakl::NETCDF_MODE_REPLACE);
-
-    add_netcdf_attributes(state, nc);
-
-    const auto& block_map = state.mr_block_map.block_map;
-
-    if (single_file) {
-        nc.write1(num_iter, "dex_num_iter", time_idx, "time");
-    } else {
-        nc.write(num_iter, "dex_num_iter");
-    }
-
-    bool sparse_J = state.config.sparse_calculation && (state.J.extent(1) == state.atmos.temperature.extent(0));
-    auto convert_name = [&](const std::string& name) {
-        if (single_file) {
-            return fmt::format("{}_{}", name, time_idx);
-        }
-        return name;
-    };
-
-    auto maybe_rehydrate_and_write = [&](
-        auto arr,
-        const std::string& name,
-        std::vector<std::string> leading_dim_names
-    ) {
-        auto& dim_names = leading_dim_names;
-        if (out_cfg.sparse) {
-            dim_names.insert(dim_names.end(), {convert_name("ks")});
-            nc.write(arr, name, dim_names);
-        } else {
-            auto hydrated = rehydrate_sparse_quantity(block_map, arr);
-            dim_names.insert(dim_names.end(), {"z_dex", "x_dex"});
-            nc.write(hydrated, name, dim_names);
-        }
-    };
-
-    if (out_cfg.J) {
-        if (config.store_J_on_cpu) {
-            if (sparse_J) {
-                maybe_rehydrate_and_write(state.J_cpu, convert_name("J"), {"wavelength"});
-            } else {
-                auto J_full = state.J_cpu.reshape(state.J_cpu.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
-                nc.write(J_full, convert_name("J"), {"wavelength", "z_dex", "x_dex"});
-            }
-        } else {
-            if (sparse_J) {
-                maybe_rehydrate_and_write(state.J, convert_name("J"), {"wavelength"});
-            } else {
-                auto J_full = state.J.reshape(state.J.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
-                nc.write(J_full, convert_name("J"), {"wavelength", "z_dex", "x_dex"});
-            }
-        }
-        nc.write(state.max_block_mip, convert_name("max_mip_block"), {"wavelength_batch", "tile_z", "tile_x"});
-    }
-
-    if (out_cfg.wavelength && state.adata.wavelength.initialized()) {
-        nc.write(state.adata.wavelength, "wavelength", {"wavelength"});
-    }
-    if (out_cfg.pops && state.pops.initialized()) {
-        maybe_rehydrate_and_write(state.pops, convert_name("pops"), {"level"});
-    }
-    if (out_cfg.lte_pops) {
-        auto lte_pops = state.pops.createDeviceObject();
-        compute_lte_pops(&state, lte_pops);
-        yakl::fence();
-        maybe_rehydrate_and_write(lte_pops, convert_name("lte_pops"), {"level"});
-    }
-    if (out_cfg.ne && state.atmos.ne.initialized()) {
-        maybe_rehydrate_and_write(state.atmos.ne, convert_name("ne"), {});
-    }
-    if (out_cfg.nh_tot && state.atmos.nh_tot.initialized()) {
-        maybe_rehydrate_and_write(state.atmos.nh_tot, convert_name("nh_tot"), {});
-        maybe_rehydrate_and_write(state.atmos.temperature, convert_name("temperature"), {});
-        maybe_rehydrate_and_write(state.atmos.ne, convert_name("ne"), {});
-    }
-    // if (out_cfg.psi_star && casc_state.psi_star.initialized()) {
-    //     nc.write(casc_state.psi_star, convert_name("psi_star"), {"casc_shape"});
-    // }
-    if (out_cfg.active) {
-        // NOTE(cmo): Currently active is always written dense
-        const auto& active_char = reify_active_c0(block_map);
-        nc.write(active_char, convert_name("active"), {"z_dex", "x_dex"});
-    }
-    // for (int casc : out_cfg.cascades) {
-    //     // NOTE(cmo): The validity of these + necessary warning were checked/output in the config parsing step
-    //     std::string name = fmt::format("I_C{}", casc);
-    //     std::string shape = fmt::format("casc_shape_{}", casc);
-    //     nc.write(casc_state.i_cascades[casc], name, {shape});
-    //     if constexpr (STORE_TAU_CASCADES) {
-    //         name = fmt::format("tau_C{}", casc);
-    //         nc.write(casc_state.tau_cascades[casc], name, {shape});
-    //     }
-    // }
-    if (out_cfg.sparse) {
-        nc.write(block_map.active_tiles, convert_name("morton_tiles"), {convert_name("num_active_tiles")});
-    }
-
-    if (out_cfg.rad_loss) {
-        std::string leading_dim = config.rad_loss == RadLossType::Integrated ? "wavelength_integrated" : "wavelength";
-        if (config.store_J_on_cpu) {
-            maybe_rehydrate_and_write(state.rad_loss_cpu, convert_name("rad_loss"), {leading_dim});
-        } else {
-            maybe_rehydrate_and_write(state.rad_loss, convert_name("rad_loss"), {leading_dim});
-        }
-    }
-}
-
 template <typename Lambda, typename ...Args>
 static auto invoke_fluid_traits_2d(
     int num_dim,
@@ -821,7 +705,6 @@ void DexInterface::run_worker_loop() {
             .first_iter = bool(int_args[1])
         };
         iterate(conv, args);
-        save_results_worker(state, false, 0, time_idx);
         time_idx += 1;
     }
     yakl::finalize();
@@ -1784,7 +1667,14 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
 
     yakl::Array<RadLossFp, 1, yakl::memDevice> rad_loss;
     if (state.config.rad_loss == RadLossType::Integrated) {
-        rad_loss = yakl::Array<RadLossFp, 1, yakl::memDevice>("rad loss sum", state.rad_loss.data(), state.rad_loss.extent(1));
+        if (state.config.store_J_on_cpu) {
+            // NOTE(cmo): In an MPI case, the rad_loss from the workers is
+            // reduced into rad_loss_cpu, _not_ rad_loss, so ensure we're using
+            // the right array here.
+            rad_loss = state.rad_loss_cpu.createDeviceCopy().reshape(state.rad_loss.extent(1));
+        } else {
+            rad_loss = yakl::Array<RadLossFp, 1, yakl::memDevice>("rad loss sum", state.rad_loss.data(), state.rad_loss.extent(1));
+        }
     } else {
         if (state.config.store_J_on_cpu) {
             yakl::Array<RadLossFp, 1, yakl::memHost> rad_loss_h("rad loss sum", state.rad_loss.extent(1));
@@ -2133,11 +2023,16 @@ fp_t DexInterface::min_characteristic_cooling_time() {
 }
 
 void DexInterface::update_temperature_rad_eq(fp_t delta_t) {
-    JasUnpack(state, atmos, rad_loss);
+    JasUnpack(state, atmos);
     const fp_t threshold = state.config.threshold_temperature;
 
     if (state.config.rad_loss == RadLossType::PerWavelength) {
         throw std::runtime_error("Currently only supporting Integrated rad loss.");
+    }
+
+    decltype(state.rad_loss) rad_loss = state.rad_loss;
+    if (state.config.store_J_on_cpu) {
+        rad_loss = state.rad_loss_cpu.createDeviceCopy();
     }
 
     fp_t max_temp_change;
