@@ -527,6 +527,8 @@ void DexInterface::broadcast_atmosphere() {
     MPI_Bcast(atmos.vx.data(), atmos.vx.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(atmos.vy.data(), atmos.vy.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(atmos.vz.data(), atmos.vz.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(state.pops.data(), state.pops.size(), get_FpMpi(), 0, comm);
+    Kokkos::fence();
 
 
     if (state.mpi_state.rank != 0) {
@@ -541,12 +543,12 @@ void DexInterface::broadcast_atmosphere() {
         }
         casc_state.probes_to_compute.init(c0, sparse_calc, active_probes);
         casc_state.mip_chain.init(state, state.mr_block_map.buffer_len(), c0.wave_batch);
+
+        if (interface_config.time_dependent_updates) {
+            prev_pops = state.pops.createDeviceCopy();
+        }
     }
 
-    MPI_Bcast(state.pops.data(), state.pops.size(), get_FpMpi(), 0, comm);
-    if (interface_config.time_dependent_updates && state.mpi_state.rank != 0) {
-        prev_pops = state.pops.createDeviceCopy();
-    }
 
 #endif
 }
@@ -1324,13 +1326,15 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         ng.accelerate(state, FP(1.0));
     }
     bool first_inner_iter = true;
-    bool accelerated = false;
-    fp_t max_change = 1.0_fp;
-    while (((max_change > tol.convergence || i < (initial_lambda_iterations+1)) && i < max_iters) || accelerated) {
+        bool accelerated = false;
+        fp_t max_change = 1.0_fp;
+        while (((max_change > tol.convergence || i < (initial_lambda_iterations+1)) && i < max_iters) || accelerated) {
         state.println("==== FS {} ====", i);
         compute_nh0(state);
 
-        if (state.mpi_state.rank == 0) {
+        if (false) {
+            // NOTE(cmo): This is done after reducing Gamma now in case it
+            // reduced the precision in the accumulation of the radiative terms
             compute_collisions_to_gamma(&state);
         } else {
             for (int ia = 0; ia < state.Gamma.size(); ++ia) {
@@ -1376,6 +1380,14 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         if (time_dependent) {
             state.println("  == Pops update ==");
             wave_dist.reduce_Gamma(&state);
+            if (state.mpi_state.rank == 0) {
+                compute_collisions_to_gamma(
+                    &state,
+                    ComputeCollisionsOptions{
+                        .zero_gamma = false
+                    }
+                );
+            }
             max_change = time_dep_update(
                 state,
                 prev_pops,
@@ -1409,6 +1421,14 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         } else {
             state.println("  == Statistical equilibrium ==");
             wave_dist.reduce_Gamma(&state);
+            if (state.mpi_state.rank == 0) {
+                compute_collisions_to_gamma(
+                    &state,
+                    ComputeCollisionsOptions{
+                        .zero_gamma = false
+                    }
+                );
+            }
             max_change = stat_eq(
                 &state,
                 StatEqOptions{
