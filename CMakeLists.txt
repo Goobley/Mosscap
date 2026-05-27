@@ -46,6 +46,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/BrioWuShockTube.cpp"
     "source/ProblemGenerator/CircularExplosion.cpp"
     "source/ProblemGenerator/CoronalRainDrop.cpp"
+    "source/ProblemGenerator/Corrugation.cpp"
     "source/ProblemGenerator/DivBCheckerboard.cpp"
     "source/ProblemGenerator/DoubleShockTube.cpp"
     "source/ProblemGenerator/HillierSnowKelvinHelmholtz.cpp"
