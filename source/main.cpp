@@ -82,8 +82,8 @@ int main(int argc, char** argv) {
                 sim.dex.update_atmosphere(sim);
                 sim.dex.iterate(
                     DexConvergence {
-                        .convergence=1.1e-3_fp,
-                        .max_iter=200
+                        .convergence=7e-4_fp,
+                        .max_iter=50
                     },
                     IterateArgs {
                         .dt = Mosscap::fp_t(dt),

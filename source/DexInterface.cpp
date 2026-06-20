@@ -1285,8 +1285,8 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         }
     }
     const bool actually_conserve_pressure = actually_conserve_charge && conserve_pressure;
-    const int initial_lambda_iterations = 0;
-    const int max_iters = config.max_iter;
+    const int initial_lambda_iterations = 1;
+    const int max_iters = tol.max_iter;
 
     auto& waves = state.adata_host.wavelength;
     WavelengthDistributor wave_dist;
