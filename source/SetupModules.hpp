@@ -81,8 +81,8 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     sim.state.cond.limited = get_or<bool>(config, "simulation.hypertc_limit", false);
     sim.state.cond.spitzer = get_or<bool>(config, "simulation.hypertc_spitzer", true);
 
-    sim.state.cma.apply = get_or<fp_t>(config, "simulation.cma.apply", false);
-    sim.state.cma.flatten = get_or<fp_t>(config, "simulation.cma.flatten", true);
+    sim.state.cma.apply = get_or<bool>(config, "simulation.cma.apply", false);
+    sim.state.cma.flatten = get_or<bool>(config, "simulation.cma.flatten", true);
 }
 
 template <typename FTraits>
