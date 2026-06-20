@@ -444,12 +444,23 @@ struct Conduction {
     bool limited = false; /// Whether to limit conduction to the saturation limit.
 };
 
+/// Consistent MultiFluid Advection Parameters
+struct CmaParams {
+    yakl::Array<i32, 1, yakl::memDevice> fluid_start_idx;
+    yakl::Array<i32, 1, yakl::memDevice> fluid_end_idx;
+    yakl::Array<fp_t, 1, yakl::memDevice> fluid_inv_sum;
+
+    bool apply = false;
+    bool flatten = true;
+};
+
 struct State {
     GridSize sz; /// Grid dimensions + number of ghosts
     fp_t glm_ch; /// Hyperbolic wave speed in GLM MHD
     fp_t mu0 = 4.0e-7_fp * 3.14159265358979312_fp; /// Value of mu0 used in model
     fp_t p_mass = 1.6737830080950003e-27_fp; /// Base particle mass, combined with eos mean mass [kg]
     Conduction cond;
+    CmaParams cma;
     fp_t dx; /// Spatial grid step (constant)
     GridLoc loc; /// Logical grid position (bottom left corner of cell 0, 0, 0)
     Boundaries boundaries; /// Boundary handling specifications

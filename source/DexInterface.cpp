@@ -1143,6 +1143,27 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
 
     initial_worker_atmos_setup();
 
+    // NOTE(cmo): Fill the tracer arrays for dex if they're not already allocated
+    if (sim.state.cma.apply && !sim.state.cma.fluid_start_idx.initialized()) {
+        constexpr fp_t m_p = ConstantsF64::u;
+        yakl::Array<i32, 1, yakl::memHost> start_idx("cma_start", state.adata_host.Z.size());
+        yakl::Array<i32, 1, yakl::memHost> end_idx("cma_end", state.adata_host.Z.size());
+        yakl::Array<fp_t, 1, yakl::memHost> inv_sum("cma_inv_sum", state.adata_host.Z.size());
+
+        // n_e not included
+        i32 start = interface_config.field_start_idx + 1;
+        for (i32 ia = 0; ia < state.adata_host.Z.size(); ++ia) {
+            start += state.adata_host.level_start(ia);
+            i32 end = start + state.adata_host.num_level(ia);
+            start_idx(ia) = start;
+            end_idx(ia) = end;
+            inv_sum(ia) = (state.adata_host.abundance(ia) / (m_p * sim.eos.avg_mass));
+        }
+        sim.state.cma.fluid_start_idx = start_idx.createDeviceCopy();
+        sim.state.cma.fluid_end_idx = end_idx.createDeviceCopy();
+        sim.state.cma.fluid_inv_sum = inv_sum.createDeviceCopy();
+    }
+
     return true;
 }
 
@@ -1923,7 +1944,6 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
     for (int ia = 0; ia < state.atoms.size(); ++ia) {
         const auto& atom = state.atoms[ia];
         const auto& level_start = state.adata_host.level_start(ia);
-        // TODO(cmo): i think we need to move tracer_strat for the other fields
         const auto flat_pops = std::remove_cvref_t<decltype(Q)>(
             "flat_tracer_pops",
             &Q(tracer_start + level_start + 1, 0, 0, 0),

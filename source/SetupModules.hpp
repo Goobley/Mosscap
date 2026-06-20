@@ -80,6 +80,9 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     sim.state.cond.hypertc_kappa = get_or<fp_t>(config, "simulation.hypertc_kappa", sim.state.cond.hypertc_kappa);
     sim.state.cond.limited = get_or<bool>(config, "simulation.hypertc_limit", false);
     sim.state.cond.spitzer = get_or<bool>(config, "simulation.hypertc_spitzer", true);
+
+    sim.state.cma.apply = get_or<fp_t>(config, "simulation.cma.apply", false);
+    sim.state.cma.flatten = get_or<fp_t>(config, "simulation.cma.flatten", true);
 }
 
 template <typename FTraits>
@@ -347,6 +350,10 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path, const R
         // Write the header + ICs
         // TODO(cmo): Don't do this on restart
         sim.write_output(sim);
+    }
+
+    if (sim.state.cma.apply && sim.state.num_tracers > 1 && !sim.state.cma.fluid_start_idx.initialized()) {
+        throw std::runtime_error("CMA requested, and tracers are present, but the CMA arrays haven't been filled by problem setup or dexrt");
     }
 
     return sim;

@@ -1,5 +1,6 @@
 
 #include "Hydro.hpp"
+#include "Cma.hpp"
 #include <map>
 #include <tuple>
 
@@ -155,6 +156,34 @@ void compute_recon_impl(const Simulation& sim) {
         }
     );
     Kokkos::fence();
+
+    if (state.cma.apply) {
+        // TODO(cmo): Flatten
+        dex_parallel_for(
+            kernel_name[Axis],
+            FlatLoop<3>(nz, ny, nx),
+            KOKKOS_LAMBDA (int ki, int ji, int ii) {
+                CellIndex idx {
+                    .i = ii + xs,
+                    .j = ji + ys,
+                    .k = ki + zs
+                };
+                const QtyView RL(recon.RL, idx);
+                const QtyView RR(recon.RR, idx);
+                if (state.cma.flatten) {
+                    tracer_cma_flatten(
+                        QtyView(state.W, idx),
+                        RL,
+                        RR,
+                        state.cma
+                    );
+                }
+                tracer_cma_normalise(RL, state.cma);
+                tracer_cma_normalise(RR, state.cma);
+            }
+        );
+        Kokkos::fence();
+    }
 }
 
 template <RiemannSolver rsolver, int Axis, typename FTraits>
