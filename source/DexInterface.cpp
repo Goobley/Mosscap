@@ -1662,6 +1662,12 @@ void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
     const auto& Q = sim.state.Q;
     const auto& sz = sim.state.sz;
 
+    // NOTE(cmo): This is a bit of a hack, but we really do need to update the
+    // tracers to match the thermodynamic state even if they're not present
+    // outside the RT active cells
+    lte_init_aux_fields<FTraits>(sim);
+
+    // Now to the actual promised copying
     const i32 start_idx = interface_config.field_start_idx;
     dex_parallel_for(
         "Pops -> Tracers",
