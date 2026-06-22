@@ -59,6 +59,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/RingConduction.cpp"
     "source/ProblemGenerator/ShockTube2d.cpp"
     "source/ProblemGenerator/SimpleMrtiCondensation.cpp"
+    "source/ProblemGenerator/SlowModeTI.cpp"
     "source/ProblemGenerator/Solar1d.cpp"
 )
 list (APPEND MOSSCAP_SOURCE_TERMS
