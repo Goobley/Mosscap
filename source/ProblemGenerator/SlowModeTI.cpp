@@ -11,6 +11,41 @@ static constexpr int num_dim = 2;
 namespace Mosscap {
 
 
+struct BackgroundParams {
+    fp_t rho0;
+    fp_t T0;
+    fp_t lambda_T0;
+    fp_t bx0;
+    fp_t by0;
+    fp_t bz0;
+};
+
+template <typename FTraits>
+void background_heating_kernel(const Simulation& sim, const BackgroundParams& bg) {
+    constexpr fp_t unit_numberdens = 1e15_fp;
+    const fp_t H = square(bg.rho0 * unit_numberdens) * bg.lambda_T0;
+
+    JasUnpack(sim, state, sources);
+    JasUnpack(state, sz);
+    const auto& S = sources.S;
+    int nx = sz.xc - 2 * sz.ng;
+    int ny = std::max(sz.yc - 2 * sz.ng, 1);
+    int nz = std::max(sz.zc - 2 * sz.ng, 1);
+
+    dex_parallel_for(
+        FlatLoop<3>(nz, ny, nx),
+        KOKKOS_LAMBDA (int ki, int ji, int ii) {
+            const int k = nz == 1 ? ki : ki + sz.ng;
+            const int j = ny == 1 ? ji : ji + sz.ng;
+            const int i = ii + sz.ng;
+            using Cons = typename FTraits::cons;
+
+            S(I(Cons::Ene), k, j, i) += H;
+        }
+    );
+    Kokkos::fence();
+}
+
 template <typename Fluid>
 static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     using Cons = typename Fluid::cons;
@@ -78,8 +113,39 @@ MOSSCAP_NEW_PROBLEM(slow_mode_ti) {
         }
     };
 
+    const std::string input_path = get_or<std::string>(config, "problem.ic_path", "slow_mode_ti.nc");
+    yakl::SimpleNetCDF nc;
+    nc.open(input_path, yakl::NETCDF_MODE_READ);
+    fp_t rho0, T0, lambda_T0, bx0, by0, bz0;
+    nc.read(rho0, "rho0");
+    nc.read(T0, "T0");
+    nc.read(lambda_T0, "lambda_T0");
+    nc.read(bx0, "bx0");
+    nc.read(by0, "by0");
+    nc.read(bz0, "bz0");
+    BackgroundParams background {
+        .rho0 = rho0,
+        .T0 = T0,
+        .lambda_T0 = lambda_T0,
+        .bx0 = bx0,
+        .by0 = by0,
+        .bz0 = bz0
+    };
+
     if (get_or<bool>(config, "problem.enable_thin_loss", false)) {
         setup_thin_loss(sim, config);
+        sim.compute_source_terms.push_back(SourceTerm{
+            .name = "background_heating",
+            .fn = [=](const Simulation& sim) {
+                invoke_fluid_traits(
+                    sim.num_dim,
+                    sim.fluid_type,
+                    [&]<typename FTraits>(FTraits) {
+                        background_heating_kernel<FTraits>(sim, background);
+                    }
+                );
+            }
+        });
     }
 }
 
