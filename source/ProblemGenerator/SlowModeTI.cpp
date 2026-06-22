@@ -18,12 +18,14 @@ struct BackgroundParams {
     fp_t bx0;
     fp_t by0;
     fp_t bz0;
+    fp_t heating_coeff;
 };
 
 template <typename FTraits>
 void background_heating_kernel(const Simulation& sim, const BackgroundParams& bg) {
     constexpr fp_t unit_numberdens = 1e15_fp;
-    const fp_t H = square(bg.rho0 * unit_numberdens) * bg.lambda_T0;
+    constexpr fp_t unit_rho = unit_numberdens * ConstantsF64::u;
+    const fp_t H = bg.heating_coeff * square(bg.rho0 / unit_rho * unit_numberdens) * bg.lambda_T0;
 
     JasUnpack(sim, state, sources);
     JasUnpack(state, sz);
@@ -129,10 +131,11 @@ MOSSCAP_NEW_PROBLEM(slow_mode_ti) {
         .lambda_T0 = lambda_T0,
         .bx0 = bx0,
         .by0 = by0,
-        .bz0 = bz0
+        .bz0 = bz0,
+        .heating_coeff = get_or<fp_t>(config, "problem.background_heating_coeff", 1.0_fp)
     };
 
-    if (get_or<bool>(config, "problem.enable_thin_loss", false)) {
+    if (get_or<bool>(config, "problem.enable_thin_loss", true)) {
         setup_thin_loss(sim, config);
         sim.compute_source_terms.push_back(SourceTerm{
             .name = "background_heating",
