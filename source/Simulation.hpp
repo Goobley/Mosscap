@@ -44,6 +44,7 @@ struct FluxFns {
 struct SourceTerm {
     std::string name;
     std::function<void(const Simulation&)> fn;
+    std::function<void*()> get_context = [](){ return nullptr; };
 };
 
 struct Simulation {

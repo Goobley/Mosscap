@@ -7,31 +7,6 @@
 
 namespace Mosscap {
 
-struct SpongeParams {
-    /// Amplitude on exp
-    fp_t A;
-    /// Decay param in exp
-    fp_t B;
-    /// damp for x <= xs
-    fp_t xs;
-    /// damp for x >= xe
-    fp_t xe;
-    /// damp for y <= ys
-    fp_t ys;
-    /// damp for y >= ye
-    fp_t ye;
-    /// damp for z <= zs
-    fp_t zs;
-    /// damp for z >= ze
-    fp_t ze;
-    /// Use values from edge of grid rather than constant
-    bool use_edge_vals;
-    /// Damp the GLM psi term to 0 when use_edge_vals is enabled
-    bool damp_psi_to_zero;
-    /// Ignore the GLM psi term (don't damp them)
-    bool ignore_psi;
-};
-
 template <typename FTraits>
 void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
     JasUnpack(sim, state);
@@ -152,7 +127,7 @@ void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
 }
 
 void setup_sponge(Simulation& sim, YAML::Node& config) {
-    SpongeParams sponge{
+    auto sponge = std::make_shared<SpongeParams>(SpongeParams{
         .A = get_or<fp_t>(config, "sources.sponge.A", 0.5_fp),
         .B = get_or<fp_t>(config, "sources.sponge.B", 0.05_fp),
         .xs = get_or<fp_t>(config, "sources.sponge.xs", 0.0_fp),
@@ -164,8 +139,8 @@ void setup_sponge(Simulation& sim, YAML::Node& config) {
         .use_edge_vals = get_or<bool>(config, "sources.sponge.use_edge_vals", true),
         .damp_psi_to_zero = get_or<bool>(config, "sources.sponge.damp_psi_to_zero", true),
         .ignore_psi = get_or<bool>(config, "sources.sponge.ignore_psi", false)
-    };
-    if (sponge.damp_psi_to_zero && sponge.ignore_psi) {
+    });
+    if (sponge->damp_psi_to_zero && sponge->ignore_psi) {
         throw std::runtime_error("Cannot set both damp_psi_to_zero and ignore_psi in Sponge.");
     }
     auto apply_sponge = invoke_fluid_traits(
@@ -173,7 +148,7 @@ void setup_sponge(Simulation& sim, YAML::Node& config) {
         sim.fluid_type,
         [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
             return [=] (const Simulation& sim) {
-                return sponge_kernel<FTraits>(sim, sponge);
+                return sponge_kernel<FTraits>(sim, *sponge);
             };
         }
     );
@@ -184,7 +159,8 @@ void setup_sponge(Simulation& sim, YAML::Node& config) {
 
     sim.compute_source_terms.push_back(SourceTerm{
         .name = "sponge",
-        .fn = apply_sponge
+        .fn = apply_sponge,
+        .get_context = [=]() { return sponge.get(); }
     });
 }
 

@@ -11,13 +11,6 @@ struct CoolingTable {
     const f64* log_lambda;
 };
 
-struct ThinLossContext {
-    Fp1d temps;
-    Fp1d lambdas;
-    Fp1d Y_k;
-    Fp1d alpha_k;
-    fp_t min_temperature;
-};
 
 static constexpr f64 logt_simple[] = { 2.0, 4.45, 4.477, 5.0, 5.7, 6.0, 7.0, 8.0 };
 static constexpr f64 loglambda_simple[] = {-39.5, -39.4, -35.819, -34.25, -34.6, -34.75, -35.25, -35.75 };
@@ -349,20 +342,21 @@ void setup_thin_loss(Simulation& sim, YAML::Node& config) {
         Y_k(i) = Y_k(i+1) - step;
     }
 
-    ThinLossContext ctx {
+    auto ctx = std::make_shared<ThinLossContext>(ThinLossContext{
         .temps = temps.createDeviceCopy(),
         .lambdas = lambdas.createDeviceCopy(),
         .Y_k = Y_k.createDeviceCopy(),
         .alpha_k = alpha_k.createDeviceCopy(),
         .min_temperature = min_temperature
-    };
+    });
+
 
     auto apply_thin_loss = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
         [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
             return [=] (const Simulation& sim) {
-                return thin_loss_kernel<FTraits>(sim, ctx);
+                return thin_loss_kernel<FTraits>(sim, *ctx);
             };
         }
     );
@@ -373,7 +367,8 @@ void setup_thin_loss(Simulation& sim, YAML::Node& config) {
 
     sim.compute_source_terms.push_back(SourceTerm{
         .name = "thin_loss",
-        .fn = apply_thin_loss
+        .fn = apply_thin_loss,
+        .get_context = [=]() { return ctx.get(); }
     });
 }
 

@@ -5,12 +5,6 @@
 
 namespace Mosscap {
 
-struct GravityVals {
-    fp_t x;
-    fp_t y;
-    fp_t z;
-};
-
 template <typename FTraits>
 void gravity_kernel(const Simulation& sim, const GravityVals& grav) {
     using Cons = typename FTraits::cons;
@@ -42,18 +36,18 @@ void gravity_kernel(const Simulation& sim, const GravityVals& grav) {
 
 void setup_gravity(Simulation& sim, YAML::Node& config) {
 
-    GravityVals grav{
+    auto grav = std::make_shared<GravityVals>(GravityVals{
         .x = get_or<fp_t>(config, "sources.gravity.x", -1.0_fp),
         .y = get_or<fp_t>(config, "sources.gravity.y", 0.0_fp),
         .z = get_or<fp_t>(config, "sources.gravity.z", 0.0_fp)
-    };
+    });
 
     auto apply_gravity = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
         [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
             return [=] (const Simulation& sim) {
-                return gravity_kernel<FTraits>(sim, grav);
+                return gravity_kernel<FTraits>(sim, *grav);
             };
         }
     );
@@ -64,7 +58,8 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
 
     sim.compute_source_terms.push_back(SourceTerm{
         .name = "gravity",
-        .fn = apply_gravity
+        .fn = apply_gravity,
+        .get_context = [=]() { return grav.get(); }
     });
 }
 
