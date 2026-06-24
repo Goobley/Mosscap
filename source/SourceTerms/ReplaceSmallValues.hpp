@@ -10,6 +10,7 @@ struct ReplaceSmallValuesContext {
     fp_t density_floor = 0.0_fp;
     fp_t pressure_floor = 0.0_fp;
     bool zero_momentum = true;
+    bool enable = false;
 };
 
 struct Simulation;

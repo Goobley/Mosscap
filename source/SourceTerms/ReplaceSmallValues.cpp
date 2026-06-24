@@ -80,7 +80,8 @@ void setup_replace_small_values(Simulation& sim, YAML::Node& config) {
         ReplaceSmallValuesContext{
             .density_floor = get_or<fp_t>(config, "sources.replace_small_values.density_floor", 0.0_fp),
             .pressure_floor = get_or<fp_t>(config, "sources.replace_small_values.pressure_floor", 0.0_fp),
-            .zero_momentum = get_or<bool>(config, "sources.replace_small_values.zero_momentum", true)
+            .zero_momentum = get_or<bool>(config, "sources.replace_small_values.zero_momentum", true),
+            .enable = get_or<bool>(config, "sources.replace_small_values.enable", false)
         }
     );
 

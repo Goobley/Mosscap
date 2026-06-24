@@ -2,8 +2,8 @@
 #include "../Hydro.hpp"
 #include "../MosscapConfig.hpp"
 #include "../SourceTerms.hpp"
-#include "../SourceTerms/Sponge.hpp"
 #include "../SourceTerms/TownsendThinLoss.hpp"
+#include "../SourceTerms/ReplaceSmallValues.hpp"
 #include "../AnalyticLteH.hpp"
 
 // NOTE(cmo): This is a 2d problem
@@ -285,6 +285,7 @@ MOSSCAP_NEW_PROBLEM(slow_mode_ti) {
             }
         });
     }
+    setup_replace_small_values(sim, config);
 }
 
 }
