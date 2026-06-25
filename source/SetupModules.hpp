@@ -83,6 +83,8 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
 
     sim.state.cma.apply = get_or<bool>(config, "simulation.cma.apply", false);
     sim.state.cma.flatten = get_or<bool>(config, "simulation.cma.flatten", true);
+
+    sim.zero_hydro_flux = get_or<bool>(config, "simulation.zero_hydro_flux", false);
 }
 
 template <typename FTraits>

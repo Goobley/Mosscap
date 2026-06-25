@@ -12,9 +12,8 @@ struct ThermalConductionContext {
     bool saturate = true;
     bool spitzer = true;
     bool anisotropic = true;
-    fp_t saturation_phi = 0.3_fp;
+    fp_t saturation_phi = 1.1_fp;
     fp_t kappa0 = 8e-12_fp;
-    Fp3d flux;
 };
 
 void setup_thermal_conduction(Simulation& sim, YAML::Node& config);

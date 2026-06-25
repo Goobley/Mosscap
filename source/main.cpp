@@ -101,11 +101,13 @@ int main(int argc, char** argv) {
                 std::chrono::duration<f64> run_time(current_time - start_time);
                 // TODO(cmo): This is printing very small dt due to step rounding... save dt natural too?
                 fmt::println("* t = {:.03f} s, dt = {:.03e} s, iter = {}, wall time = {:.03e} s", sim.time, dt, sim.current_step, run_time.count());
+                std::fflush(stdout);
                 prev_print = current_time;
             }
             if (current_time - prev_print > 30s) {
                 std::chrono::duration<f64> run_time(current_time - start_time);
                 fmt::println("t = {:.03f} s, dt = {:.03e} s, iter = {}, wall time = {:.03e} s", sim.time, dt, sim.current_step, run_time.count());
+                std::fflush(stdout);
                 prev_print = current_time;
             }
 

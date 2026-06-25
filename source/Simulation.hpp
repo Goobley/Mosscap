@@ -56,6 +56,7 @@ struct Simulation {
     f64 max_time;
     fp_t dt = 0.0_fp;
     fp_t dt_sub = 0.0_fp;
+    bool zero_hydro_flux = false;
     Eos eos;
     State state;
     ReconScratch recon_scratch;

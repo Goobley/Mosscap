@@ -10,6 +10,22 @@
 
 namespace Mosscap {
 
+template <typename FTraits>
+void zero_hydro_fluxes_if_needed(const Simulation& sim) {
+    if (!sim.zero_hydro_flux) {
+        return;
+    }
+
+    sim.fluxes.Fx = 0.0_fp;
+    if constexpr (FTraits::num_dim > 1) {
+        sim.fluxes.Fy = 0.0_fp;
+    }
+    if constexpr (FTraits::num_dim > 2) {
+        sim.fluxes.Fz = 0.0_fp;
+    }
+    Kokkos::fence();
+}
+
 template <int NumDim, typename Lambda>
 void integrate_flux(const std::string& step_name, const GridSize& sz, const Fluxes& flux, const Lambda& updater) {
     int nx = sz.xc - 2 * sz.ng;
@@ -57,6 +73,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "RK2 Step 0",
@@ -77,6 +94,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "RK2 Step 1",
@@ -140,6 +158,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "SSPRK3 Step 0",
@@ -160,6 +179,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "SSPRK3 Step 1",
@@ -180,6 +200,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "SSPRK3 Step 2",
@@ -242,6 +263,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     Q.deep_copy_to(Q_old);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "SSPRK4 Step 0",
@@ -262,6 +284,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "SSPRK4 Step 1",
@@ -282,6 +305,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "SSPRK4 Step 2",
@@ -302,6 +326,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     fill_bcs(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
+    zero_hydro_fluxes_if_needed<FTraits>(sim);
 
     integrate_flux<FTraits::num_dim>(
         "SSPRK4 Step 3",
