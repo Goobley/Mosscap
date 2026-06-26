@@ -112,7 +112,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     restart.open(restart_path, yakl::NETCDF_MODE_READ);
     restart.read(Q0, "Q");
     f64 current_time = 0.0_fp;
-    nc.read(current_time, "time");
+    restart.read(current_time, "time");
 
     if (Q0.extent(0) != n_hydro) {
         throw std::runtime_error(fmt::format("Inconsistency between number of variables for fluid ({}) and in restart file ({})", Fluid::num_vars, Q0.extent(0)));
