@@ -148,13 +148,13 @@ MOSSCAP_NEW_PROBLEM(pure_coronal_condensation_mhd_restart) {
 
     FluidTraitsRt traits(sim.num_dim, sim.fluid_type);
     sim.setup_ics = [=](Simulation& sim) {
-        if (sim.fluid_type == FluidType::Hydro) {
-            initial_conditions<FluidTraits<num_dim, FluidType::Hydro>>(sim, config);
-        } else if (traits.is_mhd) {
-            initial_conditions<FluidTraits<num_dim, FluidType::Mhd>>(sim, config);
-        } else {
-            throw std::runtime_error("Unknown fluid type");
-        }
+        invoke_fluid_traits(
+            sim.num_dim,
+            sim.fluid_type,
+            [&] <typename FTraits> (FTraits) {
+                initial_conditions<FTraits>(sim, config);
+            }
+        );
     };
 
     BackgroundParams background = invoke_fluid_traits(
