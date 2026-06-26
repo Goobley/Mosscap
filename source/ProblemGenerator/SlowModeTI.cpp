@@ -21,7 +21,7 @@ struct BackgroundParams {
 };
 
 template <typename FTraits>
-void background_heating_kernel(const Simulation& sim, const BackgroundParams& bg) {
+static void background_heating_kernel(const Simulation& sim, const BackgroundParams& bg) {
     constexpr fp_t unit_numberdens = 1e15_fp;
     constexpr fp_t unit_rho = unit_numberdens * ConstantsF64::u;
 
