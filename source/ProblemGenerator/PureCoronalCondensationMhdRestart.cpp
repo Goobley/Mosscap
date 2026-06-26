@@ -129,7 +129,9 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
             }
 
             // NOTE(cmo): Assume we start at fully ionised or another module will correct it
-            Q(I(Prim::IonE), k, j, i) = chi_H / (h_mass * eos.avg_mass);
+            Q(I(Cons::IonE), k, j, i) = chi_H / (h_mass * eos.avg_mass);
+            // NOTE(cmo): Add the ionisation energy to the total energy
+            Q(I(Cons::Ene), k, j, i) += Q(I(Cons::Rho), k, j, i) * Q(I(Cons::IonE), k, j, i);
         }
     );
 }
