@@ -82,7 +82,6 @@ static BackgroundParams get_background_params(Simulation& sim, const YAML::Node&
     prim_to_cons<Fluid>(eos.gamma, state.mu0, w, bg.background);
 
     bg.heating_coeff = get_or<fp_t>(config, "problem.background_heating_coeff", 1.0_fp);
-    bg.use_precomputed = false;
     return bg;
 }
 
