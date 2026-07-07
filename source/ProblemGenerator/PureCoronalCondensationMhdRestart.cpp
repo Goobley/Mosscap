@@ -18,15 +18,11 @@ struct BackgroundParams {
     fp_t T0;
     fp_t lambda_T0;
     fp_t heating_coeff;
-    bool use_precomputed = false;
     yakl::SArray<fp_t, 1, N_HYDRO_VARS<3, FLUID_WITH_MAX_VARS>> background;
 };
 
 template <typename FTraits>
 static void background_heating_kernel(const Simulation& sim, const BackgroundParams& bg) {
-    constexpr fp_t unit_numberdens = 1e15_fp;
-    constexpr fp_t unit_rho = unit_numberdens * ConstantsF64::u;
-
     JasUnpack(sim, state, sources);
     JasUnpack(state, sz);
     const auto& S = sources.S;
@@ -34,14 +30,9 @@ static void background_heating_kernel(const Simulation& sim, const BackgroundPar
     int ny = std::max(sz.yc - 2 * sz.ng, 1);
     int nz = std::max(sz.zc - 2 * sz.ng, 1);
 
-    fp_t H = 0.0_fp;
-    if (!bg.use_precomputed) {
-        int source_idx = source_term_index(sim, "thin_loss");
-        auto loss_ctx = (ThinLossContext*)sim.compute_source_terms[source_idx].get_context();
-        H = -thin_loss_single_val<FTraits>(sim, *loss_ctx, bg.background);
-    } else {
-        H = square(bg.background(0) / unit_rho * unit_numberdens) * bg.lambda_T0;
-    }
+    int source_idx = source_term_index(sim, "thin_loss");
+    auto loss_ctx = (ThinLossContext*)sim.compute_source_terms[source_idx].get_context();
+    const fp_t H = -thin_loss_single_val<FTraits>(sim, *loss_ctx, bg.background);
 
     JasUnpack(bg, heating_coeff);
     dex_parallel_for(
@@ -68,9 +59,6 @@ static BackgroundParams get_background_params(Simulation& sim, const YAML::Node&
     JasUnpack(sim, state, eos);
     BackgroundParams bg;
 
-    constexpr fp_t unit_numberdens = 1e15_fp;
-    constexpr fp_t unit_rho = unit_numberdens * ConstantsF64::u;
-
     const std::string input_path = get_or<std::string>(config, "problem.ic_path", "slow_mode_ti.nc");
     yakl::SimpleNetCDF nc;
     nc.open(input_path, yakl::NETCDF_MODE_READ);
@@ -90,7 +78,7 @@ static BackgroundParams get_background_params(Simulation& sim, const YAML::Node&
     w(I(Prim::Bx)) = bx0;
     w(I(Prim::By)) = by0;
     w(I(Prim::Bz)) = bz0;
-    w(I(Prim::Pres)) = rho0 * unit_numberdens / unit_rho * 2.0_fp * ConstantsF64::k_B * T0;
+    w(I(Prim::Pres)) = rho0 / (ConstantsF64::u * eos.avg_mass) * 2.0_fp * ConstantsF64::k_B * T0;
     prim_to_cons<Fluid>(eos.gamma, state.mu0, w, bg.background);
 
     bg.heating_coeff = get_or<fp_t>(config, "problem.background_heating_coeff", 1.0_fp);
