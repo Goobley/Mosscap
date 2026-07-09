@@ -847,7 +847,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
                 atmos.vy(ks) = FP(0.0);
                 atmos.vz(ks) = FP(0.0);
             } else {
-                atmos.ax(ks) = w(I(Prim::Vx));
+                atmos.vx(ks) = w(I(Prim::Vx));
                 atmos.vy(ks) = FP(0.0);
                 atmos.vz(ks) = w(I(Prim::Vy));
             }
