@@ -813,6 +813,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
         .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
         .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
     };
+    const bool ignore_rt_velocities = interface_config.ignore_rt_velocities;
     const auto& atmos = state.atmos;
     dex_parallel_for(
         "Copy atmos qtys",
@@ -841,9 +842,15 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             atmos.temperature(ks) = temperature;
             atmos.nh0(ks) = FP(0.0);
             atmos.vturb(ks) = vturb_fn(temperature, nh, y * nh);
-            atmos.vx(ks) = w(I(Prim::Vx));
-            atmos.vy(ks) = FP(0.0);
-            atmos.vz(ks) = w(I(Prim::Vy));
+            if (ignore_rt_velocities) {
+                atmos.vx(ks) = FP(0.0);
+                atmos.vy(ks) = FP(0.0);
+                atmos.vz(ks) = FP(0.0);
+            } else {
+                atmos.ax(ks) = w(I(Prim::Vx));
+                atmos.vy(ks) = FP(0.0);
+                atmos.vz(ks) = w(I(Prim::Vy));
+            }
         }
     );
     Kokkos::fence();
@@ -983,6 +990,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
     Kokkos::fence();
 
     state.mr_block_map.init(map, max_mip_level);
+    const bool ignore_rt_velocities = interface_config.ignore_rt_velocities;
 
     using dfp_t = Dex::fp_t;
     i64 num_active_cells = num_active_tiles * ::DexImpl::int_pow<FTraits::num_dim>(block_size);
@@ -1033,9 +1041,15 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             atmos.temperature(ks) = temperature;
             atmos.nh0(ks) = FP(0.0);
             atmos.vturb(ks) = vturb_fn(temperature, nh, y * nh);
-            atmos.vx(ks) = w(I(Prim::Vx));
-            atmos.vy(ks) = FP(0.0);
-            atmos.vz(ks) = w(I(Prim::Vy));
+            if (ignore_rt_velocities) {
+                atmos.vx(ks) = FP(0.0);
+                atmos.vy(ks) = FP(0.0);
+                atmos.vz(ks) = FP(0.0);
+            } else {
+                atmos.vx(ks) = w(I(Prim::Vx));
+                atmos.vy(ks) = FP(0.0);
+                atmos.vz(ks) = w(I(Prim::Vy));
+            }
         }
     );
     Kokkos::fence();
@@ -1702,7 +1716,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
     using Cons = typename FTraits::cons;
     using Prim = typename FTraits::prim;
 
-    constexpr fp_t temperature_floor = 2.0e3_fp;
+    const fp_t temperature_floor = interface_config.temperature_floor;
     const fp_t total_abund = sim.eos.total_abund;
     JasUnpack(state, mr_block_map, atmos, pops, adata);
     const auto& block_map = mr_block_map.block_map;

@@ -249,12 +249,23 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
     bool time_dependent = get_or<bool>(config, "dex.time_dep_update", false);
     fp_t theta = get_or<fp_t>(config, "dex.theta", 1.0_fp);
     bool update_ion_e = get_or<bool>(config, "dex.update_ion_e", true);
+    bool ignore_rt_velocities = get_or<bool>(config, "dex.ignore_rt_velocities", false);
+    if (ignore_rt_velocities) {
+        if (LINE_SCHEME != LineCoeffCalc::Classic) {
+            throw std::runtime_error("You likely intended to use Classic for the 0 velocity case. Update and recompile Dex.");
+        }
+    } else {
+        if (LINE_SCHEME == LineCoeffCalc::Classic) {
+            throw std::runtime_error("You likely intended to __not__ use Classic for the velocity case. Update and recompile Dex. (Try CoreAndVoigt)");
+        }
+    }
 
     sim.dex.interface_config.advect = advect;
     sim.dex.interface_config.rad_loss = rad_loss;
     sim.dex.interface_config.time_dependent_updates = time_dependent;
     sim.dex.interface_config.update_ion_e = update_ion_e;
     sim.dex.interface_config.theta = theta;
+    sim.dex.interface_config.ignore_rt_velocities = ignore_rt_velocities;
     sim.dex.init_config(sim, config, config_path);
 }
 
