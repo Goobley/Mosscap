@@ -85,7 +85,9 @@ static BackgroundParams get_background_params(Simulation& sim, const YAML::Node&
 }
 
 template <typename FTraits>
-static void setup_sponge_boundaries(Simulation& sim, const BackgroundParams& background) {
+static void setup_sponge_boundaries(Simulation& sim, const YAML::Node& config, const BackgroundParams& background) {
+    const auto& bound = sim.state.boundaries;
+
     auto check_and_set_constant = [&](
             const BoundaryType boundary,
             const decltype(bound.xs_const)& arr,
@@ -226,9 +228,9 @@ MOSSCAP_NEW_PROBLEM(slow_mode_ti) {
             sim.num_dim,
             sim.fluid_type,
             [&]<typename FTraits>(FTraits) {
-                setup_sponge_boundaries<FTraits>(sim, background);
+                setup_sponge_boundaries<FTraits>(sim, config, background);
             }
-        )
+        );
         setup_sponge(sim, config);
     }
 }
