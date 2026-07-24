@@ -3,6 +3,7 @@
 #include "../MosscapConfig.hpp"
 #include "../SourceTerms.hpp"
 #include "../SourceTerms/TownsendThinLoss.hpp"
+#include "../SourceTerms/Sponge.hpp"
 #include "../SourceTerms/ReplaceSmallValues.hpp"
 #include "../AnalyticLteH.hpp"
 
@@ -83,6 +84,50 @@ static BackgroundParams get_background_params(Simulation& sim, const YAML::Node&
     return bg;
 }
 
+template <typname FTraits>
+static void setup_sponge_boundaries(Simulation& sim, const BackgroundParams& background) {
+    auto check_and_set_constant = [&](
+            const BoundaryType boundary,
+            const decltype(bound.xs_const)& arr,
+            const std::string& bdry
+    ) {
+        // NOTE(cmo): If it's not problem_supplied, then ignore
+        const auto name = fmt::format("{}_const", bdry);
+        if (config["boundary"][name].IsSequence()) {
+            return;
+        }
+
+        const auto& q = background.background;
+        using Cons3 = Cons<3, FLUID_WITH_MAX_VARS>;
+        using C = FTraits::cons;
+        arr(I(C::Rho)) = q(I(Cons3::Rho));
+        arr(I(C::MomX)) = q(I(Cons3::MomX));
+        if constexpr (FTraits::is_mhd || FTraits::num_dim > 1) {
+            arr(I(C::MomY)) = q(I(Cons3::MomY));
+        }
+        if constexpr (FTraits::is_mhd || FTraits::num_dim > 2) {
+            arr(I(C::MomZ)) = q(I(Cons3::MomZ));
+        }
+        arr(I(C::Ene)) = q(I(Cons3::Ene));
+        arr(I(C::IonE)) = q(I(Cons3::IonE));
+        if constexpr (FTraits::is_mhd) {
+            arr(I(C::Bx)) = q(I(Cons3::Bx));
+            arr(I(C::By)) = q(I(Cons3::By));
+            arr(I(C::Bz)) = q(I(Cons3::Bz));
+            if constexpr (is_instance(FTraits::fluid_type, FluidType::GlmMhd)) {
+                arr(I(C::Psi)) = q(I(Cons3::Psi));
+            }
+            if constexpr (FTraits::has_hypertc) {
+                arr(I(C::HeatF)) = q(I(Cons3::HeatF));
+            }
+        }
+    };
+    check_and_set_constant(bound.xs, bound.xs_const, "xs");
+    check_and_set_constant(bound.xe, bound.xe_const, "xe");
+    check_and_set_constant(bound.ys, bound.ys_const, "ys");
+    check_and_set_constant(bound.ye, bound.ye_const, "ye");
+}
+
 template <typename Fluid>
 static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     using Cons = typename Fluid::cons;
@@ -157,6 +202,7 @@ MOSSCAP_NEW_PROBLEM(slow_mode_ti) {
             return get_background_params<FTraits>(sim, config);
         }
     );
+    // NOTE(cmo): In case we're using the sponge
 
     if (get_or<bool>(config, "problem.enable_thin_loss", true)) {
         setup_thin_loss(sim, config);
@@ -174,6 +220,10 @@ MOSSCAP_NEW_PROBLEM(slow_mode_ti) {
         });
     }
     setup_replace_small_values(sim, config);
+
+    if (get_or<bool>(config, "problem.enable_sponge", false)) {
+        setup_sponge(sim, config);
+    }
 }
 
 }
