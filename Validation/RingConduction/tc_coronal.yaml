@@ -1,0 +1,55 @@
+simulation:
+  num_dim: 2
+  fluid_type: mhd
+  zero_hydro_flux: true
+
+grid:
+  num_ghost: 3
+  x: 200
+  y: 200
+  x_dim: 2.0e7
+  x_start: -1.0e7
+  y_start: -1.0e7
+
+boundary:
+  xs: symmetric
+  xe: symmetric
+  ys: symmetric
+  ye: symmetric
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+  ion_frac: 1.0909
+  avg_mass: 1.2727
+
+
+sources:
+  thermal_conduction:
+    enable: true
+    anisotropic: true
+    saturate: false
+
+scheme:
+  riemann_solver: hll
+  reconstruction: muscl
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.7
+
+problem:
+  name: ring_conduction
+  coronal: true
+
+output:
+  name: output_ring_conduction_coronal
+  delta_t: 7200.0
+  single_file: false
+  variables:
+    primitive: true
+    source: true
+
+
+system:
+  mem_pool_gb: 10.0

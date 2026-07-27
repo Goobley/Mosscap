@@ -1,0 +1,54 @@
+# Same as validate_sts.yaml but with RKL2 super-time-stepping disabled
+# (use_sts: false), for a ground-truth cross-check.
+
+simulation:
+  num_dim: 2
+  fluid_type: mhd
+  zero_hydro_flux: true
+
+grid:
+  num_ghost: 3
+  x: 200
+  y: 200
+  x_dim: 2.0
+  x_start: -1.0
+  y_start: -1.0
+
+boundary:
+  xs: symmetric
+  xe: symmetric
+  ys: symmetric
+  ye: symmetric
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+
+sources:
+  thermal_conduction:
+    enable: true
+    anisotropic: true
+    use_sts: false
+
+scheme:
+  riemann_solver: hll
+  reconstruction: muscl
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.7
+  max_time: 400.0
+
+problem:
+  name: ring_conduction
+
+output:
+  name: output_ring_validate_explicit
+  delta_t: 50.0
+  single_file: false
+  variables:
+    primitive: true
+    source: true
+
+system:
+  mem_pool_gb: 10.0

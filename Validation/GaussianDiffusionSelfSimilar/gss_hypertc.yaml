@@ -1,0 +1,68 @@
+# Self-similar Gaussian conduction test -- see gss_sts.yaml for the full
+# description of the physical setup. HyperTc (hyperbolic/Cattaneo-relaxation)
+# conduction. NOTE: flux saturation is not currently implemented for HyperTc
+# (state.cond.limited is read from config but unused in
+# HyperbolicThermalConduction.cpp), so this is not directly comparable to the
+# saturate:true STS/Explicit runs or the saturate_flux=True python
+# reference -- expect some divergence from that alone.
+#
+# CAUTION: real (SI-unit, Spitzer) HyperTc conduction has an unresolved CFL
+# timestep bug found during the coronal ring_conduction investigation (the
+# per-cell CFL reduction can return a wildly-too-large dt for this fluid
+# type/unit combination, causing a NaN blowup). This run may hit the same
+# issue.
+
+simulation:
+  num_dim: 2
+  fluid_type: hypertconly
+  hypertc_kappa: 1.0e-11
+  hypertc_spitzer: true
+
+grid:
+  num_ghost: 3
+  x: 250
+  y: 16
+  x_dim: 2.0e6
+  x_start: -1.0e6
+  y_dim: 128000.0
+  y_start: -64000.0
+
+boundary:
+  xs: periodic
+  xe: periodic
+  ys: periodic
+  ye: periodic
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+  ion_frac: 1.0
+  avg_mass: 1.0
+
+scheme:
+  riemann_solver: hll
+  reconstruction: ppm
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.01
+  max_time: 3.2
+
+problem:
+  name: gaussian_diffusion
+  axis: 0
+  b0: 1.0e-8
+  base_density: 1.0e-12
+  base_temperature: 1.0e4
+  delta_temperature: 9.9e5
+  sigma0: 70710.67811865475
+
+output:
+  name: output_gss_hypertc
+  delta_t: 0.4
+  single_file: false
+  variables:
+    primitive: true
+
+system:
+  mem_pool_gb: 4.0

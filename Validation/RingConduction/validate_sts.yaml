@@ -1,0 +1,56 @@
+# Ring conduction validation trio (sts / explicit / hypertc) -- matched
+# grid/domain/kappa so temporal evolution and extrema can be compared
+# directly across the 3 conduction implementations. Distinct output names
+# from tc.yaml/tc_htc.yaml/tc_coronal.yaml so as not to touch those runs.
+
+simulation:
+  num_dim: 2
+  fluid_type: mhd
+  zero_hydro_flux: true
+
+grid:
+  num_ghost: 3
+  x: 200
+  y: 200
+  x_dim: 2.0
+  x_start: -1.0
+  y_start: -1.0
+
+boundary:
+  xs: symmetric
+  xe: symmetric
+  ys: symmetric
+  ye: symmetric
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+
+sources:
+  thermal_conduction:
+    enable: true
+    anisotropic: true
+    use_sts: true
+
+scheme:
+  riemann_solver: hll
+  reconstruction: muscl
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.7
+  max_time: 400.0
+
+problem:
+  name: ring_conduction
+
+output:
+  name: output_ring_validate_sts
+  delta_t: 50.0
+  single_file: false
+  variables:
+    primitive: true
+    source: true
+
+system:
+  mem_pool_gb: 10.0

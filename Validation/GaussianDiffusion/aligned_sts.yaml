@@ -1,0 +1,62 @@
+# Gaussian diffusion, classic (explicit/STS) anisotropic thermal conduction.
+# Field is aligned with problem.axis, so the anisotropic flux reduces exactly
+# to the isotropic 1D heat equation along that axis -- directly comparable to
+# aligned_hypertc.yaml and to the analytic Gaussian-diffusion solution.
+
+simulation:
+  num_dim: 2
+  fluid_type: mhd
+  zero_hydro_flux: true
+
+grid:
+  num_ghost: 3
+  x: 256
+  y: 16
+  x_dim: 1.0
+
+boundary:
+  xs: symmetric
+  xe: symmetric
+  ys: symmetric
+  ye: symmetric
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+
+sources:
+  thermal_conduction:
+    enable: true
+    anisotropic: true
+    use_sts: true
+
+scheme:
+  riemann_solver: hll
+  reconstruction: muscl
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.7
+  max_time: 0.5
+
+problem:
+  name: gaussian_diffusion
+  dimensionless: true
+  kappa0: 0.03
+  spitzer: false
+  axis: 0
+  b0: 1.0
+  base_density: 1.0
+  base_temperature: 10.0
+  delta_temperature: 2.0
+
+output:
+  name: output_gaussian_diffusion_sts
+  delta_t: 0.05
+  single_file: false
+  variables:
+    primitive: true
+    source: true
+
+system:
+  mem_pool_gb: 4.0

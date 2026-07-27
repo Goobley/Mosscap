@@ -1,0 +1,57 @@
+# Gaussian diffusion, hyperbolic (finite-speed, Cattaneo-relaxation) thermal
+# conduction. Same geometry/kappa/domain as aligned_sts.yaml so the two are
+# directly comparable to each other and to the analytic solution. Note
+# problem.kappa0/spitzer (not simulation.hypertc_kappa) control kappa here,
+# since problem.dimensionless: true overrides state.cond after grid setup.
+
+simulation:
+  num_dim: 2
+  fluid_type: hypertconly
+  # zero_hydro_flux not required -- HyperTcOnly zeroes the hydro flux
+  # vector structurally (fix_hypertconly_flux).
+
+grid:
+  num_ghost: 3
+  x: 256
+  y: 16
+  x_dim: 1.0
+
+boundary:
+  xs: symmetric
+  xe: symmetric
+  ys: symmetric
+  ye: symmetric
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+
+scheme:
+  riemann_solver: hll
+  reconstruction: ppm
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.7
+  max_time: 0.5
+
+problem:
+  name: gaussian_diffusion
+  dimensionless: true
+  kappa0: 0.03
+  spitzer: false
+  axis: 0
+  b0: 1.0
+  base_density: 1.0
+  base_temperature: 10.0
+  delta_temperature: 2.0
+
+output:
+  name: output_gaussian_diffusion_hypertc
+  delta_t: 0.05
+  single_file: false
+  variables:
+    primitive: true
+
+system:
+  mem_pool_gb: 4.0

@@ -1,0 +1,67 @@
+# Self-similar Gaussian conduction test -- see gss_sts.yaml for the full
+# description of the physical setup (matches
+# /workspaces/Mosscap/tmp/cherry_bifrost_self_similar exactly). Identical to
+# gss_sts.yaml except use_sts: false (classic explicit sub-cycled conduction).
+
+simulation:
+  num_dim: 2
+  fluid_type: mhd
+  zero_hydro_flux: true
+
+grid:
+  num_ghost: 3
+  x: 250
+  y: 16
+  x_dim: 2.0e6
+  x_start: -1.0e6
+  y_dim: 128000.0
+  y_start: -64000.0
+
+boundary:
+  xs: periodic
+  xe: periodic
+  ys: periodic
+  ye: periodic
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+  ion_frac: 1.0
+  avg_mass: 1.0
+
+sources:
+  thermal_conduction:
+    enable: true
+    anisotropic: true
+    spitzer: true
+    kappa0: 1.0e-11
+    saturate: false
+    use_sts: false
+
+scheme:
+  riemann_solver: hll
+  reconstruction: muscl
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.001
+  max_time: 3.2
+
+problem:
+  name: gaussian_diffusion
+  axis: 0
+  b0: 1.0e-8
+  base_density: 1.0e-12
+  base_temperature: 1.0e4
+  delta_temperature: 9.9e5
+  sigma0: 70710.67811865475
+
+output:
+  name: output_gss_explicit
+  delta_t: 0.4
+  single_file: false
+  variables:
+    primitive: true
+
+system:
+  mem_pool_gb: 4.0

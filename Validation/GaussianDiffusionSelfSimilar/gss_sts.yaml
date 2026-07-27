@@ -1,0 +1,77 @@
+# Self-similar Gaussian conduction test, dimensionalised to solar coronal
+# conditions, matching the setup in
+# /workspaces/Mosscap/tmp/cherry_bifrost_self_similar (1D reference python
+# code) exactly: rho0=1e-12 kg/m^3, T = 1e4 + 9.9e5*exp(-x^2/(1e5 m)^2),
+# domain x in [-1e6,1e6] m (250 cells), kappa0=1e-11 W/m/K/^(7/2) Spitzer,
+# periodic BCs, max_cfl=0.5, max_time=3.2s.
+#
+# NOTE: our Gaussian exponent convention is exp(-0.5*r^2/sigma0^2), so
+# sigma0 = 1e5/sqrt(2) = 70710.678... to match the reference's
+# exp(-x^2/(1e5)^2).
+#
+# STS (classic explicit/STS anisotropic conduction), field aligned along
+# problem.axis so the anisotropic flux reduces exactly to the isotropic 1D
+# heat equation along x.
+
+simulation:
+  num_dim: 2
+  fluid_type: mhd
+  zero_hydro_flux: true
+
+grid:
+  num_ghost: 3
+  x: 250
+  y: 16
+  x_dim: 2.0e6
+  x_start: -1.0e6
+  y_dim: 128000.0
+  y_start: -64000.0
+
+boundary:
+  xs: periodic
+  xe: periodic
+  ys: periodic
+  ye: periodic
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+  ion_frac: 1.0
+  avg_mass: 1.0
+
+sources:
+  thermal_conduction:
+    enable: true
+    anisotropic: true
+    spitzer: true
+    kappa0: 1.0e-11
+    saturate: false
+    use_sts: true
+
+scheme:
+  riemann_solver: hll
+  reconstruction: muscl
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.5
+  max_time: 3.2
+
+problem:
+  name: gaussian_diffusion
+  axis: 0
+  b0: 1.0e-8
+  base_density: 1.0e-12
+  base_temperature: 1.0e4
+  delta_temperature: 9.9e5
+  sigma0: 70710.67811865475
+
+output:
+  name: output_gss_sts
+  delta_t: 0.4
+  single_file: false
+  variables:
+    primitive: true
+
+system:
+  mem_pool_gb: 4.0

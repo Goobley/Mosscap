@@ -1,0 +1,46 @@
+# Hyperbolic (finite-speed, Cattaneo-relaxation) conduction, matched
+# grid/domain/kappa to validate_sts.yaml/validate_explicit.yaml.
+
+simulation:
+  num_dim: 2
+  fluid_type: hypertconly
+
+grid:
+  num_ghost: 3
+  x: 200
+  y: 200
+  x_dim: 2.0
+  x_start: -1.0
+  y_start: -1.0
+
+boundary:
+  xs: symmetric
+  xe: symmetric
+  ys: symmetric
+  ye: symmetric
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+
+scheme:
+  riemann_solver: hll
+  reconstruction: ppm
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.7
+  max_time: 400.0
+
+problem:
+  name: ring_conduction
+
+output:
+  name: output_ring_validate_hypertc
+  delta_t: 50.0
+  single_file: false
+  variables:
+    primitive: true
+
+system:
+  mem_pool_gb: 10.0
