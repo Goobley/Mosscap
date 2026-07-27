@@ -4,6 +4,7 @@
 #include "Simulation.hpp"
 #include "DivBCleaning.hpp"
 #include "HyperbolicThermalConduction.hpp"
+#include "Hydro.hpp"
 #include "yaml-cpp/yaml.h"
 
 namespace Mosscap {
@@ -360,6 +361,11 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path, const R
             sim.update_eos(sim);
         }
         fill_bcs(sim);
+        // NOTE(cmo): W is otherwise only ever populated inside
+        // compute_hydro_fluxes, so without this the primitive fields in the
+        // very first output snapshot would be whatever Q/W were left as by
+        // allocation (i.e. zero), not the actual ICs.
+        global_cons_to_prim(sim);
         // Write the header + ICs
         // TODO(cmo): Don't do this on restart
         sim.write_output(sim);

@@ -49,6 +49,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/Corrugation.cpp"
     "source/ProblemGenerator/DivBCheckerboard.cpp"
     "source/ProblemGenerator/DoubleShockTube.cpp"
+    "source/ProblemGenerator/GaussianDiffusion.cpp"
     "source/ProblemGenerator/HillierSnowKelvinHelmholtz.cpp"
     "source/ProblemGenerator/KelvinHelmholtz.cpp"
     "source/ProblemGenerator/LinearWaves.cpp"

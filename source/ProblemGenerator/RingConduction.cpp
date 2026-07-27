@@ -27,17 +27,19 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
         sim.max_time = get_or<fp_t>(config, "timestep.max_time", 400.0_fp);
         sim.state.mu0 = 1.0_fp;
         sim.state.p_mass = k_B;
+        const fp_t kappa0 = get_or<fp_t>(config, "problem.kappa0", 0.01_fp);
+        const bool spitzer = get_or<bool>(config, "problem.spitzer", false);
         if constexpr (Fluid::has_hypertc) {
-            sim.state.cond.hypertc_kappa = 0.01_fp;
-            sim.state.cond.spitzer = false;
+            sim.state.cond.hypertc_kappa = kappa0;
+            sim.state.cond.spitzer = spitzer;
         } else {
             int idx = source_term_index(sim, "thermal_conduction");
             if (idx >= sim.compute_source_terms.size()) {
                 throw std::runtime_error("Conduction not initialised!");
             }
             auto ctx = (ThermalConductionContext*)sim.compute_source_terms[idx].get_context();
-            ctx->kappa0 = 0.01_fp;
-            ctx->spitzer = false;
+            ctx->kappa0 = kappa0;
+            ctx->spitzer = spitzer;
         }
     } else {
         mass_density = 5e-12_fp;

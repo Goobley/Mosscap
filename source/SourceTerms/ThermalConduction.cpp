@@ -410,7 +410,7 @@ void thermal_conduction_kernel(const Simulation& sim, const ThermalConductionCon
 
     const fp_t dt_para = estimate_thermal_conduction_timestep<FTraits>(sim, ctx);
     int n_stages = int(std::ceil(
-        0.5_fp * std::sqrt(9.0_fp + 16.0_fp * (dt_sub / dt_para)) - 1.0_fp
+        0.5_fp * (std::sqrt(9.0_fp + 16.0_fp * (dt_sub / dt_para)) - 1.0_fp)
     ));
     if (n_stages % 2 == 0) {
         n_stages += 1;
