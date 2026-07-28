@@ -80,6 +80,9 @@ int main(int argc, char** argv) {
 
             if (sim.dex.interface_config.enable) {
                 sim.dex.update_atmosphere(sim);
+                // NOTE(claude): Bracket the NEQ solve only -- advection of the
+                // reservoir is transport, not a source.
+                sim.dex.snapshot_reservoir_energies();
                 sim.dex.iterate(
                     DexConvergence {
                         .convergence=7e-4_fp,
@@ -90,14 +93,14 @@ int main(int argc, char** argv) {
                         .theta = sim.dex.interface_config.theta,
                     }
                 );
+                sim.dex.evaluate_reservoir_rates(Mosscap::fp_t(dt));
                 sim.dex.copy_pops_to_aux_fields(sim);
                 sim.dex.copy_to_eos(sim);
                 sim.dex.integrate_rad_loss_split(sim);
             }
 
             auto current_time = std::chrono::system_clock::now();
-            if (sim.time >= sim.out_cfg.prev_output_time + sim.out_cfg.delta) {
-                sim.write_output(sim);
+            if (maybe_write_output(sim)) {
                 std::chrono::duration<f64> run_time(current_time - start_time);
                 // TODO(cmo): This is printing very small dt due to step rounding... save dt natural too?
                 fmt::println("* t = {:.03f} s, dt = {:.03e} s, iter = {}, wall time = {:.03e} s", sim.time, dt, sim.current_step, run_time.count());

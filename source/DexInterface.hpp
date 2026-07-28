@@ -16,6 +16,7 @@ namespace Mosscap {
 // NOTE(cmo): Only supporting 2D for now
 using DexState = ::State;
 using DexCascState = ::CascadeState;
+using DexFp1d = ::Fp1d;
 using DexFp2d = ::Fp2d;
 
 struct DexMosscapConfig {
@@ -50,6 +51,23 @@ struct DexInterface {
     DexCascState casc_state;
     i32 num_iter;
     DexFp2d prev_pops; /// Used for time dependent updates
+
+    /// Per-level decomposition of the energy stored in the atomic reservoir,
+    /// relative to the ground state of each model atom's own lowest stage.
+    /// chi_lut + e_exc_lut == adata.energy by construction, converted from the
+    /// eV adata stores to J. [J]
+    DexFp1d chi_lut; /// Ionisation energy of the level's ion stage
+    DexFp1d e_exc_lut; /// Excitation energy above the level's own stage ground
+    /// Reservoir energies sampled immediately before the NEQ solve [J m-3]
+    DexFp1d res_e_ion_pre;
+    DexFp1d res_e_exc_pre;
+    /// Rate at which the NEQ solve released reservoir energy to the gas
+    /// (positive when recombining / de-exciting) [W m-3]
+    DexFp1d g_ion;
+    DexFp1d g_exc;
+    /// Energy injected by the temperature floor in integrate_rad_loss_split,
+    /// positive when the floor is heating the gas [W m-3]
+    DexFp1d temp_floor_heat;
 
     ~DexInterface();
 
@@ -94,6 +112,19 @@ struct DexInterface {
     void integrate_rad_loss_split(const Simulation& sim);
     template <typename FTraits>
     void integrate_rad_loss_split(const Simulation& sim);
+
+    /// Build chi_lut/e_exc_lut from adata_host. Called once, at init.
+    void init_reservoir_luts();
+    /// (Re)allocate the per-active-cell reservoir diagnostics. The active cell
+    /// count changes as the atmosphere is updated.
+    void allocate_reservoir_terms(i64 num_active_cells);
+    /// Overwrite e_ion/e_exc with the reservoir energy currently held in
+    /// state.pops, summed over the levels of every atom [J m-3]
+    void compute_reservoir_energies(const DexFp1d& e_ion, const DexFp1d& e_exc);
+    /// Sample the reservoir energies immediately before the NEQ solve
+    void snapshot_reservoir_energies();
+    /// Difference against the pre-solve sample to form g_ion/g_exc [W m-3]
+    void evaluate_reservoir_rates(fp_t dt);
 
     void run_worker_loop();
     void initial_worker_atmos_setup();

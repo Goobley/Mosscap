@@ -1,9 +1,11 @@
 #include "Output.hpp"
 #include "Simulation.hpp"
+#include "SourceTerms.hpp"
 #include "YAKL_netcdf.h"
 #include "GitVersion.hpp"
 #include "DexInterface.hpp"
 #include <fmt/core.h>
+#include <cctype>
 #include <filesystem>
 #include <regex>
 
@@ -15,6 +17,18 @@ void ncwrap (int ierr, int line) {
         printf("%s\n",nc_strerror(ierr));
         Kokkos::abort(nc_strerror(ierr));
     }
+}
+
+/// Source terms are registered under human-readable names, which aren't
+/// necessarily valid NetCDF variable names.
+static std::string sanitise_var_name(const std::string& name) {
+    std::string result(name);
+    for (char& c : result) {
+        if (!std::isalnum(static_cast<unsigned char>(c))) {
+            c = '_';
+        }
+    }
+    return result;
 }
 
 template <typename FTraits>
@@ -282,6 +296,68 @@ static std::regex get_filename_regex(Simulation& sim) {
     return std::regex(fmt::format("{}_(\\d{{5}})\\.nc", cfg.filename));
 }
 
+/// Re-evaluate each requested source term in isolation, into a zeroed scratch
+/// array, and write out the requested slots. The terms compute rates (the
+/// integrators apply `S * dt`), so substituting `dt_sub = dt` gives the rate
+/// over the full step without any further normalisation.
+static void write_source_term_outputs(Simulation& sim, yakl::SimpleNetCDF& nc) {
+    auto& cfg = sim.out_cfg;
+    if (cfg.variables.source_terms.empty()) {
+        return;
+    }
+
+    const bool single_file = cfg.single_file;
+    const int time_idx = cfg.output_count;
+    const std::string time_name("time");
+
+    // NOTE(claude): The terms divide an increment by dt_sub to form a rate, so
+    // they can't be evaluated before the first step has set a dt. The ICs
+    // snapshot gets zeroed fields instead, so every file has the same
+    // structure.
+    const bool evaluate = sim.dt > 0.0_fp;
+
+    Fp4d scratch = sim.sources.S.createDeviceObject();
+
+    for (const auto& term : cfg.variables.source_terms) {
+        scratch = 0.0_fp;
+
+        if (evaluate) {
+            const int idx = source_term_index(sim, term.name);
+            if (idx == sim.compute_source_terms.size()) {
+                throw std::runtime_error(
+                    fmt::format("Source term \"{}\" requested for output is not registered.", term.name)
+                );
+            }
+            const fp_t prev_dt_sub = sim.dt_sub;
+            sim.dt_sub = sim.dt;
+            std::swap(sim.sources.S, scratch);
+            sim.compute_source_terms[idx].fn(sim);
+            std::swap(sim.sources.S, scratch);
+            sim.dt_sub = prev_dt_sub;
+        }
+
+        for (int i = 0; i < term.indices.size(); ++i) {
+            const std::string var_name = fmt::format(
+                "S_{}_{}",
+                sanitise_var_name(term.name),
+                term.slot_names[i]
+            );
+            Fp3d slot(
+                var_name.c_str(),
+                &scratch(term.indices[i], 0, 0, 0),
+                scratch.extent(1),
+                scratch.extent(2),
+                scratch.extent(3)
+            );
+            if (single_file) {
+                nc.write1(slot, var_name, {"z", "y", "x"}, time_idx, time_name);
+            } else {
+                nc.write(slot, var_name, {"z", "y", "x"});
+            }
+        }
+    }
+}
+
 bool write_output(Simulation& sim) {
     auto& cfg = sim.out_cfg;
     const bool single_file = cfg.single_file;
@@ -297,7 +373,10 @@ bool write_output(Simulation& sim) {
     }
 
     const auto& eos = sim.eos;
+    // NOTE(claude): 0 for the ICs snapshot, which is written before any step.
+    const f64 dt_taken = sim.dt;
     if (!single_file) {
+        nc.write(dt_taken, "dt");
         if (cfg.variables.conserved) {
             nc.write(sim.state.Q, "Q", {"var", "z", "y", "x"});
         }
@@ -326,6 +405,7 @@ bool write_output(Simulation& sim) {
         std::string time_name("time");
         int time_idx = cfg.output_count;
         nc.write1(sim.time, time_name, time_idx, time_name);
+        nc.write1(dt_taken, "dt", time_idx, time_name);
         if (cfg.variables.conserved) {
             nc.write1(sim.state.Q, "Q", {"var", "z", "y", "x"}, time_idx, time_name);
         }
@@ -352,6 +432,8 @@ bool write_output(Simulation& sim) {
         }
     }
 
+    write_source_term_outputs(sim, nc);
+
     if (sim.dex.interface_config.enable) {
         sim.dex.write_output(sim, nc);
     }
@@ -362,6 +444,29 @@ bool write_output(Simulation& sim) {
     nc.close();
 
     return true;
+}
+
+bool maybe_write_output(Simulation& sim) {
+    auto& cfg = sim.out_cfg;
+
+    if (sim.time >= cfg.prev_output_time + cfg.delta) {
+        // NOTE(claude): Arm the burst, and let write_output re-anchor the interval
+        // on this, the first snapshot of the burst.
+        cfg.burst_remaining = cfg.n_burst - 1;
+        return sim.write_output(sim);
+    }
+
+    if (cfg.burst_remaining > 0) {
+        cfg.burst_remaining -= 1;
+        // NOTE(claude): Burst members must not advance the interval, otherwise the
+        // cadence drifts later by (n_burst - 1) steps every burst.
+        const f64 anchor = cfg.prev_output_time;
+        const bool result = sim.write_output(sim);
+        cfg.prev_output_time = anchor;
+        return result;
+    }
+
+    return false;
 }
 
 bool load_restart(Simulation& sim, i64 restart_from) {

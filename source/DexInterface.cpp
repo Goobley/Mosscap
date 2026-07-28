@@ -431,6 +431,7 @@ static void allocate_cell_count_based_terms(DexState& state, i64 num_active_cell
             decltype(state.Gamma)::value_type("Gamma", n_level, n_level, num_active_cells)
         );
     }
+    state.rate_diag.allocate(state.adata_host, state.config.output, num_active_cells);
     state.wphi = decltype(state.wphi)("wphi", state.adata.lines.extent(0), num_active_cells);
 
     // TODO(cmo): Maybe no J unless requested.
@@ -857,6 +858,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
 
 
     allocate_cell_count_based_terms(state, num_active_cells);
+    allocate_reservoir_terms(num_active_cells);
 
     // TODO(cmo): We can reduce the amount of work performed here.
     // casc_state.init(state, state.config.max_cascade);
@@ -1092,6 +1094,8 @@ bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::stri
     GammaAtomsAndMapping gamma_atoms = extract_atoms_with_gamma_and_mapping(atomic_data.device, atomic_data.host);
     state.atoms_with_gamma = gamma_atoms.atoms;
     state.atoms_with_gamma_mapping = gamma_atoms.mapping;
+    state.rate_diag.init_stage_index(state.adata_host);
+    init_reservoir_luts();
 
     i32 max_mip_level = 0;
     for (int i = 0; i <= config.max_cascade; ++i) {
@@ -1377,6 +1381,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
             }
             yakl::fence();
         }
+        state.rate_diag.zero();
 
         bool print_worst_wphi = first_inner_iter;
         compute_profile_normalisation(state, casc_state, print_worst_wphi);
@@ -1499,14 +1504,17 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
     // NOTE(cmo): We only need to do this after the final iteration.
     wave_dist.reduce_rad_loss(&state);
     wave_dist.reduce_J(&state);
+    wave_dist.reduce_rate_diagnostics(&state);
 
     num_iter = i;
 
     return max_change <= tol.convergence;
 }
 
+/// NOTE(claude): Takes a mutable state because collisional_rates output is
+/// computed into the (by now dead) Gamma buffer.
 void save_results(
-    const DexState& state,
+    DexState& state,
     yakl::SimpleNetCDF& nc,
     bool single_file,
     i32 num_iter,
@@ -1613,11 +1621,84 @@ void save_results(
 
     if (out_cfg.rad_loss) {
         std::string leading_dim = config.rad_loss == RadLossType::Integrated ? "wavelength_integrated" : "wavelength";
+        // NOTE(claude): rad_loss is held in kW/m3 (and applied as such), but is
+        // output in W/m3 to match the other rates. Scale a copy -- the live
+        // array is still read by min_characteristic_cooling_time and
+        // update_temperature_rad_eq.
         if (config.store_J_on_cpu) {
-            maybe_rehydrate_and_write(state.rad_loss_cpu, convert_name("rad_loss"), {leading_dim});
+            const auto& src = state.rad_loss_cpu;
+            auto scaled = src.createHostObject();
+            for (i32 la = 0; la < src.extent(0); ++la) {
+                for (i64 ks = 0; ks < src.extent(1); ++ks) {
+                    scaled(la, ks) = src(la, ks) * 1e3_fp;
+                }
+            }
+            maybe_rehydrate_and_write(scaled, convert_name("rad_loss"), {leading_dim});
         } else {
-            maybe_rehydrate_and_write(state.rad_loss, convert_name("rad_loss"), {leading_dim});
+            const auto& src = state.rad_loss;
+            auto scaled = src.createDeviceObject();
+            dex_parallel_for(
+                "rad_loss -> W m-3",
+                FlatLoop<2>(src.extent(0), src.extent(1)),
+                KOKKOS_LAMBDA (i32 la, i64 ks) {
+                    scaled(la, ks) = src(la, ks) * 1e3_fp;
+                }
+            );
+            Kokkos::fence();
+            maybe_rehydrate_and_write(scaled, convert_name("rad_loss"), {leading_dim});
         }
+    }
+
+    const std::vector<GammaMat>* collisional = nullptr;
+    if (out_cfg.collisional_rates) {
+        // NOTE(claude): Refills Gamma with the raw collisional rates (no
+        // fixup_gamma, so the diagonal stays zero). Gamma is dead here: it is
+        // re-zeroed at the top of the next iterate.
+        compute_collisions_to_gamma(&state);
+        collisional = &state.Gamma;
+    }
+    write_rate_diagnostics(
+        state,
+        nc,
+        RateDiagOutputOpts{
+            .sparse = out_cfg.sparse,
+            .suffix = single_file ? fmt::format("_{}", time_idx) : std::string(""),
+            .z_dim = "z_dex",
+            .x_dim = "x_dex",
+            // NOTE(claude): kW m-3 -> W m-3, to match the other rates here.
+            .energy_scale = RadLossFp(1e3)
+        },
+        collisional
+    );
+}
+
+/// Write one of the per-active-cell reservoir diagnostics, following the same
+/// sparse/dense and naming conventions as the rest of the Dex output.
+static void write_sparse_diagnostic(
+    const DexState& state,
+    yakl::SimpleNetCDF& nc,
+    bool single_file,
+    i32 time_idx,
+    const DexFp1d& arr,
+    const std::string& base_name
+) {
+    if (!arr.initialized()) {
+        return;
+    }
+
+    auto convert_name = [&](const std::string& name) {
+        if (single_file) {
+            return fmt::format("{}_{}", name, time_idx);
+        }
+        return name;
+    };
+
+    const std::string name = convert_name(base_name);
+    if (state.config.output.sparse) {
+        nc.write(arr, name, {convert_name("ks")});
+    } else {
+        auto hydrated = rehydrate_sparse_quantity(state.mr_block_map.block_map, arr);
+        nc.write(hydrated, name, {"z_dex", "x_dex"});
     }
 }
 
@@ -1627,6 +1708,16 @@ void DexInterface::write_output(const Simulation& sim, yakl::SimpleNetCDF& nc) {
         add_netcdf_attributes(state, nc);
     }
     save_results(state, nc, cfg.single_file, num_iter, sim.out_cfg.output_count);
+
+    if (state.mpi_state.rank != 0) {
+        return;
+    }
+    const i32 time_idx = cfg.output_count;
+    write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, g_ion, "g_ion");
+    write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, g_exc, "g_exc");
+    if (interface_config.rad_loss) {
+        write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, temp_floor_heat, "temp_floor_heat");
+    }
 }
 
 template <typename FTraits>
@@ -1707,6 +1798,128 @@ void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
     });
 }
 
+void DexInterface::init_reservoir_luts() {
+    const auto& adata_host = state.adata_host;
+    const i32 num_atom = adata_host.num_level.extent(0);
+    const i64 total_n_level = adata_host.energy.extent(0);
+
+    yakl::Array<Dex::fp_t, 1, yakl::memHost> chi("chi_lut", total_n_level);
+    yakl::Array<Dex::fp_t, 1, yakl::memHost> e_exc("e_exc_lut", total_n_level);
+
+    for (i32 ia = 0; ia < num_atom; ++ia) {
+        const i32 start = adata_host.level_start(ia);
+        const i32 n_level = adata_host.num_level(ia);
+        for (i32 l = start; l < start + n_level; ++l) {
+            // NOTE(claude): The ground state of this level's ion stage, i.e. the
+            // lowest energy level of this atom sharing its stage. Levels are
+            // energy ordered within an atom.
+            const auto stage_l = adata_host.stage(l);
+            i32 ground = l;
+            for (i32 m = start; m < start + n_level; ++m) {
+                if (adata_host.stage(m) == stage_l) {
+                    ground = m;
+                    break;
+                }
+            }
+            // NOTE(claude): Energies are relative to level 0 of the model atom, so
+            // chi is measured from the atom's own lowest stage: for a CaII
+            // model, the Ca II levels carry chi = 0 and only the Ca II -> III
+            // step is counted. chi + e_exc == energy, so g_ion + g_exc
+            // reproduces the IonE reservoir exactly.
+            // adata energies are stored in eV, so convert to J here.
+            chi(l) = (adata_host.energy(ground) - adata_host.energy(start)) * ConstantsF64::eV;
+            e_exc(l) = (adata_host.energy(l) - adata_host.energy(ground)) * ConstantsF64::eV;
+        }
+    }
+
+    chi_lut = chi.createDeviceCopy();
+    e_exc_lut = e_exc.createDeviceCopy();
+}
+
+void DexInterface::allocate_reservoir_terms(i64 num_active_cells) {
+    if (res_e_ion_pre.initialized() && res_e_ion_pre.extent(0) == num_active_cells) {
+        return;
+    }
+
+    res_e_ion_pre = DexFp1d("E_ion_pre", num_active_cells);
+    res_e_exc_pre = DexFp1d("E_exc_pre", num_active_cells);
+    g_ion = DexFp1d("g_ion", num_active_cells);
+    g_exc = DexFp1d("g_exc", num_active_cells);
+    temp_floor_heat = DexFp1d("temp_floor_heat", num_active_cells);
+
+    res_e_ion_pre = FP(0.0);
+    res_e_exc_pre = FP(0.0);
+    g_ion = FP(0.0);
+    g_exc = FP(0.0);
+    temp_floor_heat = FP(0.0);
+    Kokkos::fence();
+}
+
+void DexInterface::compute_reservoir_energies(const DexFp1d& e_ion, const DexFp1d& e_exc) {
+    JasUnpack(state, pops);
+    const auto& chi = chi_lut;
+    const auto& exc = e_exc_lut;
+
+    // NOTE(claude): pops has every level of every atom along its leading
+    // dimension, so this sums over all species.
+    dex_parallel_for(
+        "Reservoir energy",
+        FlatLoop<1>(pops.extent(1)),
+        KOKKOS_LAMBDA (i64 ks) {
+            Dex::fp_t ion = FP(0.0);
+            Dex::fp_t excitation = FP(0.0);
+            for (int l = 0; l < pops.extent(0); ++l) {
+                ion += pops(l, ks) * chi(l);
+                excitation += pops(l, ks) * exc(l);
+            }
+            e_ion(ks) = ion;
+            e_exc(ks) = excitation;
+        }
+    );
+    Kokkos::fence();
+}
+
+void DexInterface::snapshot_reservoir_energies() {
+    if (!interface_config.enable || state.mr_block_map.get_num_active_cells() == 0) {
+        return;
+    }
+
+    allocate_reservoir_terms(state.pops.extent(1));
+    compute_reservoir_energies(res_e_ion_pre, res_e_exc_pre);
+}
+
+void DexInterface::evaluate_reservoir_rates(fp_t dt) {
+    if (!interface_config.enable || state.mr_block_map.get_num_active_cells() == 0) {
+        return;
+    }
+    if (!res_e_ion_pre.initialized() || res_e_ion_pre.extent(0) != state.pops.extent(1)) {
+        throw std::runtime_error(
+            "The active cell count changed across the NEQ solve; reservoir rates can't be differenced."
+        );
+    }
+
+    // NOTE(claude): Compute the post-solve energies into g_ion/g_exc, then
+    // difference in place. rho is unchanged across the solve.
+    compute_reservoir_energies(g_ion, g_exc);
+
+    const auto& e_ion_pre = res_e_ion_pre;
+    const auto& e_exc_pre = res_e_exc_pre;
+    const auto& gi = g_ion;
+    const auto& ge = g_exc;
+    const Dex::fp_t inv_dt = (dt > 0.0_fp) ? Dex::fp_t(FP(1.0) / dt) : FP(0.0);
+
+    dex_parallel_for(
+        "Reservoir rates",
+        FlatLoop<1>(gi.extent(0)),
+        KOKKOS_LAMBDA (i64 ks) {
+            // Positive when recombining / de-exciting, i.e. releasing energy
+            gi(ks) = (e_ion_pre(ks) - gi(ks)) * inv_dt;
+            ge(ks) = (e_exc_pre(ks) - ge(ks)) * inv_dt;
+        }
+    );
+    Kokkos::fence();
+}
+
 template <typename FTraits>
 void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
     if (!interface_config.enable || !interface_config.rad_loss) {
@@ -1771,6 +1984,9 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
     }
 
     const bool update_ion_e = interface_config.update_ion_e;
+    allocate_reservoir_terms(state.pops.extent(1));
+    const auto& floor_heat = temp_floor_heat;
+    const fp_t inv_dt = (dt > 0.0_fp) ? (1.0_fp / dt) : 0.0_fp;
     typedef Kokkos::MinLoc<fp_t, i64> MinLoc;
     MinLoc::value_type minloc;
     dex_parallel_reduce(
@@ -1785,6 +2001,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
             // Calculated in kW/m3;
             fp_t delta_E = 0.0_fp;
             delta_E = -rad_loss(ks) * 1e3_fp * dt;
+            floor_heat(ks) = 0.0_fp;
 
             if (update_ion_e) {
                 QtyView Qv(Q, idx);
@@ -1802,6 +2019,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
                     const fp_t pressure_deficit = temperature_deficit * (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks)));
                     const fp_t energy_deficit = pressure_deficit / (gamma - 1.0_fp);
                     Qv(I(Cons::Ene)) += energy_deficit;
+                    floor_heat(ks) = energy_deficit * inv_dt;
                 }
 
                 if (temperature_post < min_loc.val) {
@@ -1814,9 +2032,11 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
                 fp_t eint_post = eint_pre + delta_E;
                 fp_t pressure_post = eint_post * (gamma - 1.0_fp);
                 fp_t temperature_post = pressure_post / (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks)));
+                const fp_t eint_unclamped = eint_post;
                 temperature_post = std::max(temperature_post, temperature_floor);
                 pressure_post = (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks))) * temperature_post;
                 eint_post = pressure_post / (gamma - 1.0_fp);
+                floor_heat(ks) = (eint_post - eint_unclamped) * inv_dt;
 
                 if (temperature_post < min_loc.val) {
                     min_loc.val = temperature_post;
@@ -2074,7 +2294,7 @@ fp_t DexInterface::min_characteristic_cooling_time() {
             for (int i = 0; i < adata.energy.extent(0); ++i) {
                 e_int += pops(i, ks) * adata.energy(i) * eV;
             }
-            fp_t cooling_time = e_int / std::abs(rad_loss(0, ks) * 1e3);
+            fp_t cooling_time = e_int / std::abs(rad_loss(0, ks) * 1e3_fp);
             running_min = std::min(running_min, cooling_time);
         },
         Kokkos::Min<fp_t>(result)
@@ -2100,7 +2320,7 @@ void DexInterface::update_temperature_rad_eq(fp_t delta_t) {
         "Update temperature (rad loss)",
         FlatLoop<1>(rad_loss.extent(1)),
         KOKKOS_LAMBDA (i64 ks, fp_t& running_max) {
-            const fp_t L = rad_loss(0, ks) * 1e3; // Calculated in kW/m3
+            const fp_t L = rad_loss(0, ks) * 1e3_fp; // Calculated in kW/m3
             const fp_t T = atmos.temperature(ks);
 
             const fp_t temperature_update = (FP(2.0) / FP(5.0)) * L * T / atmos.pressure(ks) * delta_t;

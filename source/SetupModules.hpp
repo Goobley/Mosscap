@@ -2,10 +2,14 @@
 #define MOSSCAP_SETUP_MODULES_HPP
 
 #include "Simulation.hpp"
+#include "SourceTerms.hpp"
 #include "DivBCleaning.hpp"
 #include "HyperbolicThermalConduction.hpp"
 #include "Hydro.hpp"
 #include "yaml-cpp/yaml.h"
+
+#include <algorithm>
+#include <vector>
 
 namespace Mosscap {
 
@@ -218,18 +222,186 @@ void setup_problem(Simulation& sim, YAML::Node& config) {
     get_problem_generator().dispatch(problem_name, sim, config);
 }
 
+struct ConsSlot {
+    const char* name;
+    int index;
+};
+
+/// The conserved slots that actually exist for this fluid type, in index order.
+/// Unused slots carry sentinel indices well beyond num_vars, so a bounds check
+/// is enough to filter them.
+template <typename FTraits>
+std::vector<ConsSlot> available_cons_slots() {
+    using Cons = typename FTraits::cons;
+    const ConsSlot all[] = {
+        {"rho", I(Cons::Rho)},
+        {"momx", I(Cons::MomX)},
+        {"momy", I(Cons::MomY)},
+        {"momz", I(Cons::MomZ)},
+        {"ene", I(Cons::Ene)},
+        {"ione", I(Cons::IonE)},
+        {"bx", I(Cons::Bx)},
+        {"by", I(Cons::By)},
+        {"bz", I(Cons::Bz)},
+        {"psi", I(Cons::Psi)},
+        {"heatf", I(Cons::HeatF)},
+    };
+
+    std::vector<ConsSlot> result;
+    for (const auto& slot : all) {
+        if (slot.index < FTraits::num_vars) {
+            result.push_back(slot);
+        }
+    }
+    std::sort(
+        result.begin(),
+        result.end(),
+        [](const ConsSlot& a, const ConsSlot& b) { return a.index < b.index; }
+    );
+    return result;
+}
+
+/// Parse `output.source_terms`, a mapping of source term name to the conserved
+/// slots of its source array to write out, e.g.
+///     source_terms:
+///       thin_loss: [ene]
+///       gravity:   [momy, ene]
+///       sponge:    all
+/// The term names are only checked against the registry once the problem
+/// generator has run (see validate_source_term_outputs).
+void setup_source_term_outputs(Simulation& sim, YAML::Node& config) {
+    if (!config["output"] || !config["output"]["source_terms"]) {
+        return;
+    }
+    const YAML::Node& terms = config["output"]["source_terms"];
+    if (!terms.IsMap()) {
+        throw std::runtime_error("output.source_terms must be a mapping of source term name to a list of conserved slots (or \"all\").");
+    }
+
+    const auto slots = invoke_fluid_traits(
+        sim.num_dim,
+        sim.fluid_type,
+        []<typename FTraits>(FTraits) -> std::vector<ConsSlot> {
+            return available_cons_slots<FTraits>();
+        }
+    );
+
+    auto slot_names = [&slots]() {
+        std::string result;
+        for (const auto& slot : slots) {
+            if (!result.empty()) {
+                result += ", ";
+            }
+            result += slot.name;
+        }
+        return result;
+    };
+
+    for (const auto& entry : terms) {
+        const std::string term_name = entry.first.as<std::string>();
+        SourceTermOutput out{ .name = term_name };
+
+        std::vector<std::string> requested;
+        if (entry.second.IsScalar()) {
+            requested.push_back(entry.second.as<std::string>());
+        } else if (entry.second.IsSequence()) {
+            for (const auto& slot : entry.second) {
+                requested.push_back(slot.as<std::string>());
+            }
+        } else {
+            throw std::runtime_error(
+                fmt::format("output.source_terms.{} must be a slot name, a list of slot names, or \"all\".", term_name)
+            );
+        }
+
+        for (std::string& name : requested) {
+            std::transform(
+                name.begin(),
+                name.end(),
+                name.begin(),
+                [](char c) { return std::tolower(c); }
+            );
+        }
+
+        const bool all = (requested.size() == 1 && requested[0] == "all");
+        if (all) {
+            for (const auto& slot : slots) {
+                out.indices.push_back(slot.index);
+                out.slot_names.push_back(slot.name);
+            }
+        } else {
+            for (const std::string& name : requested) {
+                auto iter = std::find_if(
+                    slots.begin(),
+                    slots.end(),
+                    [&name](const ConsSlot& slot) { return name == slot.name; }
+                );
+                if (iter == slots.end()) {
+                    throw std::runtime_error(
+                        fmt::format(
+                            "output.source_terms.{}: \"{}\" is not a conserved slot of fluid type \"{}\". Available: {}, all.",
+                            term_name,
+                            name,
+                            FluidTypeName[I(sim.fluid_type)],
+                            slot_names()
+                        )
+                    );
+                }
+                out.indices.push_back(iter->index);
+                out.slot_names.push_back(iter->name);
+            }
+        }
+
+        sim.out_cfg.variables.source_terms.emplace_back(std::move(out));
+    }
+}
+
+/// Source terms are registered by the problem generator, so their names can
+/// only be checked once that has run. Fail here rather than at the first write.
+void validate_source_term_outputs(const Simulation& sim) {
+    for (const auto& term : sim.out_cfg.variables.source_terms) {
+        if (source_term_index(sim, term.name) != sim.compute_source_terms.size()) {
+            continue;
+        }
+
+        std::string registered;
+        for (const auto& src : sim.compute_source_terms) {
+            if (!registered.empty()) {
+                registered += ", ";
+            }
+            registered += fmt::format("\"{}\"", src.name);
+        }
+        if (registered.empty()) {
+            registered = "<none>";
+        }
+        throw std::runtime_error(
+            fmt::format(
+                "output.source_terms requests \"{}\", which is not a registered source term. Registered: {}.",
+                term.name,
+                registered
+            )
+        );
+    }
+}
+
 void setup_output(Simulation& sim, YAML::Node& config) {
     sim.out_cfg.problem_name = get_or<std::string>(config, "problem.name", "circular_explosion");
     sim.out_cfg.filename = get_or<std::string>(config, "output.name", fmt::format("output_{}", sim.out_cfg.problem_name));
     sim.out_cfg.single_file = get_or<bool>(config, "output.single_file", true);
     sim.out_cfg.delta = get_or<f64>(config, "output.delta_t", 0.1);
+    sim.out_cfg.n_burst = get_or<int>(config, "output.n_burst", 1);
+    if (sim.out_cfg.n_burst < 1) {
+        throw std::runtime_error(fmt::format("output.n_burst = {}, must be >= 1", sim.out_cfg.n_burst));
+    }
 
     sim.out_cfg.output_count = 0;
     sim.out_cfg.prev_output_time = -1.0;
+    sim.out_cfg.burst_remaining = 0;
     sim.out_cfg.variables.conserved = get_or<bool>(config, "output.variables.conserved", true);
     sim.out_cfg.variables.primitive = get_or<bool>(config, "output.variables.primitive", false);
     sim.out_cfg.variables.fluxes = get_or<bool>(config, "output.variables.fluxes", false);
     sim.out_cfg.variables.source = get_or<bool>(config, "output.variables.source", false);
+    setup_source_term_outputs(sim, config);
 
     if (!sim.write_output) {
         sim.write_output = write_output;
@@ -349,6 +521,9 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path, const R
     setup_eos(sim, config);
     setup_output(sim, config);
     setup_problem(sim, config);
+    // NOTE(claude): Source terms are registered by the problem generator, so the
+    // names requested for output can only be checked now.
+    validate_source_term_outputs(sim);
 
     if (restart.restart) {
         load_restart(sim, restart.restart_from);
