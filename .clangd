@@ -1,0 +1,18 @@
+CompileFlags:
+  CompilationDatabase: build
+  Remove:
+    - -forward-unknown-to-host-compiler
+    - --generate-code=*
+    - --generate-line-info
+    - -ftz=*
+    - -diag-suppress=*
+    - -extended-lambda
+    - -Wext-lambda-captures-this
+    - -expt-relaxed-constexpr
+    - -Xcompiler
+    - -fopenmp
+    - -x
+    - cu
+  Add:
+    - -xc++
+    - -Wno-unknown-warning-option
