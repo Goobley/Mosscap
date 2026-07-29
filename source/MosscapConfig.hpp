@@ -90,6 +90,22 @@ T get_or(const YAML::Node& f, const std::string& id, const T& default_val) {
     return default_val;
 }
 
+/// Whether the config variable at `id` of the form x.y.z is present
+inline bool has_key(const YAML::Node& f, const std::string& id) {
+    size_t pos = id.find('.');
+    if (pos != std::string::npos) {
+        // split head and tail around the .: head.tail.x.y.z -> head, tail.x.y.z
+        std::string head(id.substr(0, pos));
+        std::string tail(id.substr(pos+1));
+        if (f[head]) {
+            return has_key(f[head], tail);
+        }
+        return false;
+    }
+
+    return bool(f[id]);
+}
+
 /// Set the config variable at `id` of the form x.y.z to val if it doesn't already exist.
 template <typename T>
 void set_if_not_present(YAML::Node& f, const std::string& id, const T& val) {

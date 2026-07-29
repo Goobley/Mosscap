@@ -44,12 +44,12 @@ fp_t thin_loss_single_val(
             yakl::SArray<fp_t, 1, n_hydro> w;
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
 
-            const fp_t nh_tot = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
+            const fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
             fp_t y = eos.y;
             if (!eos.is_constant) {
                 y = ion_frac;
             }
-            auto temperature = temperature_si(w(I(Prim::Pres)), nh_tot, y);
+            auto temperature = temperature_si(w(I(Prim::Pres)), nh_tot, eos.total_abund, y);
             fp_t ne = y * nh_tot;
             if (temperature < ctx.min_temperature) {
                 return;

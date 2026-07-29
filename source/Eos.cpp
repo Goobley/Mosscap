@@ -12,7 +12,25 @@ namespace Mosscap {
 bool Eos::init(Simulation& sim, const YAML::Node& config) {
     std::string eos_str = get_or<std::string>(config, "eos.type", "ideal");
     EosType type = find_associated_enum<EosType>(EosTypeName, NumEosType, eos_str);
-    avg_mass = get_or<fp_t>(config, "eos.avg_mass", 1.0_fp);
+    // NOTE(claude): eos.avg_mass was always the mass per hydrogen atom, never
+    // an average particle mass, so it has been renamed. The old key is still
+    // accepted, with a warning.
+    const bool has_new_key = has_key(config, "eos.mass_per_h");
+    const bool has_old_key = has_key(config, "eos.avg_mass");
+    if (has_new_key && has_old_key) {
+        throw std::runtime_error(
+            "Both eos.mass_per_h and the deprecated eos.avg_mass are set. Remove eos.avg_mass."
+        );
+    }
+    if (has_old_key) {
+        fmt::println(
+            "WARNING: eos.avg_mass is deprecated and will be removed; it is the mass per "
+            "hydrogen atom, not an average particle mass. Rename it to eos.mass_per_h."
+        );
+        mass_per_h = get_or<fp_t>(config, "eos.avg_mass", 1.0_fp);
+    } else {
+        mass_per_h = get_or<fp_t>(config, "eos.mass_per_h", 1.0_fp);
+    }
     this->type = type;
 
     switch (type) {
@@ -36,8 +54,9 @@ bool Eos::init(Simulation& sim, const YAML::Node& config) {
             fp_t gamma = get_or<fp_t>(config, "eos.gamma", 5.0_fp / 3.0_fp);
             has_ion_e = true;
             fp_t temperature_floor = get_or<fp_t>(config, "eos.min_temperature", 2e3);
+            bool renorm_tracer_hpops = get_or<bool>(config, "eos.renorm_tracer_hpops", false);
 
-            return init_tracer(gamma, sim, temperature_floor);
+            return init_tracer(gamma, sim, temperature_floor, renorm_tracer_hpops);
         } break;
     }
 
@@ -84,7 +103,7 @@ bool Eos::init_tabulated_lte_h(fp_t gamma_, Simulation& sim, const std::string& 
     return true;
 }
 
-bool Eos::init_tracer(fp_t gamma_, Simulation& sim, fp_t min_temperature) {
+bool Eos::init_tracer(fp_t gamma_, Simulation& sim, fp_t min_temperature, bool renorm_tracer_hpops) {
     is_constant = false;
     gamma = gamma_;
 
@@ -96,8 +115,15 @@ bool Eos::init_tracer(fp_t gamma_, Simulation& sim, fp_t min_temperature) {
     y_space = Fp3d("y_space", sz.zc, sz.yc, sz.xc);
     y_space = 1.0_fp;
 
+    if (min_temperature > 0.0_fp) {
+        floor_heat = Fp3d("eos_floor_heat", sz.zc, sz.yc, sz.xc);
+        floor_heat = 0.0_fp;
+    }
+
+    DexPressureEosOptions opts;
+    opts.renorm_tracer_hpops = renorm_tracer_hpops;
     DexPressureEos dex_eos;
-    dex_eos.init(sim, min_temperature);
+    dex_eos.init(sim, min_temperature, opts);
 
     sim.update_eos = [dex_eos](const Simulation& sim) {
         invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {

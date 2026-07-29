@@ -225,12 +225,12 @@ void thin_loss_kernel(const Simulation& sim, const ThinLossContext& ctx) {
             // const bool do_print = (j == 256 && i == 256);
             const bool do_print = false;
 
-            const fp_t nh_tot = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
+            const fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
             fp_t y = eos.y;
             if (!eos.is_constant) {
                 y = eos.y_space(cell_idx.k, cell_idx.j, cell_idx.i);
             }
-            auto temperature = temperature_si(w(I(Prim::Pres)), nh_tot, y);
+            auto temperature = temperature_si(w(I(Prim::Pres)), nh_tot, eos.total_abund, y);
             fp_t ne = y * nh_tot;
             if (temperature < ctx.min_temperature) {
                 return;

@@ -754,12 +754,12 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
                     const auto q = QtyView(Q, idx);
                     cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
 
-                    fp_t n_baryon = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
+                    fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
                     fp_t y = eos.y;
                     if (!eos.is_constant) {
                         y = eos.y_space(idx.k, idx.j, idx.i);
                     }
-                    auto temp = temperature_si(w(I(Prim::Pres)), n_baryon, y);
+                    auto temp = temperature_si(w(I(Prim::Pres)), nh_tot, eos.total_abund, y);
                     if (temp <= cutoff_temperature) {
                         num_active_tiles += 1;
                         active_tiles(tile_idx) = code;
@@ -832,14 +832,14 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             using Prim = typename FTraits::prim;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
-            const fp_t nh = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
+            const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
             atmos.nh_tot(ks) = nh;
             fp_t y = eos.y;
             if (!eos.is_constant) {
                 y = eos.y_space(idx.k, idx.j, idx.i);
             }
             atmos.ne(ks) = atmos.nh_tot(ks) * y;
-            const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, y);
+            const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, eos.total_abund, y);
             atmos.temperature(ks) = temperature;
             atmos.nh0(ks) = FP(0.0);
             atmos.vturb(ks) = vturb_fn(temperature, nh, y * nh);
@@ -952,12 +952,12 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
                     const auto q = QtyView(Q, idx);
                     cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
 
-                    fp_t n_baryon = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
+                    fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
                     fp_t y = eos.y;
                     if (!eos.is_constant) {
                         y = eos.y_space(idx.k, idx.j, idx.i);
                     }
-                    auto temp = temperature_si(w(I(Prim::Pres)), n_baryon, y);
+                    auto temp = temperature_si(w(I(Prim::Pres)), nh_tot, eos.total_abund, y);
                     if (temp <= cutoff_temperature) {
                         num_active_tiles += 1;
                         active_2d(zt, xt) = code;
@@ -1032,14 +1032,14 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             using Prim = typename FTraits::prim;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
-            const fp_t nh = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
+            const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
             atmos.nh_tot(ks) = nh;
             fp_t y = eos.y;
             if (!eos.is_constant) {
                 y = eos.y_space(idx.k, idx.j, idx.i);
             }
             atmos.ne(ks) = atmos.nh_tot(ks) * y;
-            const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, y);
+            const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, eos.total_abund, y);
             atmos.temperature(ks) = temperature;
             atmos.nh0(ks) = FP(0.0);
             atmos.vturb(ks) = vturb_fn(temperature, nh, y * nh);
@@ -1175,7 +1175,7 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
             i32 end = start + state.adata_host.num_level(ia);
             start_idx(ia) = start;
             end_idx(ia) = end;
-            inv_sum(ia) = (state.adata_host.abundance(ia) / (m_p * sim.eos.avg_mass));
+            inv_sum(ia) = (state.adata_host.abundance(ia) / (m_p * sim.eos.mass_per_h));
         }
         sim.state.cma.fluid_start_idx = start_idx.createDeviceCopy();
         sim.state.cma.fluid_end_idx = end_idx.createDeviceCopy();
@@ -1744,7 +1744,7 @@ void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
             CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
 
-            Q(I(Cons::Rho), idx.k, idx.j, idx.i) = atmos.nh_tot(ks) * eos.avg_mass * m_p;
+            Q(I(Cons::Rho), idx.k, idx.j, idx.i) = atmos.nh_tot(ks) * eos.mass_per_h * m_p;
         }
     );
     Kokkos::fence();
@@ -1986,6 +1986,11 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
     const bool update_ion_e = interface_config.update_ion_e;
     allocate_reservoir_terms(state.pops.extent(1));
     const auto& floor_heat = temp_floor_heat;
+    // NOTE(claude): The EOS floor fires over the whole domain during the RK
+    // stages and accumulates into this dense field in J m-3; here we pull out
+    // the dex-active cells and convert to W m-3 over the full step.
+    const auto& eos_floor_heat = sim.eos.floor_heat;
+    const bool has_eos_floor_heat = eos_floor_heat.initialized();
     const fp_t inv_dt = (dt > 0.0_fp) ? (1.0_fp / dt) : 0.0_fp;
     typedef Kokkos::MinLoc<fp_t, i64> MinLoc;
     MinLoc::value_type minloc;
@@ -2001,7 +2006,9 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
             // Calculated in kW/m3;
             fp_t delta_E = 0.0_fp;
             delta_E = -rad_loss(ks) * 1e3_fp * dt;
-            floor_heat(ks) = 0.0_fp;
+            floor_heat(ks) = has_eos_floor_heat
+                ? eos_floor_heat(idx.k, idx.j, idx.i) * inv_dt
+                : 0.0_fp;
 
             if (update_ion_e) {
                 QtyView Qv(Q, idx);
@@ -2019,7 +2026,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
                     const fp_t pressure_deficit = temperature_deficit * (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks)));
                     const fp_t energy_deficit = pressure_deficit / (gamma - 1.0_fp);
                     Qv(I(Cons::Ene)) += energy_deficit;
-                    floor_heat(ks) = energy_deficit * inv_dt;
+                    floor_heat(ks) += energy_deficit * inv_dt;
                 }
 
                 if (temperature_post < min_loc.val) {
@@ -2028,6 +2035,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
                 }
 
             } else {
+                // NOTE(cmo): This path is not recomended, but left for posterity.
                 const fp_t eint_pre = atmos.pressure(ks) / (gamma - 1.0_fp);
                 fp_t eint_post = eint_pre + delta_E;
                 fp_t pressure_post = eint_post * (gamma - 1.0_fp);
@@ -2036,7 +2044,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
                 temperature_post = std::max(temperature_post, temperature_floor);
                 pressure_post = (ConstantsF64::k_B * (total_abund * atmos.nh_tot(ks) + atmos.ne(ks))) * temperature_post;
                 eint_post = pressure_post / (gamma - 1.0_fp);
-                floor_heat(ks) = (eint_post - eint_unclamped) * inv_dt;
+                floor_heat(ks) += (eint_post - eint_unclamped) * inv_dt;
 
                 if (temperature_post < min_loc.val) {
                     min_loc.val = temperature_post;
@@ -2048,6 +2056,12 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
         },
         MinLoc(minloc)
     );
+    Kokkos::fence();
+
+    // NOTE(claude): Drained now, so a second output in the same step cannot
+    // double-count it. main.cpp also zeroes it before each step, which covers
+    // the case where rad_loss is off and we never get here.
+    sim.eos.reset_floor_heat();
 
     fmt::println("Min temperature {:.3e} K @ ks={}", minloc.val, minloc.loc);
 }
@@ -2207,13 +2221,13 @@ void DexInterface::lte_init_aux_fields(const Simulation& sim) {
                 const i64 flat_idx = i + j * sz.xc + k * sz.yc * sz.xc;
 
                 const fp_t pressure = w(I(Prim::Pres));
-                const fp_t nh = w(I(Prim::Rho)) / (eos.avg_mass * m_p);
+                const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
                 fp_t y = eos.y;
                 if (!eos.is_constant) {
                     y = eos.y_space(idx.k, idx.j, idx.i);
                 }
                 const fp_t ne = nh * y;
-                const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, y);
+                const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, eos.total_abund, y);
 
                 Q(tracer_start, k, j, i) = ne;
                 lte_pops(

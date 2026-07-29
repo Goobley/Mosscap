@@ -76,8 +76,8 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
             if (r > 0.5_fp * length_scale && r < 0.7_fp * length_scale && theta > (11.0_fp / 12.0_fp) * pi && theta < (13.0_fp / 12.0_fp) * pi) {
                 temperature = inner_temperature;
             }
-            const fp_t n_baryon = w(I(Prim::Rho)) / (eos.avg_mass * state.p_mass);
-            w(I(Prim::Pres)) = n_baryon * (1.0_fp + eos.y) * k_B * temperature;
+            const fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * state.p_mass);
+            w(I(Prim::Pres)) = nh_tot * (eos.total_abund + eos.y) * k_B * temperature;
             CellIndex idx {
                 .i = i,
                 .j = j,

@@ -77,7 +77,7 @@ static BackgroundParams get_background_params(Simulation& sim, const YAML::Node&
     w(I(Prim::Bx)) = bx0;
     w(I(Prim::By)) = by0;
     w(I(Prim::Bz)) = bz0;
-    w(I(Prim::Pres)) = rho0 / (ConstantsF64::u * eos.avg_mass) * 2.0_fp * ConstantsF64::k_B * T0;
+    w(I(Prim::Pres)) = rho0 / (ConstantsF64::u * eos.mass_per_h) * 2.0_fp * ConstantsF64::k_B * T0;
     prim_to_cons<Fluid>(eos.gamma, state.mu0, w, bg.background);
 
     bg.heating_coeff = get_or<fp_t>(config, "problem.background_heating_coeff", 1.0_fp);

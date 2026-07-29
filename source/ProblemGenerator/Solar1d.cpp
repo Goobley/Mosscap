@@ -303,10 +303,9 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
         F64Host nhtot("nhtot", sz.xc);
         F64Host y("y", sz.xc);
 
-        static constexpr f64 h_mass = 1.6737830080950003e-27;
-        static constexpr f64 k_B = 1.380649e-23;
+        static constexpr f64 k_B = ConstantsF64::k_B;
         // static constexpr f64 chi_H = 2.178710282685096e-18; // [J]
-        const f64 mean_mass = eos.avg_mass * h_mass;
+        const f64 mass_per_h_kg = eos.mass_per_h * ConstantsF64::u;
         // Set up base values and interpolate run of temperature
         for (int i = 0; i < sz.xc; ++i) {
             temperature(i) = interp(state.get_pos(i)(0) + z(0), z, temperature_profile);
@@ -318,24 +317,24 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
             if (ideal) {
                 y(i) = ion_frac;
             }
-            pressure(i) = base_nh * (1.0 + y(i)) * k_B * temperature(i);
+            pressure(i) = base_nh * (eos.total_abund + y(i)) * k_B * temperature(i);
         }
         fmt::println("P: {}, y: {}, nhtot {:e}", pressure(sz.ng), y(sz.ng), nhtot(sz.ng));
 
         const f64 dz = state.dx;
         for (int i = sz.ng + 1; i < sz.xc; ++i) {
-            const f64 dP_dz_base = mean_mass * nhtot(i-1) * solar_g;
+            const f64 dP_dz_base = mass_per_h_kg * nhtot(i-1) * solar_g;
             const f64 P_half = pressure(i - 1) + dP_dz_base * 0.5 * dz;
             const f64 T_half = 0.5 * (temperature(i) + temperature(i-1));
             const f64 ntot_half = P_half / (k_B * T_half);
             const f64 y_half = ideal ? ion_frac : y_from_ntot(ntot_half, T_half);
-            const f64 nhtot_half = ntot_half / (1.0 + y_half);
+            const f64 nhtot_half = ntot_half / (eos.total_abund + y_half);
 
-            const f64 dP_dz_mid = mean_mass * nhtot_half * solar_g;
+            const f64 dP_dz_mid = mass_per_h_kg * nhtot_half * solar_g;
             pressure(i) = pressure(i - 1) + dP_dz_mid * dz;
             const f64 ntotal = pressure(i) / (k_B * temperature(i));
             y(i) = ideal ? ion_frac : y_from_ntot(ntotal, temperature(i));
-            nhtot(i) = ntotal / (1.0 + y(i));
+            nhtot(i) = ntotal / (eos.total_abund + y(i));
             // try to refine guess
             int iter = 0;
             for (iter = 0; iter < 100; ++iter) {
@@ -343,16 +342,16 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
                 // https://iopscience.iop.org/article/10.1086/342754/fulltext/
                 // Eq 40 + 41
                 if (i == sz.ng + 1) {
-                    pressure(i) = pressure(i - 1) + 0.5 * solar_g * dz * (nhtot(i) + nhtot(i - 1)) * mean_mass;
+                    pressure(i) = pressure(i - 1) + 0.5 * solar_g * dz * (nhtot(i) + nhtot(i - 1)) * mass_per_h_kg;
                 } else {
-                    pressure(i) = pressure(i - 1) + 1.0/12.0 * solar_g * dz * (5 * nhtot(i) + 8 * nhtot(i - 1) - nhtot(i-2)) * mean_mass;
+                    pressure(i) = pressure(i - 1) + 1.0/12.0 * solar_g * dz * (5 * nhtot(i) + 8 * nhtot(i - 1) - nhtot(i-2)) * mass_per_h_kg;
                 }
                 if (std::abs(1.0 - pressure(i) / old_pressure) < 1e-5) {
                     break;
                 }
                 const f64 ntotal = pressure(i) / (k_B * temperature(i));
                 y(i) = ideal ? ion_frac : y_from_ntot(ntotal, temperature(i));
-                nhtot(i) = ntotal / (1.0 + y(i));
+                nhtot(i) = ntotal / (eos.total_abund + y(i));
             }
             if (iter == 100) {
                 fmt::println("No converge: {}", i);
@@ -366,9 +365,9 @@ MOSSCAP_NEW_PROBLEM(solar_1d) {
         AnalyticLteH lte_eos;
         lte_eos.init(include_ionisation_energy);
         for (int i = 0; i < sz.xc; ++i) {
-            rho(i) = nhtot(i) * mean_mass;
-            eint(i) = lte_eos.internal_energy(eos.gamma, eos.avg_mass, rho(i), y(i), temperature(i));
-            eion(i) = lte_eos.ionisation_energy(eos.gamma, eos.avg_mass, rho(i), y(i), temperature(i));
+            rho(i) = nhtot(i) * mass_per_h_kg;
+            eint(i) = lte_eos.internal_energy(eos, rho(i), y(i), temperature(i));
+            eion(i) = lte_eos.ionisation_energy(eos, rho(i), y(i), temperature(i));
         }
 
         {

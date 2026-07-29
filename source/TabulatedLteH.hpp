@@ -151,8 +151,8 @@ struct TabulatedLteH {
                 const fp_t T = std::pow(10.0_fp, s.log_T);
                 eos.T_space(k, j, i) = T;
 
-                // P = nh (1 + y) kB T
-                const fp_t pressure = rho * (k_B / h_mass) * (1.0_fp + s.y) * T;
+                // P = nh (A + y) kB T
+                const fp_t pressure = rho * (k_B / h_mass) * (eos.total_abund + s.y) * T;
                 const fp_t new_eint = pressure / (eos.gamma - 1.0_fp) + rho * (chi_H / h_mass) * s.y;
 
                 // eos.gamma_e_space(k, j, i) = 1.0_fp + pressure / (new_eint);

@@ -29,13 +29,31 @@ struct Eos {
     bool has_ion_e = false;
     fp_t gamma;
     fp_t y; // ion_frac
-    fp_t avg_mass = 1.0_fp;
+    /// Mass per hydrogen atom [amu]. NOTE(claude): this is *not* the average
+    /// particle mass; the three quantities are closed by
+    /// `mass_per_h = avg_mass * total_abund`. It should strictly be 1.008 even
+    /// for a pure H plasma, but the default is left at 1.0 -- the <1% error is
+    /// deliberately accepted, and changing it would move n_H, and hence every
+    /// density and temperature, in all runs already on disk.
+    fp_t mass_per_h = 1.0_fp;
+    /// Total abundance relative to hydrogen, A = sum_i n_i / n_H.
     fp_t total_abund = 1.0_fp;
     Fp3d y_space;
     Fp3d T_space;
+    /// Energy injected by the update_eos temperature floor, accumulated over
+    /// the RK stages of one step and drained into DexInterface::temp_floor_heat
+    /// at the end of it. Only allocated when the floor is active. [J m-3]
+    Fp3d floor_heat;
     EosType type;
 
     bool init(Simulation& sim, const YAML::Node& config);
+
+    /// Zero the per-step floor-heat accumulator. No-op if the floor is off.
+    inline void reset_floor_heat() const {
+        if (floor_heat.initialized()) {
+            floor_heat = 0.0_fp;
+        }
+    }
 
     inline bool init_ideal(fp_t gamma_, fp_t ion_frac, Simulation& sim) {
         is_constant = true;
@@ -46,12 +64,17 @@ struct Eos {
 
     bool init_analytic_lte_h(fp_t gamma, Simulation& sim, bool include_ionisation_energy);
     bool init_tabulated_lte_h(fp_t gamma, Simulation& sim, const std::string& table_path);
-    bool init_tracer(fp_t gamma, Simulation& sim, fp_t min_temperature);
+    bool init_tracer(fp_t gamma, Simulation& sim, fp_t min_temperature, bool renorm_tracer_hpops);
 };
 
-KOKKOS_INLINE_FUNCTION fp_t temperature_si(fp_t pressure, fp_t n_baryon, fp_t y = 1.0_fp) {
+/// Temperature of a mixture of total abundance `total_abund` (relative to H)
+/// and ionisation `y`. NOTE(claude): `y` is n_e / n_H, i.e. relative to
+/// hydrogen, so it is not bounded by unity, and the total particle density is
+/// n_tot = nh_tot * (total_abund + y). Both are taken separately so that a
+/// caller cannot fold the abundance into the density and double-count it.
+KOKKOS_INLINE_FUNCTION fp_t temperature_si(fp_t pressure, fp_t nh_tot, fp_t total_abund, fp_t y) {
     constexpr fp_t k_B = 1.380649e-23_fp; // [J / K]
-    return pressure / (n_baryon * (1.0_fp + y) * k_B);
+    return pressure / (nh_tot * (total_abund + y) * k_B);
 }
 
 template <typename FTraits, typename WType>

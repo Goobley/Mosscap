@@ -20,9 +20,9 @@ namespace Mosscap {
                 FlatLoop<3>(sz.zc, sz.yc, sz.xc),
                 KOKKOS_LAMBDA (int k, int j, int i) {
                     using Prim = typename FTraits::prim;
-                    const fp_t nh_tot = W(I(Prim::Rho), k, j, i) / (eos.avg_mass * p_mass);
+                    const fp_t nh_tot = W(I(Prim::Rho), k, j, i) / (eos.mass_per_h * p_mass);
                     const fp_t pressure = W(I(Prim::Pres), k, j, i);
-                    temperature(k, j, i) = temperature_si(pressure, nh_tot, eos.y);
+                    temperature(k, j, i) = temperature_si(pressure, nh_tot, eos.total_abund, eos.y);
                 }
             );
             Kokkos::fence();
@@ -35,10 +35,10 @@ namespace Mosscap {
                 FlatLoop<3>(sz.zc, sz.yc, sz.xc),
                 KOKKOS_LAMBDA (int k, int j, int i) {
                     using Prim = typename FTraits::prim;
-                    const fp_t nh_tot = W(I(Prim::Rho), k, j, i) / (eos.avg_mass * p_mass);
+                    const fp_t nh_tot = W(I(Prim::Rho), k, j, i) / (eos.mass_per_h * p_mass);
                     const fp_t pressure = W(I(Prim::Pres), k, j, i);
                     const fp_t y = eos.y_space(k, j, i);
-                    temperature(k, j, i) = temperature_si(pressure, nh_tot, y);
+                    temperature(k, j, i) = temperature_si(pressure, nh_tot, eos.total_abund, y);
                 }
             );
             Kokkos::fence();

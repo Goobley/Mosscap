@@ -10,9 +10,50 @@ CompileFlags:
     - -Wext-lambda-captures-this
     - -expt-relaxed-constexpr
     - -Xcompiler
-    - -fopenmp
+    # NOTE(claude): -fopenmp is deliberately NOT removed -- this Kokkos install
+    # enables the OpenMP backend and #errors without _OPENMP defined.
     - -x
     - cu
+    # NOTE(claude): CMake/nvcc emit the "-isystem=<path>" form. clang treats the
+    # leading '=' as a sysroot placeholder, so none of these paths resolve and
+    # Kokkos_Core.hpp is never found. Drop them and re-add them below as plain
+    # -isystem args.
+    - -isystem=*
   Add:
-    - -xc++
+    # NOTE(claude): clang's native CUDA mode, so that it defines __CUDACC__
+    # itself -- Kokkos_Setup_Cuda.hpp hard-#errors without it.
+    - -xcuda
+    - --cuda-path=/opt/nvidia/hpc_sdk/Linux_x86_64/24.11/cuda
+    # NOTE(claude): sm_80 rather than the real sm_89 -- clang 14 does not know
+    # sm_89, and the arch only affects parsing here, not codegen.
+    - --cuda-gpu-arch=sm_80
+    - --no-cuda-version-check
+    - -nocudalib
+    # NOTE(claude): host pass only. We only ever read/edit host code here, and
+    # the device pass raises diagnostics (e.g. variadic functions in fmt) that
+    # nvcc does not.
+    - --cuda-host-only
+    - -isystem/workspaces/Mosscap
+    - -isystem/workspaces/Mosscap/kokkos/include
+    - -isystem/workspaces/Mosscap/kokkos-kernels/include
+    # NOTE(claude): this Kokkos install enables the OpenMP backend, so its
+    # headers pull in omp.h. clang 14 here ships no omp.h of its own, so point
+    # at gcc's -- the same path the cmake scripts pass as GCC_INCLUDE_PATH.
+    - -isystem/usr/lib/gcc/x86_64-linux-gnu/11/include
     - -Wno-unknown-warning-option
+    # NOTE(claude): without this the default limit of 19 truncates the preamble
+    # with a fatal error, leaving a half-built AST.
+    - -ferror-limit=0
+
+Diagnostics:
+  Suppress:
+    # NOTE(claude): C++20 P0634 ("using Prim = FTraits::prim;") is accepted by
+    # nvcc/gcc but not implemented until clang 16.
+    - typename_missing
+    # NOTE(claude): clang checks device restrictions on __host__ __device__
+    # bodies even in the host pass; nvcc does not reject these.
+    - variadic_device_fn
+    # NOTE(claude): TimeDepPopulations.hpp binds `const Fp2d& predicted_pops`
+    # to a default-constructed temporary. Intentional, and clang 14 crashes on
+    # the resulting cascade if it is left to fire.
+    - dangling_member

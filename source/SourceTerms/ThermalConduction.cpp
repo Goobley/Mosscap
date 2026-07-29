@@ -50,13 +50,15 @@ KOKKOS_INLINE_FUNCTION fp_t backwards_temperature_diff(const fp_t m_p, const Eos
     QtyView w_i(W, from);
     const fp_t Ti = temperature_si(
         w_i(I(Prim::Pres)),
-        w_i(I(Prim::Rho)) / (eos.avg_mass * m_p),
+        w_i(I(Prim::Rho)) / (eos.mass_per_h * m_p),
+        eos.total_abund,
         ion_frac(eos, w_i.idx)
     );
     auto w_im1 = shift_along<Axis>(w_i, -1);
     const fp_t Tim1 = temperature_si(
         w_im1(I(Prim::Pres)),
-        w_im1(I(Prim::Rho)) / (eos.avg_mass * m_p),
+        w_im1(I(Prim::Rho)) / (eos.mass_per_h * m_p),
+        eos.total_abund,
         ion_frac(eos, w_im1.idx)
     );
 
@@ -71,13 +73,15 @@ KOKKOS_INLINE_FUNCTION fp_t centred_temperature_diff(const fp_t m_p, const Eos& 
     QtyView w_ip1(W, from);
     const fp_t Tip1 = temperature_si(
         w_ip1(I(Prim::Pres)),
-        w_ip1(I(Prim::Rho)) / (eos.avg_mass * m_p),
+        w_ip1(I(Prim::Rho)) / (eos.mass_per_h * m_p),
+        eos.total_abund,
         ion_frac(eos, w_ip1.idx)
     );
     auto w_im1 = shift_along<Axis>(w_ip1, -2);
     const fp_t Tim1 = temperature_si(
         w_im1(I(Prim::Pres)),
-        w_im1(I(Prim::Rho)) / (eos.avg_mass * m_p),
+        w_im1(I(Prim::Rho)) / (eos.mass_per_h * m_p),
+        eos.total_abund,
         ion_frac(eos, w_im1.idx)
     );
 
@@ -91,7 +95,8 @@ KOKKOS_INLINE_FUNCTION fp_t compute_kappa(const fp_t m_p, const Eos& eos, const 
         using Prim = typename FTraits::prim;
         const fp_t temperature = temperature_si(
             cell(I(Prim::Pres)),
-            cell(I(Prim::Rho)) / (eos.avg_mass * m_p),
+            cell(I(Prim::Rho)) / (eos.mass_per_h * m_p),
+            eos.total_abund,
             ion_frac(eos, cell.idx)
         );
         kappa *= std::pow(temperature, 2.5_fp);
@@ -313,7 +318,8 @@ fp_t estimate_thermal_conduction_timestep(const Simulation& sim, const ThermalCo
             const fp_t kappa = compute_kappa<FTraits>(m_p, eos, ctx, w_i);
             const fp_t Ti = temperature_si(
                 w_i(I(Prim::Pres)),
-                w_i(I(Prim::Rho)) / (eos.avg_mass * m_p),
+                w_i(I(Prim::Rho)) / (eos.mass_per_h * m_p),
+                eos.total_abund,
                 ion_frac(eos, w_i.idx)
             );
             // e_int = rho cv T = P / (gamma - 1)

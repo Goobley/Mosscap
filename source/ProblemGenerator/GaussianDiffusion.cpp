@@ -4,7 +4,7 @@
 #include "../SourceTerms.hpp"
 #include "../SourceTerms/ThermalConduction.hpp"
 
-// NOTE(cmo): Diffusion of a Gaussian temperature perturbation, for validating
+// NOTE(claude): Diffusion of a Gaussian temperature perturbation, for validating
 // the classic (explicit/STS) and hyperbolic thermal conduction
 // implementations against each other and against the analytic solution of
 // the linear heat equation. Zero velocity, uniform density, with an optional
@@ -30,7 +30,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     const auto& sz = state.sz;
     const auto& eos = sim.eos;
 
-    // NOTE(cmo): Convenience mode for round-numbered, easy-to-reason-about
+    // NOTE(claude): Convenience mode for round-numbered, easy-to-reason-about
     // test configurations, matching RingConduction's "coronal" toggle.
     if (get_or<bool>(config, "problem.dimensionless", false)) {
         sim.state.mu0 = 1.0_fp;
@@ -88,10 +88,10 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
             }
 
             const fp_t temperature = T0 + dT * std::exp(-0.5_fp * r2 / square(sigma0));
-            const fp_t n_baryon = rho0 / (eos.avg_mass * state.p_mass);
+            const fp_t nh_tot = rho0 / (eos.mass_per_h * state.p_mass);
 
             w(I(Prim::Rho)) = rho0;
-            w(I(Prim::Pres)) = n_baryon * (1.0_fp + eos.y) * k_B * temperature;
+            w(I(Prim::Pres)) = nh_tot * (eos.total_abund + eos.y) * k_B * temperature;
 
             if constexpr (FTraits::is_mhd) {
                 vec3 B(0.0_fp);
@@ -116,7 +116,7 @@ MOSSCAP_NEW_PROBLEM(gaussian_diffusion) {
 
     if (!sim.eos.is_constant) {
         throw std::runtime_error(fmt::format(
-            "{} requires eos.type: ideal (constant y/avg_mass) for a clean analytic reference.", PROBLEM_NAME
+            "{} requires eos.type: ideal (constant y) for a clean analytic reference.", PROBLEM_NAME
         ));
     }
 

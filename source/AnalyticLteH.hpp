@@ -37,21 +37,26 @@ struct AnalyticLteH {
         return true;
     }
 
-    KOKKOS_INLINE_FUNCTION fp_t internal_energy(fp_t gamma, fp_t avg_mass, fp_t rho, fp_t y, fp_t T) const {
-        const fp_t inv_avg_mass = 1.0_fp / avg_mass;
-        fp_t eint  = rho * (k_B / h_mass) * inv_avg_mass * (1.0_fp + y) * T;
-        eint /= (gamma - 1.0_fp);
+    // NOTE(claude): These take the Eos rather than gamma/mass_per_h separately
+    // so that the mixture (total_abund) travels with it and cannot be dropped
+    // by a caller, as with temperature_si.
+    KOKKOS_INLINE_FUNCTION fp_t internal_energy(const Eos& eos, fp_t rho, fp_t y, fp_t T) const {
+        const fp_t inv_mass_per_h = 1.0_fp / eos.mass_per_h;
+        fp_t eint  = rho * (k_B / h_mass) * inv_mass_per_h * (eos.total_abund + y) * T;
+        eint /= (eos.gamma - 1.0_fp);
         if (include_ionisation_e) {
-            eint += y * rho * (chi_H / h_mass) * inv_avg_mass;
+            eint += y * rho * (chi_H / h_mass) * inv_mass_per_h;
         }
         return eint;
     }
 
-    KOKKOS_INLINE_FUNCTION fp_t ionisation_energy(fp_t gamma, fp_t avg_mass, fp_t rho, fp_t y, fp_t T) const {
-        const fp_t inv_avg_mass = 1.0_fp / avg_mass;
+    KOKKOS_INLINE_FUNCTION fp_t ionisation_energy(const Eos& eos, fp_t rho, fp_t y, fp_t T) const {
+        // NOTE(claude): No abundance term -- the y * chi_H term is already per
+        // hydrogen atom.
+        const fp_t inv_mass_per_h = 1.0_fp / eos.mass_per_h;
         fp_t e_ion = 0.0_fp;
         if (include_ionisation_e) {
-            e_ion += y * rho * (chi_H / h_mass) * inv_avg_mass;
+            e_ion += y * rho * (chi_H / h_mass) * inv_mass_per_h;
         }
         return e_ion;
     }
@@ -63,7 +68,8 @@ struct AnalyticLteH {
         const auto& sz = state.sz;
         const auto& Q = state.Q;
         const bool ionisation_e = include_ionisation_e;
-        const fp_t inv_avg_mass = 1.0_fp / eos.avg_mass;
+        const fp_t inv_mass_per_h = 1.0_fp / eos.mass_per_h;
+        const fp_t total_abund = eos.total_abund;
         using Cons = typename FTraits::cons;
 
         // NOTE(cmo): Scheme similar to lare
@@ -82,12 +88,12 @@ struct AnalyticLteH {
                 const fp_t e_kin = 0.5_fp * mom2_sum / rho;
                 const fp_t eint = Q(I(Cons::Ene), k, j, i) - e_kin;
 
-                const fp_t e_to_T = (eos.gamma - 1.0_fp) / (rho * (k_B / h_mass) * inv_avg_mass);
+                const fp_t e_to_T = (eos.gamma - 1.0_fp) / (rho * (k_B / h_mass) * inv_mass_per_h);
                 auto temp_from_y = [&](fp_t y) {
-                    return e_to_T / (1.0_fp + y) * (eint - ionisation_e * y * rho * (chi_H / h_mass) * inv_avg_mass);
+                    return e_to_T / (total_abund + y) * (eint - ionisation_e * y * rho * (chi_H / h_mass) * inv_mass_per_h);
                 };
 
-                const fp_t rho_to_nhtot = (1.0_fp / h_mass) * inv_avg_mass;
+                const fp_t rho_to_nhtot = (1.0_fp / h_mass) * inv_mass_per_h;
                 constexpr fp_t min_temperature = 100.0_fp;
                 fp_t temp_bounds[2] = {
                     // 0.5_fp * e_to_T * (eint - rho * (chi_H / h_mass)), // Fully ionised
@@ -122,11 +128,11 @@ struct AnalyticLteH {
                         break;
                     }
                 }
-                const fp_t pressure = rho * (1.0_fp + y) * (k_B / h_mass) * inv_avg_mass * temp;
+                const fp_t pressure = rho * (total_abund + y) * (k_B / h_mass) * inv_mass_per_h * temp;
 
                 eos.y_space(k, j, i) = y;
                 eos.T_space(k, j, i) = temp;
-                Q(I(Cons::IonE), k, j, i) = ionisation_e ? y * (chi_H / h_mass) * inv_avg_mass : 0.0_fp;
+                Q(I(Cons::IonE), k, j, i) = ionisation_e ? y * (chi_H / h_mass) * inv_mass_per_h : 0.0_fp;
                 // eos.gamma_e_space(k, j, i) = 1.0_fp + pressure / eint;
             }
         );

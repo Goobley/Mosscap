@@ -78,7 +78,7 @@ static BackgroundParams get_background_params(Simulation& sim, const YAML::Node&
     w(I(Prim::Bx)) = bx0;
     w(I(Prim::By)) = by0;
     w(I(Prim::Bz)) = bz0;
-    w(I(Prim::Pres)) = rho0 / (ConstantsF64::u * eos.avg_mass) * 2.0_fp * ConstantsF64::k_B * T0;
+    w(I(Prim::Pres)) = rho0 / (ConstantsF64::u * eos.mass_per_h) * 2.0_fp * ConstantsF64::k_B * T0;
     prim_to_cons<Fluid>(eos.gamma, state.mu0, w, bg.background);
 
     bg.heating_coeff = get_or<fp_t>(config, "problem.background_heating_coeff", 1.0_fp);
@@ -116,7 +116,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
             }
 
             // NOTE(cmo): Assume we start at fully ionised or another module will correct it
-            Q(I(Cons::IonE), k, j, i) = chi_H / (h_mass * eos.avg_mass);
+            Q(I(Cons::IonE), k, j, i) = chi_H / (h_mass * eos.mass_per_h);
             // NOTE(cmo): Add the ionisation energy to the total energy
             Q(I(Cons::Ene), k, j, i) += Q(I(Cons::Rho), k, j, i) * Q(I(Cons::IonE), k, j, i);
         }

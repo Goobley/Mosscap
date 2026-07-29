@@ -76,6 +76,7 @@ int main(int argc, char** argv) {
 
         while (sim.time < sim.max_time) {
             const f64 dt = compute_dt(sim);
+            sim.eos.reset_floor_heat();
             sim.time_step(sim, dt);
 
             if (sim.dex.interface_config.enable) {

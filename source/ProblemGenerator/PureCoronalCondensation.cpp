@@ -68,7 +68,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
         bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
         lte_eos.init(include_ionisation_energy);
     }
-    fp_t avg_mass = sim.eos.avg_mass;
+    fp_t mass_per_h = sim.eos.mass_per_h;
 
 
     dex_parallel_for(
@@ -107,17 +107,16 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
                 const fp_t ntot = w(I(Prim::Pres)) / (k_B * temp_full);
                 const fp_t y = y_from_ntot(ntot, temp_full);
                 const fp_t nhtot = ntot / (eos.total_abund + y);
-                w(I(Prim::Rho)) = nhtot * eos.avg_mass * h_mass;
+                w(I(Prim::Rho)) = nhtot * eos.mass_per_h * h_mass;
                 w(I(Prim::IonE)) = lte_eos.ionisation_energy(
-                    eos.gamma,
-                    eos.avg_mass,
+                    eos,
                     w(I(Prim::Rho)),
                     y,
                     temp_full
                 ) / w(I(Prim::Rho));
             } else if (eos.has_ion_e) {
                 // NOTE(cmo): Assume we start at fully ionised or another module will correct it
-                w(I(Prim::IonE)) = chi_H / (h_mass * avg_mass);
+                w(I(Prim::IonE)) = chi_H / (h_mass * mass_per_h);
             }
 
             JasUse(bx0, by0, bz0);
@@ -141,7 +140,7 @@ template <typename FTraits>
 static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
     auto& bound = sim.state.boundaries;
     bool has_ion_e = sim.eos.has_ion_e;
-    const fp_t avg_mass = sim.eos.avg_mass;
+    const fp_t mass_per_h = sim.eos.mass_per_h;
     auto check_and_set_constant = [&](
             const BoundaryType boundary,
             const decltype(bound.xs_const)& arr,
@@ -182,7 +181,7 @@ static void setup_boundaries(Simulation& sim, const YAML::Node& config) {
         // still need to be filled. Let's do that via symmetric bcs, but set
         // use_edge_vals to false in the sponge layer.
         // NOTE(cmo): Assume fully ionised just H.
-        w(I(Prim::IonE)) = has_ion_e ? chi_H / (h_mass * avg_mass) : 0.0_fp;
+        w(I(Prim::IonE)) = has_ion_e ? chi_H / (h_mass * mass_per_h) : 0.0_fp;
         yakl::SArray<fp_t, 1, FTraits::num_vars> q(0.0_fp);
         prim_to_cons<FTraits>(sim.eos.gamma, sim.state.mu0, w, q);
 

@@ -9,8 +9,11 @@ namespace Mosscap {
 struct DexPressureEosOptions {
     bool use_tracer_energy = true;
     bool use_tracer_charge = true;
-    bool renorm_tracer_hpops = true;
-    bool fully_rebuild_etot = true;
+    // NOTE(claude): Off by default. It rescaled every H tracer to sum to
+    // nh_tot with no corresponding energy accounting; CMA already balances the
+    // fractional fluxes. Settable as eos.renorm_tracer_hpops to reproduce
+    // older runs.
+    bool renorm_tracer_hpops = false;
 };
 
 struct DexPressureEos {
@@ -88,6 +91,7 @@ struct DexPressureEos {
         using Cons = typename FTraits::cons;
 
         const fp_t total_abund = eos.total_abund;
+        const bool has_floor_heat = eos.floor_heat.initialized();
 
         // NOTE(cmo): Idea to only update blocks where dex is active
         dex_parallel_for(
@@ -100,7 +104,7 @@ struct DexPressureEos {
                 CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
                 QtyView Qv(Q, idx);
 
-                const fp_t nh_tot = Qv(I(Cons::Rho)) / (eos.avg_mass * m_p);
+                const fp_t nh_tot = Qv(I(Cons::Rho)) / (eos.mass_per_h * m_p);
 
                 const fp_t rho = Qv(I(Cons::Rho));
                 fp_t mom2_sum = square(Qv(I(Cons::MomX)));
@@ -116,10 +120,13 @@ struct DexPressureEos {
                 if constexpr (FTraits::is_mhd) {
                     e_mag = (square(Qv(I(Cons::Bx))) + square(Qv(I(Cons::By))) + square(Qv(I(Cons::Bz)))) / (2.0_fp * mu0);
                 }
-                const fp_t prev_y = eos.y_space(idx.k, idx.j, idx.i);
-                const fp_t prev_pressure = (eos.gamma - 1.0_fp) * (Qv(I(Cons::Ene)) - e_kin - e_mag - Qv(I(Cons::IonE)) * rho);
-                const fp_t temperature = temperature_si(prev_pressure, total_abund * nh_tot, prev_y);
-
+                // NOTE(claude): The ionisation state is taken from the tracers
+                // alone -- they are the source of truth -- and only then is the
+                // temperature derived from it and the current total energy.
+                // Qv(Cons::IonE) is advected as a conserved variable and then
+                // overwritten here, so any disagreement between the two
+                // advection paths lands in the thermal/ionisation split rather
+                // than being created or destroyed as total energy.
                 if (opts.renorm_tracer_hpops) {
                     fp_t nh_from_tracer = 0.0_fp;
                     for (int l = 0; l < tracer_is_h.extent(0); ++l) {
@@ -153,20 +160,27 @@ struct DexPressureEos {
                 const fp_t y = Qv(ne_idx) / nh_tot;
                 eos.y_space(idx.k, idx.j, idx.i) = y;
 
-                if (opts.fully_rebuild_etot) {
-                    const fp_t limited_temperature = std::max(temperature_threshold, temperature);
-                    Qv(I(Cons::Ene)) = (
-                        1.0_fp / (eos.gamma - 1.0_fp) * (total_abund + y) * nh_tot * k_B * limited_temperature
-                        + Qv(I(Cons::IonE)) * rho
-                        + e_kin
-                        + e_mag
-                    );
-                } else {
-                    const fp_t eint = Q(I(Cons::Ene), idx.k, idx.j, idx.i) - e_kin - e_mag;
-                    // NOTE(cmo): Minimum change to make energy consistent with
-                    // ionisation state (energy changes handled in radiative losses)
-                    const fp_t new_eint = eint * (1.0_fp + y) / (1.0_fp + prev_y);
-                    Qv(I(Cons::Ene)) = new_eint + e_kin + e_mag;
+                const fp_t pressure = (eos.gamma - 1.0_fp) * (Qv(I(Cons::Ene)) - e_kin - e_mag - Qv(I(Cons::IonE)) * rho);
+                const fp_t temperature = temperature_si(pressure, nh_tot, total_abund, y);
+
+                // NOTE(claude): Because the temperature above was built from
+                // this same n_tot, this rebuild is an exact identity whenever
+                // the floor does not bite -- the floor is the only term that
+                // can change Ene here.
+                const fp_t limited_temperature = std::max(temperature_threshold, temperature);
+                const fp_t ene_old = Qv(I(Cons::Ene));
+                const fp_t ene_new = (
+                    1.0_fp / (eos.gamma - 1.0_fp) * (total_abund + y) * nh_tot * k_B * limited_temperature
+                    + Qv(I(Cons::IonE)) * rho
+                    + e_kin
+                    + e_mag
+                );
+                Qv(I(Cons::Ene)) = ene_new;
+                if (has_floor_heat) {
+                    // NOTE(claude): Summed over the RK stages of one step, and
+                    // converted to W m-3 by dividing by the full dt when it is
+                    // drained in DexInterface::integrate_rad_loss_split.
+                    eos.floor_heat(idx.k, idx.j, idx.i) += ene_new - ene_old;
                 }
             }
         );
