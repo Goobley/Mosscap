@@ -1348,6 +1348,16 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
             // }
         }
         state.println("Ran for {} iterations", lte_i);
+        // NOTE(claude): stat_eq/nr_post_update above only actually solve
+        // (and mutate pops/ne/nh_tot) on rank 0 under MPI, broadcasting just
+        // the scalar change back to workers each call -- so the populations
+        // themselves need broadcasting once here before anything downstream
+        // (e.g. set_initial_pops_special, the FS loop) reads them.
+        wave_dist.update_pops(&state);
+        wave_dist.update_ne(&state);
+        if (actually_conserve_pressure) {
+            wave_dist.update_nh_tot(&state);
+        }
         set_initial_pops_special(&state);
     }
 
