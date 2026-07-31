@@ -25,6 +25,9 @@ KOKKOS_INLINE_FUNCTION T y_from_ntot(T ntot, T temp) {
     return ne / (ntot - ne);
 }
 
+// NOTE(cmo): The actual solver equations derived with sympy are only really
+// valid for total_abund = 1 (i.e. pure H), but when refactoring we added the
+// terms throughout here, for when those are swapped out.
 struct AnalyticLteH {
     static constexpr fp_t h_mass = 1.6737830080950003e-27_fp;
     static constexpr fp_t k_B = 1.380649e-23_fp;
@@ -37,9 +40,6 @@ struct AnalyticLteH {
         return true;
     }
 
-    // NOTE(claude): These take the Eos rather than gamma/mass_per_h separately
-    // so that the mixture (total_abund) travels with it and cannot be dropped
-    // by a caller, as with temperature_si.
     KOKKOS_INLINE_FUNCTION fp_t internal_energy(const Eos& eos, fp_t rho, fp_t y, fp_t T) const {
         const fp_t inv_mass_per_h = 1.0_fp / eos.mass_per_h;
         fp_t eint  = rho * (k_B / h_mass) * inv_mass_per_h * (eos.total_abund + y) * T;
