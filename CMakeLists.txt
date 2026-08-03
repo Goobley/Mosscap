@@ -87,15 +87,15 @@ list(APPEND DEX_SOURCE_FILES
     "DexRT/source/Populations.cpp"
     "DexRT/source/InitialPops.cpp"
 )
+# NOTE(claude): PostProcessingCore.hpp declares GIT_HASH at global scope
+# (DexRT/source/GitVersion.hpp), distinct from Mosscap's own namespaced
+# Mosscap::GIT_HASH (source/GitVersion.hpp) -- link DexRT's own
+# already-generated definition rather than Mosscap's git_version target.
 list(APPEND MOSSCAP_RAY_SOURCE_FILES
     "source/mosscap_ray_2d.cpp"
     "DexRT/source/PromweaverBoundary.cpp"
     "DexRT/source/MiscSparse.cpp"
     "DexRT/source/BlockMap.cpp"
-    # NOTE(claude): PostProcessingCore.hpp declares GIT_HASH at global scope
-    # (DexRT/source/GitVersion.hpp), distinct from Mosscap's own namespaced
-    # Mosscap::GIT_HASH (source/GitVersion.hpp) -- link DexRT's own
-    # already-generated definition rather than Mosscap's git_version target.
     "DexRT/source/GitVersion.cpp"
 )
 list(APPEND MOSSCAP_SOURCE_FILES
