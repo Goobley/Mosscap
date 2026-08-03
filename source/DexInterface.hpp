@@ -2,6 +2,7 @@
 #define MOSSCAP_DEX_INTERFACE
 
 #include "Config.hpp"
+#include "AtmosCommon.hpp"
 #include "../DexRT/source/State.hpp"
 #include "../DexRT/source/CascadeState.hpp"
 
@@ -158,10 +159,6 @@ yakl::Array<U, rank, mem_space> maybe_convert_fp_array(const yakl::Array<T, rank
     );
     Kokkos::fence();
     return result;
-}
-
-KOKKOS_INLINE_FUNCTION fp_t vturb_fn(fp_t temperature, fp_t nh_tot, fp_t ne) {
-    return 2e3_fp;
 }
 
 }

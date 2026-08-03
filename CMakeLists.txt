@@ -87,6 +87,17 @@ list(APPEND DEX_SOURCE_FILES
     "DexRT/source/Populations.cpp"
     "DexRT/source/InitialPops.cpp"
 )
+list(APPEND MOSSCAP_RAY_SOURCE_FILES
+    "source/mosscap_ray_2d.cpp"
+    "DexRT/source/PromweaverBoundary.cpp"
+    "DexRT/source/MiscSparse.cpp"
+    "DexRT/source/BlockMap.cpp"
+    # NOTE(claude): PostProcessingCore.hpp declares GIT_HASH at global scope
+    # (DexRT/source/GitVersion.hpp), distinct from Mosscap's own namespaced
+    # Mosscap::GIT_HASH (source/GitVersion.hpp) -- link DexRT's own
+    # already-generated definition rather than Mosscap's git_version target.
+    "DexRT/source/GitVersion.cpp"
+)
 list(APPEND MOSSCAP_SOURCE_FILES
     "source/main.cpp"
     "source/Hydro.cpp"
@@ -106,6 +117,10 @@ add_executable(mosscap
     "${MOSSCAP_SOURCE_FILES}"
 )
 
+add_executable(mosscap_ray_2d
+    "${MOSSCAP_RAY_SOURCE_FILES}"
+)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if ("${MOSSCAP_ARCH}" STREQUAL "CUDA")
@@ -114,12 +129,15 @@ endif()
 
 if ("${MOSSCAP_SINGLE_PRECISION}")
     target_compile_definitions(mosscap PUBLIC MOSSCAP_SINGLE_PRECISION)
+    target_compile_definitions(mosscap_ray_2d PUBLIC MOSSCAP_SINGLE_PRECISION)
     set(MOSSCAP_CXX_FLAGS "${MOSSCAP_CXX_FLAGS} -DMOSSCAP_SINGLE_PRECISION")
 endif()
 
 # NOTE(cmo): Override language type for cuda, may need to do this for HIP too.
 set_source_files_properties(${MOSSCAP_SOURCE_FILES} PROPERTIES CXX_STANDARD 20)
 set_source_files_properties(${MOSSCAP_SOURCE_FILES} PROPERTIES LANGUAGE ${Kokkos_COMPILE_LANGUAGE})
+set_source_files_properties(${MOSSCAP_RAY_SOURCE_FILES} PROPERTIES CXX_STANDARD 20)
+set_source_files_properties(${MOSSCAP_RAY_SOURCE_FILES} PROPERTIES LANGUAGE ${Kokkos_COMPILE_LANGUAGE})
 if ("${MOSSCAP_ARCH}" STREQUAL "CUDA")
     set(MOSSCAP_EXTRA_CUDA_STD_FLAG "")
     if(NOT DEFINED CMAKE_CUDA20_STANDARD_COMPILE_OPTION)
@@ -128,8 +146,10 @@ if ("${MOSSCAP_ARCH}" STREQUAL "CUDA")
         set(MOSSCAP_EXTRA_CUDA_STD_FLAG "-std=c++20")
     endif()
     set_target_properties(mosscap PROPERTIES CUDA_ARCHITECTURES ${Kokkos_CUDA_ARCHITECTURES})
+    set_target_properties(mosscap_ray_2d PROPERTIES CUDA_ARCHITECTURES ${Kokkos_CUDA_ARCHITECTURES})
 
     set_source_files_properties(${MOSSCAP_SOURCE_FILES} PROPERTIES CUDA_STANDARD 20)
+    set_source_files_properties(${MOSSCAP_RAY_SOURCE_FILES} PROPERTIES CUDA_STANDARD 20)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CXX_FLAGS} ${MOSSCAP_EXTRA_CUDA_STD_FLAG}")
 endif()
 
@@ -156,6 +176,29 @@ if (${MOSSCAP_USE_MPI})
 endif()
 
 set_target_properties(mosscap PROPERTIES
+    COMPILE_FLAGS "${YAKL_DEFS} ${MOSSCAP_CXX_FLAGS}"
+    LINK_FLAGS "${LDFLAGS}"
+)
+
+############## mosscap_ray_2d ##############
+target_include_directories(mosscap_ray_2d SYSTEM PUBLIC
+    "${GCC_INCLUDE_PATH}"
+    "${NETCDF_INCLUDE_PATH}"
+    "${CUDA_MATH_INCLUDE_PATH}"
+)
+target_include_directories(mosscap_ray_2d PUBLIC
+    "DexRT/thirdparty"
+)
+target_link_libraries(mosscap_ray_2d "${LDLIBS}")
+target_link_libraries(mosscap_ray_2d fmt::fmt)
+target_link_libraries(mosscap_ray_2d yaml-cpp::yaml-cpp)
+target_link_libraries(mosscap_ray_2d argparse)
+target_link_libraries(mosscap_ray_2d git_version)
+target_link_libraries(mosscap_ray_2d Kokkos::kokkos)
+target_link_libraries(mosscap_ray_2d Kokkos::kokkoskernels)
+target_link_libraries(mosscap_ray_2d yakl)
+
+set_target_properties(mosscap_ray_2d PROPERTIES
     COMPILE_FLAGS "${YAKL_DEFS} ${MOSSCAP_CXX_FLAGS}"
     LINK_FLAGS "${LDFLAGS}"
 )
