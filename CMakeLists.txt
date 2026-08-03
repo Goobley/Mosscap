@@ -89,14 +89,16 @@ list(APPEND DEX_SOURCE_FILES
 )
 # NOTE(claude): PostProcessingCore.hpp declares GIT_HASH at global scope
 # (DexRT/source/GitVersion.hpp), distinct from Mosscap's own namespaced
-# Mosscap::GIT_HASH (source/GitVersion.hpp) -- link DexRT's own
-# already-generated definition rather than Mosscap's git_version target.
+# Mosscap::GIT_HASH (source/GitVersion.hpp). DexRT is a pinned submodule and
+# its own GitVersion generation never runs here, so DexRayGitVersion.cpp
+# forwards Mosscap's git_version target definition to satisfy DexRT's global
+# GIT_HASH instead.
 list(APPEND MOSSCAP_RAY_SOURCE_FILES
     "source/mosscap_ray_2d.cpp"
+    "source/DexRayGitVersion.cpp"
     "DexRT/source/PromweaverBoundary.cpp"
     "DexRT/source/MiscSparse.cpp"
     "DexRT/source/BlockMap.cpp"
-    "DexRT/source/GitVersion.cpp"
 )
 list(APPEND MOSSCAP_SOURCE_FILES
     "source/main.cpp"
@@ -183,6 +185,7 @@ set_target_properties(mosscap PROPERTIES
 ############## mosscap_ray_2d ##############
 target_include_directories(mosscap_ray_2d SYSTEM PUBLIC
     "${GCC_INCLUDE_PATH}"
+    "${MPI_INCLUDE_PATH}"
     "${NETCDF_INCLUDE_PATH}"
     "${CUDA_MATH_INCLUDE_PATH}"
 )
@@ -197,6 +200,12 @@ target_link_libraries(mosscap_ray_2d git_version)
 target_link_libraries(mosscap_ray_2d Kokkos::kokkos)
 target_link_libraries(mosscap_ray_2d Kokkos::kokkoskernels)
 target_link_libraries(mosscap_ray_2d yakl)
+
+if (${MOSSCAP_USE_MPI})
+    target_include_directories(mosscap_ray_2d SYSTEM PUBLIC ${MPI_CXX_INCLUDE_DIRS})
+    target_link_libraries(mosscap_ray_2d MPI::MPI_CXX)
+    target_compile_definitions(mosscap_ray_2d PUBLIC HAVE_MPI)
+endif()
 
 set_target_properties(mosscap_ray_2d PROPERTIES
     COMPILE_FLAGS "${YAKL_DEFS} ${MOSSCAP_CXX_FLAGS}"
