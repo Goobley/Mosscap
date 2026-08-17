@@ -5,6 +5,7 @@
 #include "../SourceTerms/TownsendThinLoss.hpp"
 #include "../SourceTerms/Sponge.hpp"
 #include "../SourceTerms/ReplaceSmallValues.hpp"
+#include "../SourceTerms/ThermalConduction.hpp"
 #include "../AnalyticLteH.hpp"
 
 // NOTE(cmo): This is a 2d problem
@@ -221,6 +222,13 @@ MOSSCAP_NEW_PROBLEM(slow_mode_ti) {
             }
         });
     }
+    // NOTE(claude): optional classic (STS/parabolic) thermal conduction. Gated on the
+    // source enable so the term is only registered when requested (the kernel itself does
+    // not check enable). Requires a non-hypertc fluid (e.g. glmmhd).
+    if (get_or<bool>(config, "sources.thermal_conduction.enable", false)) {
+        setup_thermal_conduction(sim, config);
+    }
+
     setup_replace_small_values(sim, config);
 
     if (get_or<bool>(config, "problem.enable_sponge", false)) {
