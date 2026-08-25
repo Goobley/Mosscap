@@ -96,6 +96,7 @@ struct AnalyticLteH {
                 }
                 const fp_t e_kin = 0.5_fp * mom2_sum / rho;
                 fp_t e_mag = 0.0_fp;
+                JasUse(mu0);
                 if constexpr (FTraits::is_mhd) {
                     e_mag = (
                         square(Q(I(Cons::Bx), k, j, i))
