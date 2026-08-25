@@ -15,7 +15,15 @@ KOKKOS_INLINE_FUNCTION T saha_rhs_H(T temp) {
 template <typename T>
 KOKKOS_INLINE_FUNCTION T y_from_nhtot(T nhtot, T temp) {
     T X = saha_rhs_H(temp);
-    return T(0.5) * (-X + std::sqrt(square(X) + 4 * nhtot * X)) / nhtot;
+    constexpr bool use_old_saha_root = false;
+    if constexpr (use_old_saha_root) {
+        return T(0.5) * (-X + std::sqrt(square(X) + T(4) * nhtot * X)) / nhtot;
+    } else {
+        // The positive root of y^2 n_H / (1-y) = X, rationalised and
+        // simplified to avoid subtractive cancellation when X >> n_H.
+        const T sqrt_X = std::sqrt(X);
+        return T(2) * sqrt_X / (sqrt_X + std::sqrt(X + T(4) * nhtot));
+    }
 }
 
 template <typename T>
@@ -70,6 +78,7 @@ struct AnalyticLteH {
         const bool ionisation_e = include_ionisation_e;
         const fp_t inv_mass_per_h = 1.0_fp / eos.mass_per_h;
         const fp_t total_abund = eos.total_abund;
+        const fp_t mu0 = state.mu0;
         using Cons = typename FTraits::cons;
 
         // NOTE(cmo): Scheme similar to lare
@@ -86,7 +95,15 @@ struct AnalyticLteH {
                     mom2_sum += square(Q(I(Cons::MomZ), k, j, i));
                 }
                 const fp_t e_kin = 0.5_fp * mom2_sum / rho;
-                const fp_t eint = Q(I(Cons::Ene), k, j, i) - e_kin;
+                fp_t e_mag = 0.0_fp;
+                if constexpr (FTraits::is_mhd) {
+                    e_mag = (
+                        square(Q(I(Cons::Bx), k, j, i))
+                        + square(Q(I(Cons::By), k, j, i))
+                        + square(Q(I(Cons::Bz), k, j, i))
+                    ) / (2.0_fp * mu0);
+                }
+                const fp_t eint = Q(I(Cons::Ene), k, j, i) - e_kin - e_mag;
 
                 const fp_t e_to_T = (eos.gamma - 1.0_fp) / (rho * (k_B / h_mass) * inv_mass_per_h);
                 auto temp_from_y = [&](fp_t y) {

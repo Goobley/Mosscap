@@ -107,6 +107,8 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
 
     sim.out_cfg.prev_output_time = current_time;
     sim.time = current_time;
+    const bool has_ion_e = eos.has_ion_e;
+    const fp_t fully_ionised_specific_energy = chi_H / (h_mass * eos.mass_per_h);
 
     dex_parallel_for(
         FlatLoop<3>(sz.zc, sz.yc, sz.xc),
@@ -115,10 +117,14 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
                 state.Q(v, k, j, i) = Q0(v, k, j, i);
             }
 
-            // NOTE(cmo): Assume we start at fully ionised or another module will correct it
-            Q(I(Cons::IonE), k, j, i) = chi_H / (h_mass * eos.mass_per_h);
-            // NOTE(cmo): Add the ionisation energy to the total energy
-            Q(I(Cons::Ene), k, j, i) += Q(I(Cons::Rho), k, j, i) * Q(I(Cons::IonE), k, j, i);
+            if (has_ion_e) {
+                // The FI restart is initially fully ionised. Add its reservoir
+                // only when the selected EOS evolves ionisation energy.
+                Q(I(Cons::IonE), k, j, i) = fully_ionised_specific_energy;
+                Q(I(Cons::Ene), k, j, i) += Q(I(Cons::Rho), k, j, i) * Q(I(Cons::IonE), k, j, i);
+            } else {
+                Q(I(Cons::IonE), k, j, i) = 0.0_fp;
+            }
         }
     );
 }
