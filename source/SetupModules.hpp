@@ -439,6 +439,8 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
     sim.dex.interface_config.update_ion_e = update_ion_e;
     sim.dex.interface_config.theta = theta;
     sim.dex.interface_config.ignore_rt_velocities = ignore_rt_velocities;
+    sim.dex.interface_config.bbox_crop = get_or<bool>(config, "dex.bbox_crop", false);
+    sim.dex.interface_config.bbox_halo_cells = get_or<i32>(config, "dex.bbox_halo_cells", 16);
     sim.dex.init_config(sim, config, config_path);
 }
 

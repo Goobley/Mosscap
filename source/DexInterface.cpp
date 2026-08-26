@@ -479,7 +479,19 @@ void DexInterface::broadcast_atmosphere() {
         i32 num_z = dims[3] * block_size;
 
         auto& block_map = state.mr_block_map.block_map;
-        block_map.lookup.entries = -1;
+        if (interface_config.bbox_crop) {
+            // NOTE(claude): Moving bbox -> the tile geometry changes each step,
+            // so rebuild it on workers from the broadcast tile counts before the
+            // lookup entries are received (lookup.init sizes + clears entries).
+            block_map.num_x_tiles() = dims[2];
+            block_map.num_z_tiles() = dims[3];
+            block_map.bbox.min = 0;
+            block_map.bbox.max(0) = num_x;
+            block_map.bbox.max(1) = num_z;
+            block_map.lookup.init(Dims<2>{.x = block_map.num_x_tiles(), .z = block_map.num_z_tiles()});
+        } else {
+            block_map.lookup.entries = -1;
+        }
         block_map.num_active_tiles = num_active_tiles;
         block_map.active_tiles = decltype(block_map.active_tiles)("active tiles", num_active_tiles);
 
@@ -536,14 +548,22 @@ void DexInterface::broadcast_atmosphere() {
         i32 max_mip_level = dims[4];
         state.mr_block_map.init(state.mr_block_map.block_map, max_mip_level);
 
-        const bool sparse_calc = state.config.sparse_calculation;
-        CascadeStorage c0 = state.c0_size;
-        std::vector<yakl::Array<i32, 2, yakl::memDevice>> active_probes;
-        if (sparse_calc) {
-            active_probes = compute_active_probe_lists(state, state.config.max_cascade);
+        if (interface_config.bbox_crop) {
+            // NOTE(claude): The box dimensions changed, so the cascade storage
+            // (c0_size, max_block_mip, cascade buffers) must be resized to match.
+            // Do not reallocate the per-active-cell terms here: pops was just
+            // received above and reallocating would zero it.
+            reallocate_cascade_storage();
+        } else {
+            const bool sparse_calc = state.config.sparse_calculation;
+            CascadeStorage c0 = state.c0_size;
+            std::vector<yakl::Array<i32, 2, yakl::memDevice>> active_probes;
+            if (sparse_calc) {
+                active_probes = compute_active_probe_lists(state, state.config.max_cascade);
+            }
+            casc_state.probes_to_compute.init(c0, sparse_calc, active_probes);
+            casc_state.mip_chain.init(state, state.mr_block_map.buffer_len(), c0.wave_batch);
         }
-        casc_state.probes_to_compute.init(c0, sparse_calc, active_probes);
-        casc_state.mip_chain.init(state, state.mr_block_map.buffer_len(), c0.wave_batch);
 
         if (interface_config.time_dependent_updates) {
             prev_pops = state.pops.createDeviceCopy();
@@ -718,6 +738,28 @@ void DexInterface::run_worker_loop() {
 
 template <typename FTraits>
 bool DexInterface::update_atmosphere(Simulation& sim) {
+    if (interface_config.bbox_crop) {
+        // NOTE(claude): Moving bbox -> recompute the box and rebuild the whole
+        // solve geometry (block map, atmosphere, cascade storage) each update,
+        // then run the same advect/time-dependent tail as the full-grid path.
+        const TileBbox box = compute_active_tile_bbox<FTraits>(sim);
+        rebuild_block_map_and_atmos<FTraits>(sim, box, interface_config.max_mip_level);
+        reallocate_solver_state();
+        fmt::println(
+            "num_active_tiles: {} (bbox {}x{} tiles at ({}, {}))",
+            state.mr_block_map.block_map.num_active_tiles, box.bnx, box.bnz, box.tx0, box.tz0
+        );
+
+        if (interface_config.advect) {
+            copy_pops_from_aux_fields(sim);
+        }
+        if (interface_config.time_dependent_updates) {
+            prev_pops = state.pops.createDeviceCopy();
+        }
+        fmt::println("Update atmosphere at {:.3f} s", sim.time);
+        return true;
+    }
+
     constexpr i32 num_dim = FTraits::num_dim;
     constexpr i32 block_size = BLOCK_SIZE;
     constexpr fp_t m_p = ConstantsF64::u;
@@ -889,8 +931,326 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
 }
 
 template <typename FTraits>
+TileBbox DexInterface::compute_active_tile_bbox(Simulation& sim) {
+    constexpr i32 block_size = BLOCK_SIZE;
+    constexpr fp_t m_p = ConstantsF64::u;
+
+    const auto& sz = sim.state.sz;
+    const i32 num_x = sz.xc - 2 * sz.ng;
+    const i32 num_z = sz.yc - 2 * sz.ng;
+    const i32 full_nx_tiles = num_x / block_size;
+    const i32 full_nz_tiles = num_z / block_size;
+
+    // NOTE(claude): Default (no crop) -> couple the whole inner grid.
+    const TileBbox full_grid{.tx0 = 0, .tz0 = 0, .bnx = full_nx_tiles, .bnz = full_nz_tiles};
+    if (!interface_config.bbox_crop) {
+        return full_grid;
+    }
+
+    const auto& Q = sim.state.Q;
+    const auto& eos = sim.eos;
+    const fp_t mu0 = sim.state.mu0;
+    const auto cutoff_temperature = state.config.threshold_temperature;
+
+    // NOTE(claude): Per-tile active mask (any cell in the tile below the RT
+    // cutoff temperature), using the same test as init_atmosphere.
+    yakl::Array<u8, 2, yakl::memDevice> active_tile("active_tile_mask", full_nz_tiles, full_nx_tiles);
+    dex_parallel_for(
+        "Compute active tile mask",
+        FlatLoop<2>(full_nz_tiles, full_nx_tiles),
+        KOKKOS_LAMBDA (i32 zt, i32 xt) {
+            constexpr int n_hydro = FTraits::num_vars;
+            yakl::SArray<fp_t, 1, n_hydro> w;
+            using Prim = typename FTraits::prim;
+            u8 active = 0;
+            for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
+                for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
+                    CellIndex idx{.i = x + sz.ng, .j = z + sz.ng, .k = 0};
+                    const auto q = QtyView(Q, idx);
+                    cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
+                    const fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
+                    fp_t y = eos.y;
+                    if (!eos.is_constant) {
+                        y = eos.y_space(idx.k, idx.j, idx.i);
+                    }
+                    const auto temp = temperature_si(w(I(Prim::Pres)), nh_tot, eos.total_abund, y);
+                    if (temp <= cutoff_temperature) {
+                        active = 1;
+                    }
+                }
+            }
+            active_tile(zt, xt) = active;
+        }
+    );
+    Kokkos::fence();
+
+    // NOTE(claude): Reduce to the tile-space bounding box of active tiles.
+    // Inactive tiles contribute the identity of each reducer so they drop out.
+    i32 min_xt, max_xt, min_zt, max_zt;
+    i64 num_active;
+    dex_parallel_reduce(
+        "bbox min_xt", FlatLoop<2>(full_nz_tiles, full_nx_tiles),
+        KOKKOS_LAMBDA (i32 zt, i32 xt, i32& v) { if (active_tile(zt, xt)) v = std::min(v, xt); },
+        Kokkos::Min<i32>(min_xt)
+    );
+    dex_parallel_reduce(
+        "bbox max_xt", FlatLoop<2>(full_nz_tiles, full_nx_tiles),
+        KOKKOS_LAMBDA (i32 zt, i32 xt, i32& v) { if (active_tile(zt, xt)) v = std::max(v, xt); },
+        Kokkos::Max<i32>(max_xt)
+    );
+    dex_parallel_reduce(
+        "bbox min_zt", FlatLoop<2>(full_nz_tiles, full_nx_tiles),
+        KOKKOS_LAMBDA (i32 zt, i32 xt, i32& v) { if (active_tile(zt, xt)) v = std::min(v, zt); },
+        Kokkos::Min<i32>(min_zt)
+    );
+    dex_parallel_reduce(
+        "bbox max_zt", FlatLoop<2>(full_nz_tiles, full_nx_tiles),
+        KOKKOS_LAMBDA (i32 zt, i32 xt, i32& v) { if (active_tile(zt, xt)) v = std::max(v, zt); },
+        Kokkos::Max<i32>(max_zt)
+    );
+    dex_parallel_reduce(
+        "bbox count", FlatLoop<2>(full_nz_tiles, full_nx_tiles),
+        KOKKOS_LAMBDA (i32 zt, i32 xt, i64& v) { if (active_tile(zt, xt)) v += 1; },
+        Kokkos::Sum<i64>(num_active)
+    );
+
+    if (num_active == 0) {
+        // NOTE(claude): Nothing active -> fall back to the full grid; the
+        // active-tile selection then finds zero and iterate() short-circuits.
+        return full_grid;
+    }
+
+    const i32 halo_tiles = (interface_config.bbox_halo_cells + block_size - 1) / block_size;
+    const i32 tx0 = std::max(0, min_xt - halo_tiles);
+    const i32 tz0 = std::max(0, min_zt - halo_tiles);
+    const i32 tx1 = std::min(full_nx_tiles - 1, max_xt + halo_tiles);
+    const i32 tz1 = std::min(full_nz_tiles - 1, max_zt + halo_tiles);
+    return TileBbox{.tx0 = tx0, .tz0 = tz0, .bnx = tx1 - tx0 + 1, .bnz = tz1 - tz0 + 1};
+}
+
+template <typename FTraits>
+bool DexInterface::rebuild_block_map_and_atmos(Simulation& sim, const TileBbox& box, i32 max_mip_level) {
+    constexpr fp_t m_p = ConstantsF64::u;
+    constexpr i32 block_size = BLOCK_SIZE;
+
+    auto& map = state.mr_block_map.block_map;
+    const auto& sz = sim.state.sz;
+    const auto& Q = sim.state.Q;
+    const auto& eos = sim.eos;
+    const fp_t mu0 = sim.state.mu0;
+    const auto cutoff_temperature = state.config.threshold_temperature;
+
+    // NOTE(claude): The block map is built in a box-relative, 0-origin frame:
+    // tile (0,0) is the box's lower-left tile, which sits at full-grid cell
+    // origin (tx0, tz0)*BLOCK_SIZE. The physical placement is restored via the
+    // atmosphere offsets below, and the box->full-grid mapping is recorded for
+    // output.
+    const i32 tx0 = box.tx0;
+    const i32 tz0 = box.tz0;
+    const i32 cell_off_x = tx0 * block_size;
+    const i32 cell_off_z = tz0 * block_size;
+    const i32 num_x = box.bnx * block_size;
+    const i32 num_z = box.bnz * block_size;
+
+    // NOTE(claude): Full-grid tile counts, for the output promotion.
+    full_num_x_tiles = (sz.xc - 2 * sz.ng) / block_size;
+    full_num_z_tiles = (sz.yc - 2 * sz.ng) / block_size;
+    box_tile_origin_x = tx0;
+    box_tile_origin_z = tz0;
+
+    map.num_x_tiles() = box.bnx;
+    map.num_z_tiles() = box.bnz;
+    if (
+        map.num_x_tiles() >= std::numeric_limits<u16>::max() ||
+        map.num_z_tiles() >= std::numeric_limits<u16>::max()
+    ) {
+        throw std::runtime_error("Too many tiles for Morton code/overlaps with sentinel");
+    }
+
+    map.bbox.min = 0;
+    map.bbox.max(0) = num_x;
+    map.bbox.max(1) = num_z;
+
+    map.lookup.init(Dims<2>{.x = map.num_x_tiles(), .z = map.num_z_tiles()});
+    yakl::Array<u32, 2, yakl::memDevice> morton_order("morton_traversal_order", map.num_z_tiles(), map.num_x_tiles());
+    yakl::Array<u32, 2, yakl::memDevice> active_2d("active_2d", map.num_z_tiles(), map.num_x_tiles());
+    constexpr u32 sentinel = std::numeric_limits<u32>::max();
+    active_2d = sentinel;
+    Kokkos::fence();
+    i32 num_active_tiles = 0;
+
+    dex_parallel_reduce(
+        "compute valid morton tiles",
+        FlatLoop<2>(map.num_z_tiles(), map.num_x_tiles()),
+        KOKKOS_LAMBDA (i32 zt, i32 xt, i32& num_active_tiles) {
+            u32 code = encode_morton<2>(Coord2{.x = xt, .z = zt});
+            morton_order(zt, xt) = code;
+
+            constexpr int n_hydro = FTraits::num_vars;
+            yakl::SArray<fp_t, 1, n_hydro> w;
+            using Prim = typename FTraits::prim;
+
+            for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
+                for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
+                    CellIndex idx{.i = x + cell_off_x + sz.ng, .j = z + cell_off_z + sz.ng, .k = 0};
+                    const auto q = QtyView(Q, idx);
+                    cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
+
+                    fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
+                    fp_t y = eos.y;
+                    if (!eos.is_constant) {
+                        y = eos.y_space(idx.k, idx.j, idx.i);
+                    }
+                    auto temp = temperature_si(w(I(Prim::Pres)), nh_tot, eos.total_abund, y);
+                    if (temp <= cutoff_temperature) {
+                        num_active_tiles += 1;
+                        active_2d(zt, xt) = code;
+                        return;
+                    }
+                }
+            }
+        },
+        Kokkos::Sum<i32>(num_active_tiles)
+    );
+
+    KView<u32*> morton_order_view(morton_order.data(), morton_order.size());
+    Kokkos::sort(morton_order_view);
+    KView<u32*> active_tiles_view(active_2d.data(), active_2d.size());
+    Kokkos::sort(active_tiles_view);
+    Kokkos::fence();
+
+    map.num_active_tiles = num_active_tiles;
+    map.morton_traversal_order = morton_order.reshape(morton_order.size());
+    map.active_tiles = decltype(map.active_tiles)("active tiles", num_active_tiles);
+
+    dex_parallel_for(
+        "Setup active tiles",
+        FlatLoop<1>(num_active_tiles),
+        KOKKOS_LAMBDA (i32 idx) {
+            u32 code = active_tiles_view(idx);
+            map.active_tiles(idx) = code;
+            Coord2 coord = decode_morton<FTraits::num_dim>(code);
+            map.lookup(coord) = idx;
+        }
+    );
+    Kokkos::fence();
+
+    state.mr_block_map.init(map, max_mip_level);
+    const bool ignore_rt_velocities = interface_config.ignore_rt_velocities;
+
+    using dfp_t = Dex::fp_t;
+    i64 num_active_cells = num_active_tiles * ::DexImpl::int_pow<FTraits::num_dim>(block_size);
+    state.atmos = SparseAtmosphere{
+        .voxel_scale = dfp_t(sim.state.dx),
+        // NOTE(claude): Shift the offsets by the box tile origin so the active
+        // region keeps its absolute physical placement (and hence its PromWeaver
+        // boundary geometry) despite the cropped, translated block map.
+        .offset_x = dfp_t(sim.state.loc.x + cell_off_x * sim.state.dx),
+        .offset_y = FP(0.0),
+        .offset_z = dfp_t(sim.state.loc.y + cell_off_z * sim.state.dx),
+        .num_x = num_x,
+        .num_y = 0,
+        .num_z = num_z,
+        .moving = true,
+        .temperature = yakl::Array<dfp_t, 1, yakl::memDevice>("temperature", num_active_cells),
+        .pressure = yakl::Array<dfp_t, 1, yakl::memDevice>("pressure", num_active_cells),
+        .ne = yakl::Array<dfp_t, 1, yakl::memDevice>("ne", num_active_cells),
+        .nh_tot = yakl::Array<dfp_t, 1, yakl::memDevice>("nh_tot", num_active_cells),
+        .nh0 = yakl::Array<dfp_t, 1, yakl::memDevice>("nh0", num_active_cells),
+        .vturb = yakl::Array<dfp_t, 1, yakl::memDevice>("vturb", num_active_cells),
+        .vx = yakl::Array<dfp_t, 1, yakl::memDevice>("vx", num_active_cells),
+        .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
+        .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
+    };
+    const auto& atmos = state.atmos;
+    dex_parallel_for(
+        "Copy atmos qtys",
+        map.loop_bounds(),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(map);
+            i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+
+            constexpr i32 n_hydro = FTraits::num_vars;
+            CellIndex idx{.i = coord.x + cell_off_x + sz.ng, .j = coord.z + cell_off_z + sz.ng, .k = 0};
+            yakl::SArray<fp_t, 1, n_hydro> w;
+            QtyView q(Q, idx);
+            cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
+            using Prim = typename FTraits::prim;
+
+            atmos.pressure(ks) = w(I(Prim::Pres));
+            const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
+            atmos.nh_tot(ks) = nh;
+            fp_t y = eos.y;
+            if (!eos.is_constant) {
+                y = eos.y_space(idx.k, idx.j, idx.i);
+            }
+            atmos.ne(ks) = atmos.nh_tot(ks) * y;
+            const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, eos.total_abund, y);
+            atmos.temperature(ks) = temperature;
+            atmos.nh0(ks) = FP(0.0);
+            atmos.vturb(ks) = vturb_fn(temperature, nh, y * nh);
+            if (ignore_rt_velocities) {
+                atmos.vx(ks) = FP(0.0);
+                atmos.vy(ks) = FP(0.0);
+                atmos.vz(ks) = FP(0.0);
+            } else {
+                atmos.vx(ks) = w(I(Prim::Vx));
+                atmos.vy(ks) = FP(0.0);
+                atmos.vz(ks) = w(I(Prim::Vy));
+            }
+        }
+    );
+    Kokkos::fence();
+
+    return true;
+}
+
+void DexInterface::reallocate_cascade_storage() {
+    // NOTE(claude): Under a moving bbox the box dimensions (and hence cascade
+    // storage) change each RT update, so the c0 storage, max_block_mip and the
+    // cascade buffers must be resized. This does not touch the per-active-cell
+    // terms, so it is safe on workers after pops has been broadcast.
+    CascadeRays c0_rays;
+    c0_rays.num_probes(0) = state.atmos.num_x;
+    c0_rays.num_probes(1) = state.atmos.num_z;
+    c0_rays.num_flat_dirs = PROBE0_NUM_RAYS;
+    c0_rays.num_incl = NUM_INCL;
+    c0_rays.wave_batch = WAVE_BATCH;
+    constexpr int RcMode = RC_flags_storage_2d();
+    state.c0_size = cascade_rays_to_storage<RcMode>(c0_rays);
+
+    const auto& block_map = state.mr_block_map.block_map;
+    state.max_block_mip = decltype(state.max_block_mip)(
+        "max_block_mip",
+        (state.adata.wavelength.extent(0) + c0_rays.wave_batch - 1) / c0_rays.wave_batch,
+        block_map.num_z_tiles(),
+        block_map.num_x_tiles()
+    );
+    state.max_block_mip = -1;
+
+    // NOTE(claude): casc_state.init push_back's into i_cascades/tau_cascades, so
+    // reconstruct it first to avoid accumulating buffers across updates.
+    casc_state = DexCascState{};
+    casc_state.init(state, state.config.max_cascade);
+    Kokkos::fence();
+}
+
+void DexInterface::reallocate_solver_state() {
+    i64 num_active_cells = state.mr_block_map.get_num_active_cells();
+    allocate_cell_count_based_terms(state, num_active_cells);
+    allocate_reservoir_terms(num_active_cells);
+    reallocate_cascade_storage();
+}
+
+template <typename FTraits>
 bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
     constexpr fp_t m_p = ConstantsF64::u;
+
+    if (interface_config.bbox_crop) {
+        const TileBbox box = compute_active_tile_bbox<FTraits>(sim);
+        return rebuild_block_map_and_atmos<FTraits>(sim, box, max_mip_level);
+    }
 
     auto& map = state.mr_block_map.block_map;
     const auto& sz = sim.state.sz;
@@ -903,6 +1263,12 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
     const i32 num_x = sz.xc - 2 * sz.ng;
     // NOTE(cmo): z in dex is y in mosscap
     const i32 num_z = sz.yc - 2 * sz.ng;
+    // NOTE(claude): Identity box->full-grid mapping when not cropping, so the
+    // output promotion is a no-op.
+    box_tile_origin_x = 0;
+    box_tile_origin_z = 0;
+    full_num_x_tiles = num_x / block_size;
+    full_num_z_tiles = num_z / block_size;
     if (num_x % block_size != 0 || num_z % block_size != 0) {
         throw std::runtime_error("Inner grid is not a multiple of BLOCK_SIZE");
     }
@@ -1714,19 +2080,86 @@ static void write_sparse_diagnostic(
 
 void DexInterface::write_output(const Simulation& sim, yakl::SimpleNetCDF& nc) {
     const auto& cfg = sim.out_cfg;
+
+    // NOTE(claude): Under bbox_crop the solve block map is box-relative. Every
+    // grid-dependent writer derives its extents/positions from
+    // block_map.num_*_tiles() and block_map.active_tiles (via decode_morton),
+    // and max_block_mip is a pre-filled per-tile array. So to write output
+    // as-if the full grid were coupled we temporarily "promote" those to the
+    // full grid: re-encode the active-tile morton codes with the box origin
+    // (preserving order, so the ks<->tile mapping of the data arrays is
+    // unchanged), pad max_block_mip to full-grid tile dims, and set the full
+    // tile counts. Everything is restored afterwards. When not cropping this is
+    // an identity and is skipped.
+    auto& block_map = state.mr_block_map.block_map;
+    const bool promote = interface_config.bbox_crop && (
+        box_tile_origin_x != 0 || box_tile_origin_z != 0 ||
+        block_map.num_x_tiles() != full_num_x_tiles ||
+        block_map.num_z_tiles() != full_num_z_tiles
+    );
+    const i32 saved_nx = block_map.num_x_tiles();
+    const i32 saved_nz = block_map.num_z_tiles();
+    auto saved_active_tiles = block_map.active_tiles;
+    auto saved_max_block_mip = state.max_block_mip;
+    if (promote) {
+        const i32 tx0 = box_tile_origin_x;
+        const i32 tz0 = box_tile_origin_z;
+
+        auto full_active = decltype(block_map.active_tiles)(
+            "active tiles (full grid)", saved_active_tiles.extent(0)
+        );
+        dex_parallel_for(
+            "Promote active tiles",
+            FlatLoop<1>(saved_active_tiles.extent(0)),
+            KOKKOS_LAMBDA (i32 i) {
+                Coord2 c = decode_morton<2>(saved_active_tiles(i));
+                full_active(i) = encode_morton<2>(Coord2{.x = c.x + tx0, .z = c.z + tz0});
+            }
+        );
+        Kokkos::fence();
+
+        if (state.max_block_mip.initialized()) {
+            const auto mbm = state.max_block_mip;
+            auto full_mbm = decltype(state.max_block_mip)(
+                "max_block_mip (full grid)", mbm.extent(0), full_num_z_tiles, full_num_x_tiles
+            );
+            full_mbm = -1;
+            Kokkos::fence();
+            dex_parallel_for(
+                "Promote max_block_mip",
+                FlatLoop<3>(mbm.extent(0), mbm.extent(1), mbm.extent(2)),
+                KOKKOS_LAMBDA (i32 w, i32 zt, i32 xt) {
+                    full_mbm(w, zt + tz0, xt + tx0) = mbm(w, zt, xt);
+                }
+            );
+            Kokkos::fence();
+            state.max_block_mip = full_mbm;
+        }
+
+        block_map.num_x_tiles() = full_num_x_tiles;
+        block_map.num_z_tiles() = full_num_z_tiles;
+        block_map.active_tiles = full_active;
+    }
+
     if (cfg.prev_output_time < 0.0_fp || !cfg.single_file) {
         add_netcdf_attributes(state, nc);
     }
     save_results(state, nc, cfg.single_file, num_iter, sim.out_cfg.output_count);
 
-    if (state.mpi_state.rank != 0) {
-        return;
+    if (state.mpi_state.rank == 0) {
+        const i32 time_idx = cfg.output_count;
+        write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, g_ion, "g_ion");
+        write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, g_exc, "g_exc");
+        if (interface_config.rad_loss) {
+            write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, temp_floor_heat, "temp_floor_heat");
+        }
     }
-    const i32 time_idx = cfg.output_count;
-    write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, g_ion, "g_ion");
-    write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, g_exc, "g_exc");
-    if (interface_config.rad_loss) {
-        write_sparse_diagnostic(state, nc, cfg.single_file, time_idx, temp_floor_heat, "temp_floor_heat");
+
+    if (promote) {
+        block_map.num_x_tiles() = saved_nx;
+        block_map.num_z_tiles() = saved_nz;
+        block_map.active_tiles = saved_active_tiles;
+        state.max_block_mip = saved_max_block_mip;
     }
 }
 

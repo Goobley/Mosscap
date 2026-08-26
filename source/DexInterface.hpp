@@ -31,11 +31,27 @@ struct DexMosscapConfig {
     i32 field_start_idx = 0;
     fp_t theta = 1.0_fp;
     fp_t temperature_floor = 2e3_fp;
+    // NOTE(claude): When set, only couple a bounding box around the active
+    // (cool) tiles to DexRT rather than the whole inner grid, so rays escape and
+    // sample the boundary condition at a nearer edge. The box is recomputed each
+    // RT update and halo'd out by bbox_halo_cells (snapped to BLOCK_SIZE, clamped
+    // to the grid). Output is still written as-if the full grid were coupled.
+    bool bbox_crop = false;
+    i32 bbox_halo_cells = 16;
 };
 
 struct DexConvergence {
     Dex::fp_t convergence;
     i32 max_iter;
+};
+
+/// A tile-space bounding box in full-grid tile coordinates: origin (tx0, tz0)
+/// and box tile dimensions (bnx, bnz). Used by the bbox_crop coupling.
+struct TileBbox {
+    i32 tx0;
+    i32 tz0;
+    i32 bnx;
+    i32 bnz;
 };
 
 struct IterateArgs {
@@ -52,6 +68,16 @@ struct DexInterface {
     DexCascState casc_state;
     i32 num_iter;
     DexFp2d prev_pops; /// Used for time dependent updates
+
+    /// Mapping from the (possibly cropped) solve block map back to the full
+    /// inner grid, used only at output time to write results as-if the whole
+    /// grid were coupled. When bbox_crop is off these are (0, 0) and the full
+    /// tile counts, so the output promotion is an identity. Set on rank 0 by
+    /// the (re)build of the atmosphere geometry.
+    i32 box_tile_origin_x = 0;
+    i32 box_tile_origin_z = 0;
+    i32 full_num_x_tiles = 0;
+    i32 full_num_z_tiles = 0;
 
     /// Per-level decomposition of the energy stored in the atomic reservoir,
     /// relative to the ground state of each model atom's own lowest stage.
@@ -85,6 +111,34 @@ struct DexInterface {
     bool update_atmosphere(Simulation& sim);
     template <typename FTraits>
     bool update_atmosphere(Simulation& sim);
+
+    /// Compute the active-cell tile bounding box (in full-grid tile coords) for
+    /// the bbox_crop mode, halo'd by bbox_halo_cells and clamped/snapped to the
+    /// grid. When bbox_crop is off, or nothing is active, this returns the full
+    /// grid so the solve degrades to the uncropped behaviour.
+    template <typename FTraits>
+    TileBbox compute_active_tile_bbox(Simulation& sim);
+
+    /// Rebuild the sparse block map + sparse atmosphere over the given box,
+    /// shifting the atmosphere offsets so the active region keeps its absolute
+    /// physical placement. Used by the bbox_crop paths of
+    /// init_atmosphere/update_atmosphere. Records the box->full-grid mapping
+    /// (box_tile_origin_*, full_num_*_tiles) for output.
+    template <typename FTraits>
+    bool rebuild_block_map_and_atmos(Simulation& sim, const TileBbox& box, i32 max_mip_level);
+
+    /// (Re)allocate the geometry-sized cascade storage: c0_size, max_block_mip
+    /// and the cascade buffers. Does NOT touch the per-active-cell terms (pops
+    /// etc.), so it is safe to call on MPI workers after pops has been received.
+    /// Reads state.atmos/mr_block_map.
+    void reallocate_cascade_storage();
+
+    /// (Re)allocate the full solver-side state whose size tracks the atmosphere
+    /// geometry: the per-active-cell terms and reservoir terms, plus
+    /// reallocate_cascade_storage. Needed each step under a moving bbox because
+    /// the box dimensions (and hence cascade storage) change. Reads
+    /// state.atmos/mr_block_map.
+    void reallocate_solver_state();
 
     bool iterate(const DexConvergence& tol, const IterateArgs& args = IterateArgs());
 
