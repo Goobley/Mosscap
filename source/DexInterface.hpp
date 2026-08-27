@@ -2,6 +2,7 @@
 #define MOSSCAP_DEX_INTERFACE
 
 #include "Config.hpp"
+#include "Types.hpp"
 #include "AtmosCommon.hpp"
 #include "../DexRT/source/State.hpp"
 #include "../DexRT/source/CascadeState.hpp"
@@ -54,6 +55,24 @@ struct TileBbox {
     i32 bnz;
 };
 
+/// Converts a cell coordinate in the (possibly cropped) Dex grid to an index
+/// in the full, ghosted MHD grid. This is deliberately a small value type so it
+/// can be captured safely by device kernels.
+struct DexToMhdGrid {
+    i32 cell_offset_x;
+    i32 cell_offset_z;
+    i32 num_ghost;
+
+    KOKKOS_INLINE_FUNCTION
+    CellIndex operator()(const Coord2& coord) const {
+        return CellIndex{
+            .i = coord.x + cell_offset_x + num_ghost,
+            .j = coord.z + cell_offset_z + num_ghost,
+            .k = 0
+        };
+    }
+};
+
 struct IterateArgs {
     fp_t dt = 0.0_fp; /// 0.0 implies stat eq
     fp_t theta = 1.0_fp; /// Theta in semi-implicit Euler method
@@ -78,6 +97,14 @@ struct DexInterface {
     i32 box_tile_origin_z = 0;
     i32 full_num_x_tiles = 0;
     i32 full_num_z_tiles = 0;
+
+    DexToMhdGrid dex_to_mhd_grid(i32 num_ghost) const {
+        return DexToMhdGrid{
+            .cell_offset_x = box_tile_origin_x * BLOCK_SIZE,
+            .cell_offset_z = box_tile_origin_z * BLOCK_SIZE,
+            .num_ghost = num_ghost
+        };
+    }
 
     /// Per-level decomposition of the energy stored in the atomic reservoir,
     /// relative to the ground state of each model atom's own lowest stage.

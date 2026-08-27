@@ -858,6 +858,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
     };
     const bool ignore_rt_velocities = interface_config.ignore_rt_velocities;
     const auto& atmos = state.atmos;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
     dex_parallel_for(
         "Copy atmos qtys",
         block_map.loop_bounds(),
@@ -867,7 +868,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
 
             constexpr i32 n_hydro = FTraits::num_vars;
-            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
+            const CellIndex idx = dex_to_mhd(coord);
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
@@ -1060,8 +1061,11 @@ bool DexInterface::rebuild_block_map_and_atmos(Simulation& sim, const TileBbox& 
     // output.
     const i32 tx0 = box.tx0;
     const i32 tz0 = box.tz0;
-    const i32 cell_off_x = tx0 * block_size;
-    const i32 cell_off_z = tz0 * block_size;
+    const DexToMhdGrid dex_to_mhd{
+        .cell_offset_x = tx0 * block_size,
+        .cell_offset_z = tz0 * block_size,
+        .num_ghost = sz.ng
+    };
     const i32 num_x = box.bnx * block_size;
     const i32 num_z = box.bnz * block_size;
 
@@ -1105,7 +1109,7 @@ bool DexInterface::rebuild_block_map_and_atmos(Simulation& sim, const TileBbox& 
 
             for (int z = zt * block_size; z < (zt + 1) * block_size; ++z) {
                 for (int x = xt * block_size; x < (xt + 1) * block_size; ++x) {
-                    CellIndex idx{.i = x + cell_off_x + sz.ng, .j = z + cell_off_z + sz.ng, .k = 0};
+                    const CellIndex idx = dex_to_mhd(Coord2{.x = x, .z = z});
                     const auto q = QtyView(Q, idx);
                     cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
 
@@ -1158,9 +1162,9 @@ bool DexInterface::rebuild_block_map_and_atmos(Simulation& sim, const TileBbox& 
         // NOTE(claude): Shift the offsets by the box tile origin so the active
         // region keeps its absolute physical placement (and hence its PromWeaver
         // boundary geometry) despite the cropped, translated block map.
-        .offset_x = dfp_t(sim.state.loc.x + cell_off_x * sim.state.dx),
+        .offset_x = dfp_t(sim.state.loc.x + dex_to_mhd.cell_offset_x * sim.state.dx),
         .offset_y = FP(0.0),
-        .offset_z = dfp_t(sim.state.loc.y + cell_off_z * sim.state.dx),
+        .offset_z = dfp_t(sim.state.loc.y + dex_to_mhd.cell_offset_z * sim.state.dx),
         .num_x = num_x,
         .num_y = 0,
         .num_z = num_z,
@@ -1185,7 +1189,7 @@ bool DexInterface::rebuild_block_map_and_atmos(Simulation& sim, const TileBbox& 
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
 
             constexpr i32 n_hydro = FTraits::num_vars;
-            CellIndex idx{.i = coord.x + cell_off_x + sz.ng, .j = coord.z + cell_off_z + sz.ng, .k = 0};
+            const CellIndex idx = dex_to_mhd(coord);
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
@@ -1395,6 +1399,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
         .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
     };
     const auto& atmos = state.atmos;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
     dex_parallel_for(
         "Copy atmos qtys",
         map.loop_bounds(),
@@ -1404,7 +1409,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
 
             constexpr i32 n_hydro = FTraits::num_vars;
-            CellIndex idx{.i = coord.x + sz.ng, .j = coord.z + sz.ng, .k = 0};
+            const CellIndex idx = dex_to_mhd(coord);
             yakl::SArray<fp_t, 1, n_hydro> w;
             QtyView q(Q, idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
@@ -2191,11 +2196,7 @@ void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
     const auto& eos = sim.eos;
     using Cons = typename FTraits::cons;
 
-    // NOTE(claude): Under bbox_crop the block map is box-relative, so shift its
-    // coords by the box tile origin to address the right cells in the full Q
-    // grid. box_tile_origin_* is 0 when not cropping, so this is a no-op then.
-    const i32 cell_off_x = box_tile_origin_x * BLOCK_SIZE;
-    const i32 cell_off_z = box_tile_origin_z * BLOCK_SIZE;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
     dex_parallel_for(
         "nhtot -> rho",
         FlatLoop<2>(block_map.loop_bounds()),
@@ -2203,7 +2204,7 @@ void DexInterface::copy_nhtot_to_rho(const Simulation& sim) {
             IdxGen idx_gen(mr_block_map);
             const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
-            CellIndex idx{.i = coord.x + cell_off_x + sz.ng, .j = coord.z + cell_off_z + sz.ng, .k = 0};
+            const CellIndex idx = dex_to_mhd(coord);
 
             Q(I(Cons::Rho), idx.k, idx.j, idx.i) = atmos.nh_tot(ks) * eos.mass_per_h * m_p;
         }
@@ -2235,10 +2236,7 @@ void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
 
     // Now to the actual promised copying
     const i32 start_idx = interface_config.field_start_idx;
-    // NOTE(claude): Box-relative block map -> shift to full-grid Q cells (0 when
-    // not cropping). See copy_nhtot_to_rho.
-    const i32 cell_off_x = box_tile_origin_x * BLOCK_SIZE;
-    const i32 cell_off_z = box_tile_origin_z * BLOCK_SIZE;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
     dex_parallel_for(
         "Pops -> Tracers",
         FlatLoop<2>(block_map.loop_bounds()),
@@ -2246,7 +2244,7 @@ void DexInterface::copy_pops_to_aux_fields(const Simulation& sim) {
             IdxGen idx_gen(mr_block_map);
             const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
-            CellIndex idx{.i = coord.x + cell_off_x + sz.ng, .j = coord.z + cell_off_z + sz.ng, .k = 0};
+            const CellIndex idx = dex_to_mhd(coord);
 
             Q(start_idx, idx.k, idx.j, idx.i) = atmos.ne(ks);
             for (int v = start_idx + 1; v < Q.extent(0); ++v) {
@@ -2459,11 +2457,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
     const fp_t inv_dt = (dt > 0.0_fp) ? (1.0_fp / dt) : 0.0_fp;
     typedef Kokkos::MinLoc<fp_t, i64> MinLoc;
     MinLoc::value_type minloc;
-    // NOTE(claude): Box-relative block map -> shift to full-grid Q cells (0 when
-    // not cropping). Applying rad loss without this shift overwrites the wrong
-    // cells and drives temperatures negative. See copy_nhtot_to_rho.
-    const i32 cell_off_x = box_tile_origin_x * BLOCK_SIZE;
-    const i32 cell_off_z = box_tile_origin_z * BLOCK_SIZE;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
     dex_parallel_reduce(
         "Integrate rad loss",
         FlatLoop<2>(block_map.loop_bounds()),
@@ -2471,7 +2465,7 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
             IdxGen idx_gen(mr_block_map);
             const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
-            CellIndex idx{.i = coord.x + cell_off_x + sz.ng, .j = coord.z + cell_off_z + sz.ng, .k = 0};
+            const CellIndex idx = dex_to_mhd(coord);
 
             // Calculated in kW/m3;
             fp_t delta_E = 0.0_fp;
@@ -2557,10 +2551,7 @@ void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
     const auto& sz = sim.state.sz;
 
     const i32 start_idx = interface_config.field_start_idx;
-    // NOTE(claude): Box-relative block map -> shift to full-grid Q cells (0 when
-    // not cropping). See copy_nhtot_to_rho.
-    const i32 cell_off_x = box_tile_origin_x * BLOCK_SIZE;
-    const i32 cell_off_z = box_tile_origin_z * BLOCK_SIZE;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
     dex_parallel_for(
         "Tracers -> Pops",
         FlatLoop<2>(block_map.loop_bounds()),
@@ -2568,7 +2559,7 @@ void DexInterface::copy_pops_from_aux_fields(const Simulation& sim) {
             IdxGen idx_gen(mr_block_map);
             const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
-            CellIndex idx{.i = coord.x + cell_off_x + sz.ng, .j = coord.z + cell_off_z + sz.ng, .k = 0};
+            const CellIndex idx = dex_to_mhd(coord);
 
             atmos.ne(ks) = Q(start_idx, idx.k, idx.j, idx.i);
             for (int v = start_idx + 1; v < Q.extent(0); ++v) {
@@ -2632,10 +2623,7 @@ void DexInterface::copy_to_eos(const Simulation& sim) {
         return;
     }
 
-    // NOTE(claude): Box-relative block map -> shift to full-grid Q cells (0 when
-    // not cropping). See copy_nhtot_to_rho.
-    const i32 cell_off_x = box_tile_origin_x * BLOCK_SIZE;
-    const i32 cell_off_z = box_tile_origin_z * BLOCK_SIZE;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
     dex_parallel_for(
         "Pops -> y",
         FlatLoop<2>(block_map.loop_bounds()),
@@ -2643,7 +2631,7 @@ void DexInterface::copy_to_eos(const Simulation& sim) {
             IdxGen idx_gen(mr_block_map);
             const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
             Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
-            CellIndex idx{.i = coord.x + cell_off_x + sz.ng, .j = coord.z + cell_off_z + sz.ng, .k = 0};
+            const CellIndex idx = dex_to_mhd(coord);
 
             const fp_t y = atmos.ne(ks) / atmos.nh_tot(ks);
 
