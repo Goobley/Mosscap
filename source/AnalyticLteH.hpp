@@ -143,6 +143,8 @@ struct AnalyticLteH {
                     }
                     constexpr fp_t temp_err_bound = 1e-1_fp;
                     if (std::abs(temp_step) < temp_err_bound || std::abs(temp_err) < temp_err_bound) {
+                        // NOTE(cmo): Properly set the temperature  in case we exit due to temp_err rather than temp_step.
+                        temp = test_temp;
                         break;
                     }
                 }
