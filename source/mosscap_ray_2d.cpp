@@ -188,6 +188,7 @@ MosscapRayConfig parse_mosscap_ray_config(const std::string& path) {
     config.gamma = Mosscap::get_or<Mosscap::fp_t>(mosscap_file, "eos.gamma", 5.0 / 3.0);
     config.mass_per_h = Mosscap::get_or<Mosscap::fp_t>(mosscap_file, "eos.mass_per_h", 1.0);
     config.total_abund = Mosscap::get_or<Mosscap::fp_t>(mosscap_file, "eos.total_abund", 1.0);
+    config.dexrt.total_abund = config.total_abund;
 
     return config;
 }
