@@ -1452,6 +1452,7 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
 bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::string& config_path) {
     auto dex_config = cfg["dex"];
     state.config = parse_dexrt_config(config_path, dex_config);
+    state.config.total_abund = sim.eos.total_abund;
 
     setup_comm(&state);
 
@@ -1722,8 +1723,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
             // meaningfully better after the second iteration
             fp_t nr_update = nr_post_update(&state, NrPostUpdateOptions{
                 .ignore_change_below_ntot_frac = FP(1e-7),
-                .conserve_pressure = actually_conserve_pressure,
-                .total_abund = FP(1.0),
+                .conserve_pressure = actually_conserve_pressure
             });
             lte_max_change = nr_update;
             // if (actually_conserve_pressure) {
@@ -1842,8 +1842,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
                         .theta = Dex::fp_t(args.theta),
                         .predicted_pops = predicted_pops,
                         .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence),
-                        .conserve_pressure = actually_conserve_pressure,
-                        .total_abund = FP(1.0)
+                        .conserve_pressure = actually_conserve_pressure
                     }
                 );
                 wave_dist.update_ne(&state);
@@ -1874,8 +1873,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
                     &state,
                     NrPostUpdateOptions{
                         .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence),
-                        .conserve_pressure = actually_conserve_pressure,
-                        .total_abund = FP(1.0)
+                        .conserve_pressure = actually_conserve_pressure
                     }
                 );
                 wave_dist.update_ne(&state);
