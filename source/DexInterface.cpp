@@ -15,6 +15,7 @@
 #include "../DexRT/source/Collisions.hpp"
 #include "../DexRT/source/ChargeConservation.hpp"
 #include "../DexRT/source/PressureConservation.hpp"
+#include "../DexRT/source/EnergyConservation.hpp"
 #include "../DexRT/source/NgAcceleration.hpp"
 #include "../DexRT/source/ProfileNormalisation.hpp"
 #include "../DexRT/source/DynamicFormalSolution.hpp"
@@ -517,7 +518,8 @@ void DexInterface::broadcast_atmosphere() {
             .vturb = yakl::Array<dfp_t, 1, yakl::memDevice>("vturb", num_active_cells),
             .vx = yakl::Array<dfp_t, 1, yakl::memDevice>("vx", num_active_cells),
             .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
-            .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
+            .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells),
+            .e_int = yakl::Array<dfp_t, 1, yakl::memDevice>("e_int", num_active_cells)
         };
         allocate_cell_count_based_terms(state, num_active_cells);
         Kokkos::fence();
@@ -540,6 +542,7 @@ void DexInterface::broadcast_atmosphere() {
     MPI_Bcast(atmos.vx.data(), atmos.vx.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(atmos.vy.data(), atmos.vy.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(atmos.vz.data(), atmos.vz.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.e_int.data(), atmos.e_int.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(state.pops.data(), state.pops.size(), get_FpMpi(), 0, comm);
     Kokkos::fence();
 
@@ -645,7 +648,8 @@ void DexInterface::initial_worker_atmos_setup() {
             .vturb = yakl::Array<dfp_t, 1, yakl::memDevice>("vturb", num_active_cells),
             .vx = yakl::Array<dfp_t, 1, yakl::memDevice>("vx", num_active_cells),
             .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
-            .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
+            .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells),
+            .e_int = yakl::Array<dfp_t, 1, yakl::memDevice>("e_int", num_active_cells)
         };
         allocate_cell_count_based_terms(state, num_active_cells);
     }
@@ -666,6 +670,7 @@ void DexInterface::initial_worker_atmos_setup() {
     MPI_Bcast(atmos.vx.data(), atmos.vx.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(atmos.vy.data(), atmos.vy.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(atmos.vz.data(), atmos.vz.size(), get_FpMpi(), 0, comm);
+    MPI_Bcast(atmos.e_int.data(), atmos.e_int.size(), get_FpMpi(), 0, comm);
 
 
     if (state.mpi_state.rank != 0) {
@@ -854,7 +859,8 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
         .vturb = yakl::Array<dfp_t, 1, yakl::memDevice>("vturb", num_active_cells),
         .vx = yakl::Array<dfp_t, 1, yakl::memDevice>("vx", num_active_cells),
         .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
-        .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
+        .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells),
+        .e_int = yakl::Array<dfp_t, 1, yakl::memDevice>("e_int", num_active_cells)
     };
     const bool ignore_rt_velocities = interface_config.ignore_rt_velocities;
     const auto& atmos = state.atmos;
@@ -873,8 +879,15 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
             QtyView q(Q, idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
             using Prim = typename FTraits::prim;
+            using Cons = typename FTraits::cons;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
+            // Fixed-density material energy target for forced SE: thermal plus
+            // the modeled atomic reservoir carried by IonE.
+            atmos.e_int(ks) = (
+                atmos.pressure(ks) / (eos.gamma - 1.0_fp)
+                + q(I(Cons::IonE)) * w(I(Prim::Rho))
+            );
             const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
             atmos.nh_tot(ks) = nh;
             fp_t y = eos.y;
@@ -1177,7 +1190,8 @@ bool DexInterface::rebuild_block_map_and_atmos(Simulation& sim, const TileBbox& 
         .vturb = yakl::Array<dfp_t, 1, yakl::memDevice>("vturb", num_active_cells),
         .vx = yakl::Array<dfp_t, 1, yakl::memDevice>("vx", num_active_cells),
         .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
-        .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
+        .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells),
+        .e_int = yakl::Array<dfp_t, 1, yakl::memDevice>("e_int", num_active_cells)
     };
     const auto& atmos = state.atmos;
     dex_parallel_for(
@@ -1194,8 +1208,13 @@ bool DexInterface::rebuild_block_map_and_atmos(Simulation& sim, const TileBbox& 
             QtyView q(Q, idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
             using Prim = typename FTraits::prim;
+            using Cons = typename FTraits::cons;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
+            atmos.e_int(ks) = (
+                atmos.pressure(ks) / (eos.gamma - 1.0_fp)
+                + q(I(Cons::IonE)) * w(I(Prim::Rho))
+            );
             const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
             atmos.nh_tot(ks) = nh;
             fp_t y = eos.y;
@@ -1396,7 +1415,8 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
         .vturb = yakl::Array<dfp_t, 1, yakl::memDevice>("vturb", num_active_cells),
         .vx = yakl::Array<dfp_t, 1, yakl::memDevice>("vx", num_active_cells),
         .vy = yakl::Array<dfp_t, 1, yakl::memDevice>("vy", num_active_cells),
-        .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells)
+        .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells),
+        .e_int = yakl::Array<dfp_t, 1, yakl::memDevice>("e_int", num_active_cells)
     };
     const auto& atmos = state.atmos;
     const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
@@ -1414,8 +1434,13 @@ bool DexInterface::init_atmosphere(Simulation& sim, i32 max_mip_level) {
             QtyView q(Q, idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
             using Prim = typename FTraits::prim;
+            using Cons = typename FTraits::cons;
 
             atmos.pressure(ks) = w(I(Prim::Pres));
+            atmos.e_int(ks) = (
+                atmos.pressure(ks) / (eos.gamma - 1.0_fp)
+                + q(I(Cons::IonE)) * w(I(Prim::Rho))
+            );
             const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
             atmos.nh_tot(ks) = nh;
             fp_t y = eos.y;
@@ -1880,6 +1905,15 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
                 max_change = std::max(nr_update, max_change);
                 if (actually_conserve_pressure) {
                     wave_dist.update_nh_tot(&state);
+                }
+
+                // Pressure conservation changes nh_tot, whereas this path is
+                // the fixed-density material-energy solve. Keep the two
+                // mutually exclusive, as in DexRT's standalone driver.
+                if (!actually_conserve_pressure) {
+                    fp_t temp_update = simple_conserve_energy(&state);
+                    wave_dist.update_temperature(&state);
+                    max_change = std::max(temp_update, max_change);
                 }
             }
         }
