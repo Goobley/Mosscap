@@ -1711,6 +1711,12 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         if (!prev_pops.initialized()) {
             throw std::runtime_error("Time dependent update requested, but prev_pops not available (call update_atmosphere).");
         }
+        if (conserve_pressure) {
+            throw std::runtime_error(
+                "dex.conserve_pressure is not supported with time-dependent population updates; "
+                "the TD solve conserves the advected mass density."
+            );
+        }
     }
     const bool actually_conserve_pressure = actually_conserve_charge && conserve_pressure;
     const int initial_lambda_iterations = 1;
@@ -1866,15 +1872,11 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
                         .dt = Dex::fp_t(args.dt),
                         .theta = Dex::fp_t(args.theta),
                         .predicted_pops = predicted_pops,
-                        .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence),
-                        .conserve_pressure = actually_conserve_pressure
+                        .ignore_change_below_ntot_frac = std::min(FP(1e-6), tol.convergence)
                     }
                 );
                 wave_dist.update_ne(&state);
                 max_change = std::max(nr_update, max_change);
-                if (actually_conserve_pressure) {
-                    wave_dist.update_nh_tot(&state);
-                }
             }
         } else {
             state.println("  == Statistical equilibrium ==");
