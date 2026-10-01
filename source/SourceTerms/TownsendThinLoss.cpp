@@ -3,6 +3,8 @@
 #include "../MosscapConfig.hpp"
 #include "../SourceTerms.hpp"
 
+#include <type_traits>
+
 namespace Mosscap {
 
 struct CoolingTable {
@@ -335,6 +337,29 @@ static constexpr f64 loglambda_chianti11coronal_noHCa1e5_01DM[] = {
     -35.30549697, -35.25996024, -35.21339401, -35.16603268, -35.11805825
 };
 
+// CHIANTI 11 photospheric low-FIP elements only
+static constexpr f64 logt_chianti11_lowfip[] = {
+    2., 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 3., 3.1, 3.2, 3.3, 3.4,
+    3.5, 3.6, 3.7, 3.8, 3.9, 4., 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9,
+    5., 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 6., 6.1, 6.2, 6.3, 6.4,
+    6.5, 6.6, 6.7, 6.8, 6.9, 7., 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9,
+    8., 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 9.
+};
+static constexpr f64 loglambda_chianti11_lowfip[] = {
+    -99., -99., -99., -99., -99., -99., -99., -99., -99., -99., -99., -99.,
+    -99., -99., -99., -99., -99., -99., -99., -99., -36.91362952, -36.36266996,
+    -36.03608964, -36.00351468, -36.01364048, -35.84549787, -35.69601425,
+    -35.59135059, -35.48513245, -35.64076721, -36.21747233, -36.44572557,
+    -36.26986257, -36.04205156, -35.79239541, -35.54670529, -35.33885379,
+    -35.17976538, -35.06796174, -34.99986259, -34.97749576, -35.00744921,
+    -35.06811436, -35.22518056, -35.50924503, -35.73137923, -35.81382513,
+    -35.80379751, -35.76496011, -35.73614628, -35.75504667, -35.86468133,
+    -36.07198034, -36.28027393, -36.43119828, -36.52334644, -36.57284044,
+    -36.59742934, -36.61310991, -36.63249717, -36.6607824, -36.69466833,
+    -36.72674222, -36.75141893, -36.76645211, -36.77208829, -36.76908962,
+    -36.75848972, -36.7413107, -36.71827506, -36.69015572
+};
+
 static std::map<std::string, CoolingTable>&
 get_cooling_tables() {
     static std::map<std::string, CoolingTable> tables = {
@@ -362,6 +387,11 @@ get_cooling_tables() {
             .count = sizeof(logt_colgan_DM) / sizeof(logt_colgan_DM[0]),
             .log_temp = logt_colgan_DM,
             .log_lambda = loglambda_colgan_noHCa1e5_DM
+        }},
+        {"chianti11_lowfip", CoolingTable {
+            .count = sizeof(logt_chianti11_lowfip) / sizeof(logt_chianti11_lowfip[0]),
+            .log_temp = logt_chianti11_lowfip,
+            .log_lambda = loglambda_chianti11_lowfip
         }},
         {"chianti11_dm", CoolingTable {
             .count = sizeof(logt_chianti11_DM) / sizeof(logt_chianti11_DM[0]),
@@ -397,19 +427,32 @@ get_cooling_tables() {
     return tables;
 }
 
-template <typename FTraits>
-void thin_loss_kernel(const Simulation& sim, const ThinLossContext& ctx) {
+static CoolingTable load_cooling_table(std::string curve) {
+    std::transform(
+        curve.begin(),
+        curve.end(),
+        curve.begin(),
+        [](char c) { return std::tolower(c); }
+    );
+
+    const auto& tables = get_cooling_tables();
+    auto iter = tables.find(curve);
+    if (iter == tables.end()) {
+        throw std::runtime_error(fmt::format("No known thin loss table: {}", curve));
+    }
+    return iter->second;
+}
+
+template <typename FTraits, typename Ctx>
+void thin_loss_kernel(const Simulation& sim, const Ctx& ctx) {
     using Cons = typename FTraits::cons;
     using Prim = typename FTraits::prim;
     constexpr int n_hydro = FTraits::num_vars;
     constexpr fp_t m_p = ConstantsF64::u;
-    constexpr fp_t k_B = ConstantsF64::k_B;
 
     JasUnpack(sim, state, eos, dt_sub);
     JasUnpack(state, Q, sz, mu0);
     const auto& S = sim.sources.S;
-    const int n_temps = ctx.temps.extent(0);
-    const int n_bins = ctx.alpha_k.extent(0);
 
     dex_parallel_for(
         "Compute thin loss",
@@ -420,9 +463,6 @@ void thin_loss_kernel(const Simulation& sim, const ThinLossContext& ctx) {
             const auto q = QtyView(Q, cell_idx);
             cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
 
-            // const bool do_print = (j == 256 && i == 256);
-            const bool do_print = false;
-
             const fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
             fp_t y = eos.y;
             if (!eos.is_constant) {
@@ -430,124 +470,35 @@ void thin_loss_kernel(const Simulation& sim, const ThinLossContext& ctx) {
             }
             auto temperature = temperature_si(w(I(Prim::Pres)), nh_tot, eos.total_abund, y);
             fp_t ne = y * nh_tot;
-            if (temperature < ctx.min_temperature) {
-                return;
-            }
 
-            // Find temperature bin
-            int idx = 0;
-            while ((idx < n_bins - 1) && (ctx.temps(idx + 1) < temperature)) {
-                idx += 1;
+            JasUse(ctx, dt_sub);
+            fp_t rate;
+            if constexpr (std::is_same_v<Ctx, FipThinLossContext>) {
+                const FipTownsendCurve curve{
+                    .ctx = ctx,
+                    .fip_bias = ctx.fip_bias(q, I(Cons::Rho))
+                };
+                rate = townsend_energy_rate(curve, temperature, nh_tot, ne, eos.gamma, dt_sub, ctx.min_temperature);
+            } else {
+                rate = townsend_energy_rate(ctx.curve, temperature, nh_tot, ne, eos.gamma, dt_sub, ctx.min_temperature);
             }
-
-            if (do_print) {
-                printf("temperature: %f, idx: %d\n", temperature, idx);
-            }
-
-            const fp_t alpha_k_m1 = ctx.alpha_k(idx) - 1.0_fp;
-            const fp_t tef = ctx.Y_k(idx) + (
-                (ctx.lambdas(n_temps - 1) / ctx.lambdas(idx))
-                * (ctx.temps(idx) / ctx.temps(n_temps - 1))
-                * (std::pow(ctx.temps(idx) / temperature, alpha_k_m1) - 1.0) / alpha_k_m1
-            );
-            const fp_t tef_adj = (
-                tef
-                + ctx.lambdas(n_temps - 1) * dt_sub / ctx.temps(n_temps - 1)
-                * (nh_tot * ne) / (nh_tot + ne) * (eos.gamma - 1.0_fp) / k_B
-            );
-            if (do_print) {
-                printf("alpha_k_m1: %e, tef: %e, tef_adj: %e\n", alpha_k_m1, tef, tef_adj);
-            }
-
-            while ((idx > 0) && (tef_adj > ctx.Y_k(idx))) {
-                idx -= 1;
-            }
-            if (do_print) {
-                printf("Migrated idx: %d\n", idx);
-            }
-
-            fp_t new_temperature = ctx.temps(idx) * std::pow(
-                (
-                    1.0_fp - (1.0_fp - ctx.alpha_k(idx))
-                    * (ctx.lambdas(idx) / ctx.lambdas(n_temps - 1))
-                    * (ctx.temps(n_temps - 1) / ctx.temps(idx))
-                    * (tef_adj - ctx.Y_k(idx))
-                ),
-                1.0_fp / (1.0_fp - ctx.alpha_k(idx))
-            );
-            new_temperature = std::max(new_temperature, ctx.min_temperature);
-            const fp_t delta_temp = new_temperature - temperature;
-            const fp_t delta_e = 1.0_fp / (eos.gamma - 1.0_fp) * (nh_tot + ne) * k_B * delta_temp;
-            if (do_print) {
-                printf("T' %e, dT: %e, dE %e\n", new_temperature, delta_temp, delta_e);
-            }
-
-            S(I(Cons::Ene), cell_idx.k, cell_idx.j, cell_idx.i) += delta_e / dt_sub;
+            S(I(Cons::Ene), cell_idx.k, cell_idx.j, cell_idx.i) += rate;
         }
     );
     Kokkos::fence();
 }
 
-void setup_thin_loss(Simulation& sim, YAML::Node& config) {
-    const bool enable = get_or<bool>(config, "sources.thin_loss.enable", false);
-    if (!enable) {
-        return;
-    }
-
-    std::string curve = get_or<std::string>(config, "sources.thin_loss.curve", "DM");
-    std::transform(
-        curve.begin(),
-        curve.end(),
-        curve.begin(),
-        [](char c) { return std::tolower(c); }
-    );
-
-    const fp_t min_temperature = get_or<fp_t>(config, "sources.thin_loss.min_temperature", 5e2_fp);
-
-    auto tables = get_cooling_tables();
-    auto iter = tables.find(curve);
-    if (iter == tables.end()) {
-        throw std::runtime_error(fmt::format("No known thin loss table: {}", curve));
-    }
-    auto table = iter->second;
-
-    i64 n_temps = table.count;
-    i64 n_bins = n_temps - 1;
-
-    auto temps = Fp1dHost("thin_temp_bin_edges", n_temps);
-    auto lambdas = Fp1dHost("thin_lambda", n_temps);
-    auto Y_k = Fp1dHost("thin_tef_bins", n_bins);
-    auto alpha_k = Fp1dHost("thin_alpha", n_bins);
-
-    for (int i = 0; i < n_temps; ++i) {
-        temps(i) = std::pow(10.0_fp, table.log_temp[i]);
-        lambdas(i) = std::pow(10.0_fp, table.log_lambda[i]);
-    }
-    for (int i = 0; i < n_bins; ++i) {
-        alpha_k(i) = (table.log_lambda[i + 1] - table.log_lambda[i]) / (table.log_temp[i + 1] - table.log_temp[i]);
-        if (alpha_k(i) == 1.0) {
-            throw std::runtime_error("Special alpha=1 case for Townsend cooling curve not implemented");
+/// Register a thin loss source term. Only one thin loss variant may be active,
+/// otherwise the losses would be double counted.
+template <typename Ctx>
+static void register_thin_loss(Simulation& sim, const std::string& name, std::shared_ptr<Ctx> ctx) {
+    for (const char* existing : {"thin_loss", "thin_loss_fip"}) {
+        if (source_term_index(sim, existing) != sim.compute_source_terms.size()) {
+            throw std::runtime_error(
+                fmt::format("Cannot register \"{}\": thin loss source \"{}\" already registered.", name, existing)
+            );
         }
     }
-    Y_k(n_bins - 1) = 0.0_fp;
-    for (int i = n_bins - 2; i >= 0; --i) {
-        const fp_t alpha_k_m1 = alpha_k(i) - 1.0_fp;
-        const fp_t step = (
-            (lambdas(n_bins) / lambdas(i)) *
-            (temps(i) / temps(n_bins)) *
-            (std::pow(temps(i) / temps(i+1), alpha_k_m1) - 1.0) / alpha_k_m1
-        );
-        Y_k(i) = Y_k(i+1) - step;
-    }
-
-    auto ctx = std::make_shared<ThinLossContext>(ThinLossContext{
-        .temps = temps.createDeviceCopy(),
-        .lambdas = lambdas.createDeviceCopy(),
-        .Y_k = Y_k.createDeviceCopy(),
-        .alpha_k = alpha_k.createDeviceCopy(),
-        .min_temperature = min_temperature
-    });
-
 
     auto apply_thin_loss = invoke_fluid_traits(
         sim.num_dim,
@@ -559,15 +510,159 @@ void setup_thin_loss(Simulation& sim, YAML::Node& config) {
         }
     );
 
-    if (source_term_index(sim, "thin_loss") != sim.compute_source_terms.size()) {
-        throw std::runtime_error("Source \"thin_loss\" already registered.");
-    }
-
     sim.compute_source_terms.push_back(SourceTerm{
-        .name = "thin_loss",
+        .name = name,
         .fn = apply_thin_loss,
         .get_context = [=]() { return ctx.get(); }
     });
+}
+
+void setup_thin_loss(Simulation& sim, YAML::Node& config) {
+    const bool enable = get_or<bool>(config, "sources.thin_loss.enable", false);
+    if (!enable) {
+        return;
+    }
+
+    const auto table = load_cooling_table(get_or<std::string>(config, "sources.thin_loss.curve", "DM"));
+    const fp_t min_temperature = get_or<fp_t>(config, "sources.thin_loss.min_temperature", 5e2_fp);
+
+    i64 n_temps = table.count;
+    i64 n_bins = n_temps - 1;
+
+    TownsendCurve<Fp1dHost> curve{
+        .temps = Fp1dHost("thin_temp_bin_edges", n_temps),
+        .lambdas = Fp1dHost("thin_lambda", n_temps),
+        .alpha_k = Fp1dHost("thin_alpha", n_bins)
+    };
+
+    for (int i = 0; i < n_temps; ++i) {
+        curve.temps(i) = std::pow(10.0_fp, table.log_temp[i]);
+        curve.lambdas(i) = std::pow(10.0_fp, table.log_lambda[i]);
+    }
+    for (int i = 0; i < n_bins; ++i) {
+        curve.alpha_k(i) = (table.log_lambda[i + 1] - table.log_lambda[i]) / (table.log_temp[i + 1] - table.log_temp[i]);
+    }
+
+    auto ctx = std::make_shared<ThinLossContext>(ThinLossContext{
+        .curve = TownsendCurve<Fp1d>{
+            .temps = curve.temps.createDeviceCopy(),
+            .lambdas = curve.lambdas.createDeviceCopy(),
+            .alpha_k = curve.alpha_k.createDeviceCopy()
+        },
+        .min_temperature = min_temperature
+    });
+
+    register_thin_loss(sim, "thin_loss", ctx);
+}
+
+/// Thin losses with a passive FIP bias tracer f advected with the plasma, using
+/// Λ(T, f) = Λ_high(T) + f Λ_low(T). Config:
+///     sources:
+///       thin_loss_fip:
+///         enable: true
+///         curve: chianti11_dm                # total at FIP bias 1
+///         low_fip_curve: <table>             # low-FIP element contribution at FIP bias 1
+///         fip_bias_range: [1.0, 4.0]         # tracer clamp
+///         tracer_index: 0                    # index into simulation.n_extra_fields
+///         min_temperature: 500.0
+/// Λ_high is the base curve minus the low-FIP curve. The tracer is stored like
+/// any other: Q holds rho * fip_bias for the continuity equation.
+void setup_thin_loss_fip(Simulation& sim, YAML::Node& config) {
+    const bool enable = get_or<bool>(config, "sources.thin_loss_fip.enable", false);
+    if (!enable) {
+        return;
+    }
+
+    const std::string base_name = get_or<std::string>(config, "sources.thin_loss_fip.curve", "");
+    const std::string low_fip_name = get_or<std::string>(config, "sources.thin_loss_fip.low_fip_curve", "");
+    if (base_name.empty() || low_fip_name.empty()) {
+        throw std::runtime_error("sources.thin_loss_fip requires both curve and low_fip_curve.");
+    }
+    const auto base = load_cooling_table(base_name);
+    const auto low_fip = load_cooling_table(low_fip_name);
+    if (base.count != low_fip.count || !std::equal(base.log_temp, base.log_temp + base.count, low_fip.log_temp)) {
+        throw std::runtime_error(fmt::format(
+            "sources.thin_loss_fip: curves \"{}\" and \"{}\" must share a temperature grid.",
+            base_name,
+            low_fip_name
+        ));
+    }
+
+    fp_t min_fip_bias = 1.0_fp;
+    fp_t max_fip_bias = 4.0_fp;
+    if (config["sources"]["thin_loss_fip"]["fip_bias_range"]) {
+        const auto range = config["sources"]["thin_loss_fip"]["fip_bias_range"];
+        if (!range.IsSequence() || range.size() != 2) {
+            throw std::runtime_error("sources.thin_loss_fip.fip_bias_range must be [min, max].");
+        }
+        min_fip_bias = range[0].as<fp_t>();
+        max_fip_bias = range[1].as<fp_t>();
+    }
+    if (min_fip_bias < 0.0_fp || max_fip_bias < min_fip_bias) {
+        throw std::runtime_error(fmt::format(
+            "sources.thin_loss_fip.fip_bias_range = [{}, {}] is invalid.", min_fip_bias, max_fip_bias
+        ));
+    }
+    const fp_t min_temperature = get_or<fp_t>(config, "sources.thin_loss_fip.min_temperature", 5e2_fp);
+
+    // NOTE(claude): User tracers (simulation.n_extra_fields) sit directly after the
+    // hydro variables; any dex tracers follow them.
+    const int n_hydro = get_num_hydro_vars(sim.num_dim, sim.fluid_type);
+    int n_user_tracers = sim.state.num_tracers;
+    if (sim.dex.interface_config.enable && sim.dex.interface_config.advect) {
+        n_user_tracers = sim.dex.interface_config.field_start_idx - n_hydro;
+    }
+    const int tracer_index = get_or<int>(config, "sources.thin_loss_fip.tracer_index", 0);
+    if (tracer_index < 0 || tracer_index >= n_user_tracers) {
+        throw std::runtime_error(fmt::format(
+            "sources.thin_loss_fip.tracer_index = {}, but only {} tracer(s) allocated by simulation.n_extra_fields.",
+            tracer_index,
+            n_user_tracers
+        ));
+    }
+
+    const i64 n_temps = base.count;
+    const i64 n_bins = n_temps - 1;
+    auto temps = Fp1dHost("thin_fip_temp_bin_edges", n_temps);
+    auto lambdas_high_fip = Fp1dHost("thin_fip_lambda_high", n_temps);
+    auto lambdas_low_fip = Fp1dHost("thin_fip_lambda_low", n_temps);
+    auto inv_log_dtemp = Fp1dHost("thin_fip_inv_log_dtemp", n_bins);
+    for (int i = 0; i < n_temps; ++i) {
+        temps(i) = std::pow(10.0_fp, base.log_temp[i]);
+        const fp_t lambda_base = std::pow(10.0_fp, base.log_lambda[i]);
+        lambdas_low_fip(i) = std::pow(10.0_fp, low_fip.log_lambda[i]);
+        lambdas_high_fip(i) = lambda_base - lambdas_low_fip(i);
+
+        // NOTE(claude): Λ is linear in f, so positivity at both ends of the
+        // clamp range guarantees it everywhere (α is taken from log Λ).
+        for (fp_t f : {min_fip_bias, max_fip_bias}) {
+            if (lambdas_high_fip(i) + f * lambdas_low_fip(i) <= 0.0_fp) {
+                throw std::runtime_error(fmt::format(
+                    "sources.thin_loss_fip: Λ ≤ 0 at log T = {} for FIP bias {} (curve \"{}\", low_fip_curve \"{}\").",
+                    base.log_temp[i],
+                    f,
+                    base_name,
+                    low_fip_name
+                ));
+            }
+        }
+    }
+    for (int i = 0; i < n_bins; ++i) {
+        inv_log_dtemp(i) = 1.0_fp / (std::log(10.0_fp) * (base.log_temp[i + 1] - base.log_temp[i]));
+    }
+
+    auto ctx = std::make_shared<FipThinLossContext>(FipThinLossContext{
+        .temps = temps.createDeviceCopy(),
+        .lambdas_high_fip = lambdas_high_fip.createDeviceCopy(),
+        .lambdas_low_fip = lambdas_low_fip.createDeviceCopy(),
+        .inv_log_dtemp = inv_log_dtemp.createDeviceCopy(),
+        .min_fip_bias = min_fip_bias,
+        .max_fip_bias = max_fip_bias,
+        .min_temperature = min_temperature,
+        .tracer_idx = n_hydro + tracer_index
+    });
+
+    register_thin_loss(sim, "thin_loss_fip", ctx);
 }
 
 }

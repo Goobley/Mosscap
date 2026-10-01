@@ -109,8 +109,14 @@ inline void fill_one_bc_impl(const State& state) {
                     Q_view(var) = Q_edge(var);
                 }
             } else if (bound == BoundaryType::Constant) {
-                for (int var = 0; var < state.Q.extent(0); ++var) {
+                // NOTE(cmo): const_vals only holds hydro quantities. Tracers follow zero gradient for now.
+                constexpr int n_hydro = FTraits::num_vars;
+                for (int var = 0; var < n_hydro; ++var) {
                     Q_view(var) = const_vals(var);
+                }
+                const fp_t rho_ratio = Q_view(I(Cons::Rho)) / Q_edge(I(Cons::Rho));
+                for (int var = n_hydro; var < state.Q.extent(0); ++var) {
+                    Q_view(var) = rho_ratio * Q_edge(var);
                 }
             }
         }
