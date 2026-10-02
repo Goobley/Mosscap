@@ -52,6 +52,11 @@ namespace Mosscap {
 //     strand_balance: 0.0          # s
 //     fip_reference: <fip_flank>   # f_ref in the strand
 //     density_exponent: 0.0        # a
+//   sponge:                        # reservoirs at the x ends (use zerograd x BCs)
+//     enable: false
+//     width: 2e6                   # [m] from each x edge
+//     sigma_max: 0.5               # fraction relaxed per step at the edge
+//     damp_velocity: true          # also relax v -> 0 (drag on flows through it)
 
 struct FipLooptopParams {
     fp_t T0;
@@ -94,6 +99,11 @@ struct FipLooptopParams {
     KOKKOS_INLINE_FUNCTION fp_t fip_bias(fp_t x, fp_t y) const {
         const fp_t f_strand = fip_flank + core_mask(x) * (fip_core - fip_flank);
         return fip_bg + strand_mask(y) * (f_strand - fip_bg);
+    }
+
+    /// FIP bias away from the core (flank in the strand, background outside)
+    KOKKOS_INLINE_FUNCTION fp_t reservoir_fip_bias(fp_t y) const {
+        return fip_bg + strand_mask(y) * (fip_flank - fip_bg);
     }
 
     KOKKOS_INLINE_FUNCTION fp_t heating_fip_bias(fp_t y) const {
@@ -291,6 +301,112 @@ static void heating_kernel(const Simulation& sim, const FipLooptopHeating& heat)
     Kokkos::fence();
 }
 
+/// Reservoir sponges at both x ends of the strand (stand-ins for the loop
+/// legs), relaxing towards the initial row profile. Intended with zerograd x
+/// boundaries.
+struct FipLooptopSponge {
+    /// Initial density and pressure, indexed by j
+    Fp1d rho0;
+    Fp1d p0;
+    /// Sponge occupies x < x_lo and x > x_hi
+    fp_t x_lo;
+    fp_t x_hi;
+    fp_t width;
+    /// Fraction relaxed per step at the domain ends; ramps quadratically from 0
+    fp_t sigma_max;
+    /// Also relax the velocity to 0 (acts as drag on flows through the sponge)
+    bool damp_velocity;
+};
+
+static FipLooptopSponge setup_looptop_sponge(const Simulation& sim, const YAML::Node& config, const FipLooptopParams& params) {
+    constexpr fp_t k_B = ConstantsF64::k_B;
+    constexpr fp_t m_u = ConstantsF64::u;
+    const auto& state = sim.state;
+    const auto& sz = state.sz;
+    const IonFrac ion_frac = get_ion_frac(sim);
+    const fp_t mass_per_h = sim.eos.mass_per_h;
+    const fp_t total_abund = sim.eos.total_abund;
+
+    const fp_t width = get_or<fp_t>(config, "problem.sponge.width", 2e6_fp);
+    const fp_t x_min = state.loc.x;
+    const fp_t x_max = state.loc.x + (sz.xc - 2 * sz.ng) * state.dx;
+    FipLooptopSponge result{
+        .rho0 = Fp1d("fip_looptop_sponge_rho0", sz.yc),
+        .p0 = Fp1d("fip_looptop_sponge_p0", sz.yc),
+        .x_lo = x_min + width,
+        .x_hi = x_max - width,
+        .width = width,
+        .sigma_max = get_or<fp_t>(config, "problem.sponge.sigma_max", 0.5_fp),
+        .damp_velocity = get_or<bool>(config, "problem.sponge.damp_velocity", true)
+    };
+    if (width <= 0.0_fp || result.x_lo >= result.x_hi || result.sigma_max <= 0.0_fp || result.sigma_max > 1.0_fp) {
+        throw std::runtime_error("fip_looptop_2d: invalid problem.sponge width/sigma_max.");
+    }
+    JasUnpack(result, rho0, p0);
+    dex_parallel_for(
+        "fip_looptop_2d sponge profile",
+        FlatLoop<1>(sz.yc),
+        KOKKOS_LAMBDA (int j) {
+            const fp_t nh = params.nh(state.get_pos(sz.ng, j, 0)(1));
+            rho0(j) = nh * mass_per_h * m_u;
+            p0(j) = (total_abund + ion_frac(nh, params.T0)) * nh * k_B * params.T0;
+        }
+    );
+    Kokkos::fence();
+    return result;
+}
+
+/// Relax density, velocity and pressure (not B) towards the reservoir state
+/// in primitive variables, so the internal energy stays positive, and apply it
+/// through S. The sources can't act on tracers, so the FIP bias in the sponge
+/// is set directly to the reservoir value at the current density.
+template <typename FTraits>
+static void looptop_sponge_kernel(const Simulation& sim, const FipLooptopSponge& sponge, const FipLooptopParams& params, int tracer_idx) {
+    using Prim = typename FTraits::prim;
+    using Cons = typename FTraits::cons;
+    constexpr int n_hydro = FTraits::num_vars;
+    const auto& state = sim.state;
+    const auto& sz = state.sz;
+    const auto& eos = sim.eos;
+    const auto& Q = state.Q;
+    const auto& S = sim.sources.S;
+    const fp_t dt = sim.dt;
+    const fp_t mu0 = state.mu0;
+
+    dex_parallel_for(
+        "fip_looptop_2d sponge",
+        FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+        KOKKOS_LAMBDA (int k, int j, int i) {
+            const vec3 pos = state.get_pos(i, j, k);
+            const fp_t depth = std::max(sponge.x_lo - pos(0), pos(0) - sponge.x_hi);
+            if (depth <= 0.0_fp) {
+                return;
+            }
+            const fp_t sigma = sponge.sigma_max * square(std::min(depth / sponge.width, 1.0_fp));
+
+            CellIndex idx{.i = i, .j = j, .k = k};
+            const auto q = QtyView(Q, idx);
+            yakl::SArray<fp_t, 1, n_hydro> w;
+            cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
+            w(I(Prim::Rho)) += sigma * (sponge.rho0(j) - w(I(Prim::Rho)));
+            if (sponge.damp_velocity) {
+                w(I(Prim::Vx)) *= (1.0_fp - sigma);
+                w(I(Prim::Vy)) *= (1.0_fp - sigma);
+                w(I(Prim::Vz)) *= (1.0_fp - sigma);
+            }
+            w(I(Prim::Pres)) += sigma * (sponge.p0(j) - w(I(Prim::Pres)));
+            yakl::SArray<fp_t, 1, n_hydro> q_new;
+            prim_to_cons<FTraits>(eos.gamma, mu0, w, q_new);
+            for (int v = 0; v < n_hydro; ++v) {
+                S(v, k, j, i) += (q_new(v) - q(v)) / dt;
+            }
+
+            Q(tracer_idx, k, j, i) = q(I(Cons::Rho)) * params.reservoir_fip_bias(pos(1));
+        }
+    );
+    Kokkos::fence();
+}
+
 MOSSCAP_NEW_PROBLEM(fip_looptop_2d) {
     MOSSCAP_PROBLEM_PREAMBLE(fip_looptop_2d);
     if (sim.num_dim != num_dim) {
@@ -343,6 +459,22 @@ MOSSCAP_NEW_PROBLEM(fip_looptop_2d) {
 
     if (get_or<bool>(config, "sources.thermal_conduction.enable", false)) {
         setup_thermal_conduction(sim, config);
+    }
+
+    if (get_or<bool>(config, "problem.sponge.enable", false)) {
+        const FipLooptopSponge sponge = setup_looptop_sponge(sim, config, params);
+        sim.compute_source_terms.push_back(SourceTerm{
+            .name = "looptop_sponge",
+            .fn = [=](const Simulation& sim) {
+                invoke_fluid_traits(
+                    sim.num_dim,
+                    sim.fluid_type,
+                    [&]<typename FTraits>(FTraits) {
+                        looptop_sponge_kernel<FTraits>(sim, sponge, params, tracer_idx);
+                    }
+                );
+            }
+        });
     }
     setup_replace_small_values(sim, config);
 }
