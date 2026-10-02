@@ -54,6 +54,23 @@ KOKKOS_INLINE_FUNCTION fp_t townsend_bin_inverse_tef(const Curve& curve, int k, 
     );
 }
 
+/// Bin containing temperature: the largest k in [0, N - 1] with T_k < temperature
+/// (0 if there is none). Binary search.
+template <typename Curve>
+KOKKOS_INLINE_FUNCTION int townsend_find_bin(const Curve& curve, fp_t temperature) {
+    int lo = 0;
+    int hi = curve.n_temps() - 2;
+    while (lo < hi) {
+        const int mid = (lo + hi + 1) / 2;
+        if (curve.temp(mid) < temperature) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return lo;
+}
+
 /// Rate of change of internal energy density [J m-3 s-1] from integrating the
 /// optically thin losses over dt with the Townsend scheme.
 template <typename Curve>
@@ -70,14 +87,7 @@ KOKKOS_INLINE_FUNCTION fp_t townsend_energy_rate(
     if (temperature < min_temperature) {
         return 0.0_fp;
     }
-    const int N = curve.n_temps() - 1;
-    const int n_bins = N;
-
-    // Find temperature bin
-    int idx = 0;
-    while ((idx < n_bins - 1) && (curve.temp(idx + 1) < temperature)) {
-        idx += 1;
-    }
+    int idx = townsend_find_bin(curve, temperature);
 
     // Residual of the target TEF relative to the TEF at the lower edge of bin
     // idx, i.e. idx serves as the temperature reference.
@@ -99,6 +109,20 @@ KOKKOS_INLINE_FUNCTION fp_t townsend_energy_rate(
     const fp_t delta_temp = new_temperature - temperature;
     const fp_t delta_e = 1.0_fp / (gamma - 1.0_fp) * (nh_tot + ne) * k_B * delta_temp;
     return delta_e / dt;
+}
+
+/// Λ(T) from the piecewise power law, clamped to the ends of the table.
+template <typename Curve>
+KOKKOS_INLINE_FUNCTION fp_t townsend_lambda(const Curve& curve, fp_t temperature) {
+    const int n_bins = curve.n_temps() - 1;
+    if (temperature <= curve.temp(0)) {
+        return curve.lambda(0);
+    }
+    if (temperature >= curve.temp(n_bins)) {
+        return curve.lambda(n_bins);
+    }
+    const int idx = townsend_find_bin(curve, temperature);
+    return curve.lambda(idx) * std::pow(temperature / curve.temp(idx), curve.alpha(idx));
 }
 
 /// A cooling curve with precomputed nodes and power-law indices.

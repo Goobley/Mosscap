@@ -49,12 +49,15 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/Corrugation.cpp"
     "source/ProblemGenerator/DivBCheckerboard.cpp"
     "source/ProblemGenerator/DoubleShockTube.cpp"
+    "source/ProblemGenerator/FipLooptop2d.cpp"
     "source/ProblemGenerator/GaussianDiffusion.cpp"
     "source/ProblemGenerator/HillierSnowKelvinHelmholtz.cpp"
     "source/ProblemGenerator/KelvinHelmholtz.cpp"
+    "source/ProblemGenerator/KippenhahnSchluter.cpp"
     "source/ProblemGenerator/LinearWaves.cpp"
     "source/ProblemGenerator/MhdRotor.cpp"
     "source/ProblemGenerator/OrszagTangVortex.cpp"
+    "source/ProblemGenerator/ProminenceRti.cpp"
     "source/ProblemGenerator/PureCoronalCondensation.cpp"
     "source/ProblemGenerator/PureCoronalCondensationMhdRestart.cpp"
     "source/ProblemGenerator/Quadrants3.cpp"
@@ -65,6 +68,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/Solar1d.cpp"
 )
 list (APPEND MOSSCAP_SOURCE_TERMS
+    "source/SourceTerms/Friction.cpp"
     "source/SourceTerms/Gravity.cpp"
     "source/SourceTerms/ReplaceSmallValues.cpp"
     "source/SourceTerms/Sponge.cpp"
