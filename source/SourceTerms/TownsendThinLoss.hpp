@@ -55,20 +55,15 @@ KOKKOS_INLINE_FUNCTION fp_t townsend_bin_inverse_tef(const Curve& curve, int k, 
 }
 
 /// Bin containing temperature: the largest k in [0, N - 1] with T_k < temperature
-/// (0 if there is none). Binary search.
+/// (0 if there is none).
 template <typename Curve>
 KOKKOS_INLINE_FUNCTION int townsend_find_bin(const Curve& curve, fp_t temperature) {
-    int lo = 0;
-    int hi = curve.n_temps() - 2;
-    while (lo < hi) {
-        const int mid = (lo + hi + 1) / 2;
-        if (curve.temp(mid) < temperature) {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
+    const int n_bins = curve.n_temps() - 1;
+    int idx = 0;
+    while ((idx < n_bins - 1) && (curve.temp(idx + 1) < temperature)) {
+        idx += 1;
     }
-    return lo;
+    return idx;
 }
 
 /// Rate of change of internal energy density [J m-3 s-1] from integrating the
