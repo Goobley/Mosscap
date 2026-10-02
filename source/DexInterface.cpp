@@ -442,7 +442,8 @@ static void allocate_cell_count_based_terms(DexState& state, i64 num_active_cell
 
 DexInterface::~DexInterface() {
 #ifdef HAVE_MPI
-    if (state.mpi_state.rank == 0) {
+    // NOTE(claude): mpi_state.comm is only set up when dex is enabled
+    if (interface_config.enable && state.mpi_state.rank == 0) {
         int should_continue = false;
         MPI_Bcast(&should_continue, 1, MPI_INT, 0, state.mpi_state.comm);
     }
