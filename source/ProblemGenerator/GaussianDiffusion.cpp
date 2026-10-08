@@ -62,6 +62,20 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     const fp_t dT = get_or<fp_t>(config, "problem.delta_temperature", 0.5_fp * T0);
     const fp_t sigma0 = get_or<fp_t>(config, "problem.sigma0", 0.1_fp * state.get_axis_length(axis));
     const fp_t b0 = get_or<fp_t>(config, "problem.b0", 0.0_fp);
+    // NOTE(claude): problem.field_direction: [x, y, z] gives a uniform oblique field of strength b0 (normalised
+    // here) instead of B along problem.axis, to exercise the transverse terms of anisotropic conduction.
+    vec3 b_dir(0.0_fp);
+    b_dir(axis) = 1.0_fp;
+    if (config["problem"]["field_direction"]) {
+        const auto dir = config["problem"]["field_direction"].as<std::vector<fp_t>>();
+        if (dir.size() != 3) {
+            throw std::runtime_error("problem.field_direction needs three components");
+        }
+        const fp_t norm = std::sqrt(square(dir[0]) + square(dir[1]) + square(dir[2]));
+        for (int d = 0; d < 3; ++d) {
+            b_dir(d) = dir[d] / norm;
+        }
+    }
 
     vec3 center;
     center(0) = get_or<fp_t>(config, "problem.center_x", state.loc.x + 0.5_fp * state.get_axis_length(0));
@@ -74,7 +88,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
         KOKKOS_LAMBDA (int k, int j, int i) {
             yakl::SArray<fp_t, 1, n_hydro> w(0.0_fp);
             vec3 p = state.get_pos(i, j, k);
-            JasUse(b0);
+            JasUse(b0, b_dir);
 
             fp_t r2 = square(p(axis) - center(axis));
             if (radial) {
@@ -94,11 +108,9 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
             w(I(Prim::Pres)) = nh_tot * (eos.total_abund + eos.y) * k_B * temperature;
 
             if constexpr (FTraits::is_mhd) {
-                vec3 B(0.0_fp);
-                B(axis) = b0;
-                w(I(Prim::Bx)) = B(0);
-                w(I(Prim::By)) = B(1);
-                w(I(Prim::Bz)) = B(2);
+                w(I(Prim::Bx)) = b0 * b_dir(0);
+                w(I(Prim::By)) = b0 * b_dir(1);
+                w(I(Prim::Bz)) = b0 * b_dir(2);
             }
 
             CellIndex idx{
