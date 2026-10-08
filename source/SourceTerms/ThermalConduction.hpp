@@ -27,6 +27,8 @@ struct ThermalConductionContext {
     fp_t h2_f_wave = 0.8_fp; /// conduction-wave Courant number pinned by tau
     fp_t h2_r0 = 1.5_fp; /// T_max / T_min below which the target is purely symmetric
     fp_t h2_r1 = 3.0_fp; /// T_max / T_min above which the target is purely the face flux
+    bool h2_limit = true; /// lim_nodiss: lower bound (box minimum of T) on the applied face fluxes
+    int h2_box_radius = 0; /// limiter box radius in cells (<= 0: per-step diffusion length)
 };
 
 void setup_thermal_conduction(Simulation& sim, YAML::Node& config);

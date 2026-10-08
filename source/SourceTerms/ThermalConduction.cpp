@@ -571,6 +571,8 @@ void setup_thermal_conduction(Simulation& sim, YAML::Node& config) {
         ctx->h2_f_wave = get_or<fp_t>(config, "sources.thermal_conduction.hybrid2.f_wave", ctx->h2_f_wave);
         ctx->h2_r0 = get_or<fp_t>(config, "sources.thermal_conduction.hybrid2.r0", ctx->h2_r0);
         ctx->h2_r1 = get_or<fp_t>(config, "sources.thermal_conduction.hybrid2.r1", ctx->h2_r1);
+        ctx->h2_limit = get_or<bool>(config, "sources.thermal_conduction.hybrid2.limit", ctx->h2_limit);
+        ctx->h2_box_radius = get_or<int>(config, "sources.thermal_conduction.hybrid2.box_radius", ctx->h2_box_radius);
         const FluidTraitsRt traits(sim.num_dim, sim.fluid_type);
         if (!traits.is_mhd || traits.has_hypertc) {
             throw std::runtime_error("thermal_conduction.method: hybrid2 needs fluid_type mhd or glmmhd");

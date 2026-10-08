@@ -27,6 +27,37 @@
 
 namespace Mosscap {
 
+constexpr fp_t H2_TINY = std::numeric_limits<fp_t>::min();
+constexpr fp_t H2_HUGE = std::numeric_limits<fp_t>::max();
+
+/// a(c[2], c[1], c[0]): c[0] = x (i), c[1] = y (j), c[2] = z (k).
+KOKKOS_INLINE_FUNCTION fp_t& h2_at(const Fp3d& a, const int* c) {
+    return a(c[2], c[1], c[0]);
+}
+
+/// Largest interior diffusivity -> dt_diff = 0.8 dx^2 / (2 chi_max), the yardstick for S.
+inline fp_t hybrid2_dt_diff(const State& state, const Fp3d& chi) {
+    const auto& sz = state.sz;
+    const int ng = sz.ng;
+    const int nx = sz.xc - 2 * ng;
+    const int ny = std::max(sz.yc - 2 * ng, 1);
+    const int nz = std::max(sz.zc - 2 * ng, 1);
+    fp_t chi_max = 0.0_fp;
+    dex_parallel_reduce(
+        "hybrid2 chi max",
+        FlatLoop<3>(nz, ny, nx),
+        KOKKOS_LAMBDA (int ki, int ji, int ii, fp_t& running) {
+            const int k = nz == 1 ? ki : ki + ng;
+            const int j = ny == 1 ? ji : ji + ng;
+            const int i = ii + ng;
+            running = std::max(running, chi(k, j, i));
+        },
+        Kokkos::Max<fp_t>(chi_max)
+    );
+    Kokkos::fence();
+    return 0.8_fp * square(state.dx) / (2.0_fp * std::max(chi_max, H2_TINY));
+}
+
 struct Hybrid2Scratch {
     Fp3d T; // temperature
     Fp3d K; // conductivity
@@ -35,6 +66,9 @@ struct Hybrid2Scratch {
     Fp4d qcb; // corner flux times b, per axis (corner (k, j, i) is the lower corner of cell (k, j, i))
     Fp3d wc; // corner blend weight
     Fp4d de_dq; // [0] = de/dt (cells), [1 + a] = dq_a/dt (lower faces)
+    Fp3d t_lo; // limiter: box minimum of T
+    Fp3d t_tmp; // limiter: scratch for the separable box minimum
+    Fp3d r; // limiter: per-cell outflow factor
 };
 
 inline Hybrid2Scratch allocate_hybrid2_scratch(const GridSize& sz, int num_dim) {
@@ -47,16 +81,12 @@ inline Hybrid2Scratch allocate_hybrid2_scratch(const GridSize& sz, int num_dim) 
     s.wc = Fp3d("h2_wc", sz.zc, sz.yc, sz.xc);
     s.de_dq = Fp4d("h2_rates", num_dim + 1, sz.zc, sz.yc, sz.xc);
     s.de_dq = 0.0_fp; // slots outside the interior cells / faces are never written
+    s.t_lo = Fp3d("h2_t_lo", sz.zc, sz.yc, sz.xc);
+    s.t_tmp = Fp3d("h2_t_tmp", sz.zc, sz.yc, sz.xc);
+    s.r = Fp3d("h2_r", sz.zc, sz.yc, sz.xc);
     return s;
 }
 
-constexpr fp_t H2_TINY = std::numeric_limits<fp_t>::min();
-constexpr fp_t H2_HUGE = std::numeric_limits<fp_t>::max();
-
-/// a(c[2], c[1], c[0]): c[0] = x (i), c[1] = y (j), c[2] = z (k).
-KOKKOS_INLINE_FUNCTION fp_t& h2_at(const Fp3d& a, const int* c) {
-    return a(c[2], c[1], c[0]);
-}
 
 /// Temperature, conductivity, diffusivity and saturated flux of every cell (ghosts included) from W.
 template <typename FTraits>
@@ -95,6 +125,9 @@ void hybrid2_cell_quantities(const Simulation& sim, const ThermalConductionConte
 /// Right-hand side of hybrid2 for the state in W (pressure, density, B; ghosts filled) and the face fluxes q, with
 /// h the step that sets tau. Needs hybrid2_cell_quantities for the same W. Writes de/dt (interior cells) and dq/dt
 /// (interior faces) into scratch.de_dq.
+template <typename FTraits>
+void hybrid2_limit_factor(const Simulation& sim, const ThermalConductionContext& ctx, const Fp4d& q, fp_t h, const Hybrid2Scratch& s);
+
 template <typename FTraits>
 void hybrid2_rhs(const Simulation& sim, const ThermalConductionContext& ctx, const Fp4d& q, fp_t h, const Hybrid2Scratch& s) {
     using Prim = typename FTraits::prim;
@@ -259,6 +292,13 @@ void hybrid2_rhs(const Simulation& sim, const ThermalConductionContext& ctx, con
     }
     Kokkos::fence();
 
+    // Energy: divergence of the applied fluxes. With the limiter, each face is scaled by the factor r of the cell
+    // it drains (the cell below the face if q > 0, else the cell above); q itself is untouched.
+    const bool limit = ctx.h2_limit;
+    if (limit) {
+        hybrid2_limit_factor<FTraits>(sim, ctx, q, h, s);
+    }
+    const auto& r = s.r;
     dex_parallel_for(
         "hybrid2 energy rate",
         FlatLoop<3>(nz, ny, nx),
@@ -266,17 +306,143 @@ void hybrid2_rhs(const Simulation& sim, const ThermalConductionContext& ctx, con
             const int k = nz == 1 ? ki : ki + ng;
             const int j = ny == 1 ? ji : ji + ng;
             const int i = ii + ng;
-            fp_t div = q(0, k, j, i + 1) - q(0, k, j, i);
-            if constexpr (ND > 1) {
-                div += q(1, k, j + 1, i) - q(1, k, j, i);
-            }
-            if constexpr (ND > 2) {
-                div += q(2, k + 1, j, i) - q(2, k, j, i);
+            fp_t div = 0.0_fp;
+            for (int a = 0; a < ND; ++a) {
+                int up[3] = {i, j, k};
+                int lo[3] = {i, j, k};
+                up[a] += 1;
+                lo[a] -= 1;
+                fp_t q_lo = q(a, k, j, i); // lower face of this cell
+                fp_t q_up = q(a, up[2], up[1], up[0]); // upper face (lower face of the next cell)
+                if (limit) {
+                    const int self[3] = {i, j, k};
+                    q_lo *= (q_lo > 0.0_fp) ? h2_at(r, lo) : h2_at(r, self);
+                    q_up *= (q_up > 0.0_fp) ? h2_at(r, self) : h2_at(r, up);
+                }
+                div += q_up - q_lo;
             }
             de_dq(0, k, j, i) = -div * inv_dx;
         }
     );
     Kokkos::fence();
+}
+
+/// Ghost fill of a cell scalar along one axis: periodic copy, otherwise `open_value` if given, else the edge cell.
+template <typename FTraits>
+void hybrid2_fill_scalar(const State& state, const Fp3d& u, int ax, bool use_open, fp_t open_value) {
+    const auto& sz = state.sz;
+    const auto& bdry = state.boundaries;
+    const int ng = sz.ng;
+    const int dims[3] = {sz.xc, sz.yc, sz.zc};
+    const bool periodic = (ax == 0 ? bdry.xs : ax == 1 ? bdry.ys : bdry.zs) == BoundaryType::Periodic;
+    const int n = dims[ax] - 2 * ng;
+    dex_parallel_for(
+        "hybrid2 scalar ghosts",
+        FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+        KOKKOS_LAMBDA (int k, int j, int i) {
+            int c[3] = {i, j, k};
+            if (c[ax] >= ng && c[ax] < ng + n) {
+                return;
+            }
+            if (!periodic && use_open) {
+                h2_at(u, c) = open_value;
+                return;
+            }
+            int src[3] = {i, j, k};
+            if (periodic) {
+                src[ax] += (c[ax] < ng) ? n : -n;
+            } else {
+                src[ax] = (c[ax] < ng) ? ng : ng + n - 1;
+            }
+            h2_at(u, c) = h2_at(u, src);
+        }
+    );
+    Kokkos::fence();
+}
+
+/// lim_nodiss: per-cell outflow factor r = min(1, B / D) such that no interior cell falls below the minimum T over
+/// the (2R+1)^ND box around it in a forward-Euler stage: B = e - (rho c_v) T_lo = e (1 - T_lo / T), D = h * outflow
+/// / dx. R = box_radius, or the per-step diffusion length ceil(sqrt(2 chi_max h) / dx). The box minimum is
+/// separable: per axis, passes of radius <= ng with a ghost fill between them (any R; beyond the ghosts of a
+/// non-periodic boundary the edge value is repeated). Ghost r: periodic copy, 1 elsewhere (inflow from outside is
+/// not limited).
+template <typename FTraits>
+void hybrid2_limit_factor(const Simulation& sim, const ThermalConductionContext& ctx, const Fp4d& q, fp_t h, const Hybrid2Scratch& s) {
+    using Prim = typename FTraits::prim;
+    constexpr int ND = FTraits::num_dim;
+    JasUnpack(sim, state, eos);
+    JasUnpack(state, W, sz, dx);
+    JasUnpack(s, T, t_lo, t_tmp, r);
+    const int ng = sz.ng;
+    const int nx = sz.xc - 2 * ng;
+    const int ny = std::max(sz.yc - 2 * ng, 1);
+    const int nz = std::max(sz.zc - 2 * ng, 1);
+    const int n[3] = {nx, ny, nz};
+
+    int R = ctx.h2_box_radius;
+    if (R <= 0) {
+        const fp_t chi_max = 0.8_fp * square(dx) / (2.0_fp * hybrid2_dt_diff(state, s.chi));
+        R = std::max(1, int(std::ceil(std::sqrt(2.0_fp * chi_max * h) / dx)));
+    }
+
+    T.deep_copy_to(t_lo);
+    Kokkos::fence();
+    for (int ax = 0; ax < ND; ++ax) {
+        int remaining = R;
+        while (remaining > 0) {
+            const int rad = std::min(remaining, ng);
+            t_lo.deep_copy_to(t_tmp);
+            Kokkos::fence();
+            dex_parallel_for(
+                "hybrid2 box min pass",
+                FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+                KOKKOS_LAMBDA (int k, int j, int i) {
+                    const int c[3] = {i, j, k};
+                    if (c[ax] < ng || c[ax] >= ng + n[ax]) {
+                        return;
+                    }
+                    fp_t m = h2_at(t_tmp, c);
+                    for (int o = 1; o <= rad; ++o) {
+                        int a[3] = {i, j, k};
+                        int b[3] = {i, j, k};
+                        a[ax] += o;
+                        b[ax] -= o;
+                        m = std::min(m, std::min(h2_at(t_tmp, a), h2_at(t_tmp, b)));
+                    }
+                    h2_at(t_lo, c) = m;
+                }
+            );
+            Kokkos::fence();
+            remaining -= rad;
+            if (remaining > 0) {
+                hybrid2_fill_scalar<FTraits>(state, t_lo, ax, false, 0.0_fp);
+            }
+        }
+    }
+
+    dex_parallel_for(
+        "hybrid2 limiter factor",
+        FlatLoop<3>(nz, ny, nx),
+        KOKKOS_LAMBDA (int ki, int ji, int ii) {
+            const int k = nz == 1 ? ki : ki + ng;
+            const int j = ny == 1 ? ji : ji + ng;
+            const int i = ii + ng;
+            const fp_t e = W(I(Prim::Pres), k, j, i) / (eos.gamma - 1.0_fp);
+            const fp_t budget = std::max(e * (1.0_fp - t_lo(k, j, i) / T(k, j, i)), 0.0_fp);
+            fp_t out = 0.0_fp;
+            for (int a = 0; a < ND; ++a) {
+                int up[3] = {i, j, k};
+                up[a] += 1;
+                out += std::max(-q(a, k, j, i), 0.0_fp) + std::max(q(a, up[2], up[1], up[0]), 0.0_fp);
+            }
+            const fp_t D = h * out / dx;
+            r(k, j, i) = (D > budget) ? budget / D : 1.0_fp;
+        }
+    );
+    Kokkos::fence();
+    for (int ax = 0; ax < ND; ++ax) {
+        hybrid2_fill_scalar<FTraits>(state, r, ax, true, 1.0_fp);
+    }
 }
 
 /// On periodic axes the upper boundary face is the lower boundary face: copy it so the two stay identical.
@@ -311,29 +477,6 @@ void hybrid2_sync_periodic_faces(const State& state, const Fp4d& q) {
         );
     }
     Kokkos::fence();
-}
-
-/// Largest interior diffusivity -> dt_diff = 0.8 dx^2 / (2 chi_max), the yardstick for S.
-inline fp_t hybrid2_dt_diff(const State& state, const Fp3d& chi) {
-    const auto& sz = state.sz;
-    const int ng = sz.ng;
-    const int nx = sz.xc - 2 * ng;
-    const int ny = std::max(sz.yc - 2 * ng, 1);
-    const int nz = std::max(sz.zc - 2 * ng, 1);
-    fp_t chi_max = 0.0_fp;
-    dex_parallel_reduce(
-        "hybrid2 chi max",
-        FlatLoop<3>(nz, ny, nx),
-        KOKKOS_LAMBDA (int ki, int ji, int ii, fp_t& running) {
-            const int k = nz == 1 ? ki : ki + ng;
-            const int j = ny == 1 ? ji : ji + ng;
-            const int i = ii + ng;
-            running = std::max(running, chi(k, j, i));
-        },
-        Kokkos::Max<fp_t>(chi_max)
-    );
-    Kokkos::fence();
-    return 0.8_fp * square(state.dx) / (2.0_fp * std::max(chi_max, H2_TINY));
 }
 
 template <typename FTraits>
