@@ -1,0 +1,49 @@
+simulation:
+  num_dim: 2
+  fluid_type: hypertconly
+  hypertc_kappa: 1.0e-11
+  hypertc_spitzer: true
+  hypertc_limit: true
+  hypertc_saturation_phi: 1.1
+grid:
+  num_ghost: 3
+  x: 250
+  x_dim: 2000000.0
+  x_start: -1000000.0
+  y: 16
+  y_dim: 128000.0
+  y_start: -64000.0
+boundary:
+  xs: periodic
+  xe: periodic
+  ys: periodic
+  ye: periodic
+eos:
+  type: ideal
+  gamma: 1.6666667
+  ion_frac: 1.0
+  mass_per_h: 1.0
+scheme:
+  riemann_solver: hll
+  reconstruction: muscl
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.01
+  max_time: 3.2
+problem:
+  name: gaussian_diffusion
+  axis: 0
+  b0: 1.0e-08
+  base_density: 1.0e-12
+  base_temperature: 10000.0
+  delta_temperature: 990000.0
+  sigma0: 70710.67811865475
+output:
+  name: old_htc_cfl0.01_phi1.1
+  delta_t: 0.4
+  single_file: false
+  variables:
+    primitive: true
+    conserved: true
+system:
+  mem_pool_gb: 2.0
