@@ -85,6 +85,10 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     sim.state.cond.hypertc_kappa = get_or<fp_t>(config, "simulation.hypertc_kappa", sim.state.cond.hypertc_kappa);
     sim.state.cond.limited = get_or<bool>(config, "simulation.hypertc_limit", false);
     sim.state.cond.spitzer = get_or<bool>(config, "simulation.hypertc_spitzer", true);
+    sim.state.cond.saturation_phi = get_or<fp_t>(config, "simulation.hypertc_saturation_phi", sim.state.cond.saturation_phi);
+    sim.state.cond.tau_flat = get_or<std::string>(config, "simulation.hypertc_tau", "mosscap") == "flat";
+    sim.state.cond.tau_alpha = get_or<fp_t>(config, "simulation.hypertc_tau_alpha", sim.state.cond.tau_flat ? 10.0_fp : 4.0_fp);
+    sim.state.cond.heatf_riemann = get_or<bool>(config, "simulation.hypertc_heatf_riemann", true);
 
     sim.state.cma.apply = get_or<bool>(config, "simulation.cma.apply", false);
     sim.state.cma.flatten = get_or<bool>(config, "simulation.cma.flatten", true);

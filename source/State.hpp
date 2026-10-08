@@ -442,6 +442,10 @@ struct Conduction {
     fp_t hypertc_kappa = 8e-12; /// Hyperbolic conduction coefficient [W m-1 K-7/2]. Default value is Spitzer like (i.e. (8e-7 erg cm-1 s-1 K-7/2)).
     bool spitzer = false; /// Whether kappa scales with temperature**5/2
     bool limited = false; /// Whether to limit conduction to the saturation limit.
+    fp_t saturation_phi = 1.1_fp; /// Saturation coefficient, same Cowie & McKee form as the STS source: 5 phi sqrt(p/rho) p.
+    bool tau_flat = false; /// tau = tau_alpha * dt (MAGEC) instead of the wave-speed form floored at tau_alpha * dt.
+    fp_t tau_alpha = 4.0_fp; /// tau floor (or flat value) in units of dt.
+    bool heatf_riemann = true; /// Keep the Riemann solver's dissipation on HeatF (false: q is a pure source term).
 };
 
 /// Consistent MultiFluid Advection Parameters

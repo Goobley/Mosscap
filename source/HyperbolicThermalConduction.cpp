@@ -91,13 +91,24 @@ namespace Mosscap {
                 }
                 const fp_t inv_b_norm = 1.0_fp / std::max(std::sqrt(b2), 1e-60_fp);
                 B_gradT *= inv_b_norm;
+                // NOTE(claude): Saturation (free-streaming limit), same form as the STS source term:
+                // q_sat = 5 phi sqrt(p / rho) p, f = q_sat / (q_sat + |q*|). The saturated conductivity enters tau too (as MURaM).
+                if (cond.limited) {
+                    const fp_t pres = W(I(Prim::Pres), k, j, i);
+                    const fp_t q_sat = 5.0_fp * cond.saturation_phi * std::sqrt(pres / W(I(Prim::Rho), k, j, i)) * pres;
+                    sigma_T_52 *= q_sat / (q_sat + std::abs(sigma_T_52 * B_gradT));
+                }
                 const fp_t sigma_T_72 = temp * sigma_T_52;
-                fp_t tau = std::max(
-                    4.0_fp * dt,
-                    // NOTE(cmo): glm_ch _is_ the max wave propagation speed, which is what is needed here.
-                    // TODO(cmo): Limiting?
-                    sigma_T_72 * square(max_cfl) * (eos.gamma - 1.0_fp) / (W(I(Prim::Pres), k, j, i) * square(glm_ch))
-                );
+                fp_t tau;
+                if (cond.tau_flat) {
+                    tau = cond.tau_alpha * dt;
+                } else {
+                    tau = std::max(
+                        cond.tau_alpha * dt,
+                        // NOTE(cmo): glm_ch _is_ the max wave propagation speed, which is what is needed here.
+                        sigma_T_72 * square(max_cfl) * (eos.gamma - 1.0_fp) / (W(I(Prim::Pres), k, j, i) * square(glm_ch))
+                    );
+                }
                 S(I(Cons::HeatF), k, j, i) -= (sigma_T_52 * B_gradT + W(I(Cons::HeatF), k, j, i)) / tau;
                 if constexpr (!HYPERTC_IN_FLUX_VECTOR) {
                     // NOTE(cmo): Add energy term consistent with the 4th order

@@ -196,6 +196,7 @@ void compute_flux_impl(const Simulation& sim) {
     const auto& eos = sim.eos;
     const fp_t glm_ch = sim.state.glm_ch;
     const fp_t mu0 = sim.state.mu0;
+    const bool heatf_riemann = sim.state.cond.heatf_riemann;
     int n_tracer = sim.state.num_tracers;
     int nx = sz.xc - 2 * sz.ng;
     int ny = std::max(sz.yc - 2 * sz.ng, 1);
@@ -241,6 +242,13 @@ void compute_flux_impl(const Simulation& sim) {
             );
 
             using Cons = typename FTraits::cons;
+            if constexpr (FTraits::has_hypertc) {
+                // NOTE(claude): HeatF has zero physical flux; this removes the Riemann solver's jump term on it, making q
+                // a pure source term (simulation.hypertc_heatf_riemann: false).
+                if (!heatf_riemann) {
+                    flux_view(I(Cons::HeatF)) = 0.0_fp;
+                }
+            }
             constexpr i32 n_hydro = FTraits::num_vars;
             for (int v = n_hydro; v < n_hydro + n_tracer; ++v) {
                 // NOTE(cmo): Upwind at the interface
@@ -309,6 +317,12 @@ KOKKOS_INLINE_FUNCTION void dt_reducer(const Eos& eos, const fp_t mu0, const WTy
             inv_dt += (cs + vel) / dx;
         }
     }
+    // NOTE(claude): Kokkos::Min drops NaN comparisons, so a NaN state used to give dt = dt_max and continue silently.
+    // Flag it with a negative dt instead; compute_dt_impl throws.
+    if (!std::isfinite(inv_dt)) {
+        running_dt = -1.0_fp;
+        return;
+    }
     running_dt = std::min(1.0_fp / inv_dt, running_dt);
 }
 
@@ -334,6 +348,9 @@ f64 compute_dt_impl(const Simulation& sim) {
         Kokkos::Min<fp_t>(dt_max)
     );
     Kokkos::fence();
+    if (!(dt_max > 0.0_fp)) {
+        throw std::runtime_error(fmt::format("Non-finite state detected in the CFL reduction at t = {} s", sim.time));
+    }
 
     f64 dt = dt_max * sim.max_cfl;
     const auto& out = sim.out_cfg;

@@ -188,7 +188,11 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
     q(I(Cons::Ene)) = e_int + e_kin + e_mag + e_ion;
 }
 
-constexpr bool HYPERTC_IN_FLUX_VECTOR = true;
+// NOTE(claude): overridable at compile time (-DMOSSCAP_HYPERTC_IN_FLUX_VECTOR=false) for testing the source-term route.
+#ifndef MOSSCAP_HYPERTC_IN_FLUX_VECTOR
+#define MOSSCAP_HYPERTC_IN_FLUX_VECTOR true
+#endif
+constexpr bool HYPERTC_IN_FLUX_VECTOR = MOSSCAP_HYPERTC_IN_FLUX_VECTOR;
 template <typename FTraits, int Axis, typename WType, typename FType>
 KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const fp_t c_h, const WType& w, const FType& f) {
     using Prim = typename FTraits::prim;
