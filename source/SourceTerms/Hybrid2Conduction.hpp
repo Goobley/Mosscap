@@ -20,7 +20,19 @@
 // splitting (one conduction sub-integration after the hydro step) was equally accurate at half the conduction work,
 // so it need not stay this way.
 //
-// Only the components of B along the simulated axes enter b (as the explicit/STS flux).
+// Only the components of B along the simulated axes enter b (as the explicit/STS flux). At field nulls b = 0.
+//
+// Configuration (sources.thermal_conduction, with enable / anisotropic / saturate / saturation_phi / kappa0 /
+// spitzer shared with the STS method):
+//     method: hybrid2
+//     hybrid2:
+//       s_max: 10          # substep each RK stage when S = dt / dt_diff exceeds this (<= 0: never)
+//       limit: true        # lim_nodiss applied-flux lower bound
+//       box_radius: 0      # limiter box radius in cells (<= 0: per-step diffusion length)
+//       alpha: 4           # tau floor in units of the step
+//       f_wave: 0.8        # conduction-wave Courant number pinned by tau
+//       r0: 1.5, r1: 3     # T_max / T_min thresholds of the symmetric / face-flux blend
+// Needs fluid_type mhd or glmmhd. State::heat_face is written to the output and read on restart.
 #include "ThermalConduction.hpp"
 #include "ConductionCommon.hpp"
 #include <limits>
@@ -28,6 +40,9 @@
 namespace Mosscap {
 
 constexpr fp_t H2_TINY = std::numeric_limits<fp_t>::min();
+/// At a field null the averaged B is a rounding-level remainder of the cells' fields and its direction is noise:
+/// where |mean B| <= H2_NULL_FRAC * mean |B|, b is set to zero (no conduction through that corner / face).
+constexpr fp_t H2_NULL_FRAC = 1e-10_fp;
 constexpr fp_t H2_HUGE = std::numeric_limits<fp_t>::max();
 
 /// a(c[2], c[1], c[0]): c[0] = x (i), c[1] = y (j), c[2] = z (k).
@@ -160,6 +175,7 @@ void hybrid2_rhs(const Simulation& sim, const ThermalConductionContext& ctx, con
             fp_t grad[3] = {0.0_fp, 0.0_fp, 0.0_fp};
             fp_t kmean = 0.0_fp;
             fp_t smean = 0.0_fp;
+            fp_t b_abs = 0.0_fp;
             for (int m = 0; m < NC; ++m) {
                 int cell[3] = {c[0], c[1], c[2]};
                 for (int a = 0; a < ND; ++a) {
@@ -170,13 +186,17 @@ void hybrid2_rhs(const Simulation& sim, const ThermalConductionContext& ctx, con
                 tmin = std::min(tmin, t);
                 kmean += h2_at(K, cell);
                 smean += h2_at(qsat, cell);
-                B[0] += W(I(Prim::Bx), cell[2], cell[1], cell[0]);
+                fp_t Bc[3] = {W(I(Prim::Bx), cell[2], cell[1], cell[0]), 0.0_fp, 0.0_fp};
                 if constexpr (ND > 1) {
-                    B[1] += W(I(Prim::By), cell[2], cell[1], cell[0]);
+                    Bc[1] = W(I(Prim::By), cell[2], cell[1], cell[0]);
                 }
                 if constexpr (ND > 2) {
-                    B[2] += W(I(Prim::Bz), cell[2], cell[1], cell[0]);
+                    Bc[2] = W(I(Prim::Bz), cell[2], cell[1], cell[0]);
                 }
+                for (int a = 0; a < 3; ++a) {
+                    B[a] += Bc[a];
+                }
+                b_abs += std::sqrt(square(Bc[0]) + square(Bc[1]) + square(Bc[2]));
                 for (int a = 0; a < ND; ++a) {
                     if (((m >> a) & 1) == 0) {
                         int lower[3] = {cell[0], cell[1], cell[2]};
@@ -187,7 +207,12 @@ void hybrid2_rhs(const Simulation& sim, const ThermalConductionContext& ctx, con
             }
             kmean /= fp_t(NC);
             smean /= fp_t(NC);
-            const fp_t b_norm = std::max(std::sqrt(square(B[0]) + square(B[1]) + square(B[2])), H2_TINY);
+            fp_t b_norm = std::sqrt(square(B[0]) + square(B[1]) + square(B[2]));
+            if (b_norm <= H2_NULL_FRAC * b_abs) {
+                B[0] = B[1] = B[2] = 0.0_fp;
+                b_norm = 1.0_fp;
+            }
+            b_norm = std::max(b_norm, H2_TINY);
             fp_t b_dot_grad = 0.0_fp;
             for (int a = 0; a < ND; ++a) {
                 grad[a] *= inv_dx / fp_t(NC / 2);
@@ -246,7 +271,18 @@ void hybrid2_rhs(const Simulation& sim, const ThermalConductionContext& ctx, con
                 if constexpr (ND > 2) {
                     B[2] = 0.5_fp * (W(I(Prim::Bz), c[2], c[1], c[0]) + W(I(Prim::Bz), cm[2], cm[1], cm[0]));
                 }
-                const fp_t b_norm = std::max(std::sqrt(square(B[0]) + square(B[1]) + square(B[2])), 1e-20_fp);
+                fp_t b_norm = std::sqrt(square(B[0]) + square(B[1]) + square(B[2]));
+                const fp_t b_abs = 0.5_fp * (
+                    std::sqrt(square(W(I(Prim::Bx), c[2], c[1], c[0])) + (ND > 1 ? square(W(I(Prim::By), c[2], c[1], c[0])) : 0.0_fp)
+                              + (ND > 2 ? square(W(I(Prim::Bz), c[2], c[1], c[0])) : 0.0_fp))
+                    + std::sqrt(square(W(I(Prim::Bx), cm[2], cm[1], cm[0])) + (ND > 1 ? square(W(I(Prim::By), cm[2], cm[1], cm[0])) : 0.0_fp)
+                              + (ND > 2 ? square(W(I(Prim::Bz), cm[2], cm[1], cm[0])) : 0.0_fp))
+                );
+                if (b_norm <= H2_NULL_FRAC * b_abs) {
+                    B[0] = B[1] = B[2] = 0.0_fp;
+                    b_norm = 1.0_fp;
+                }
+                b_norm = std::max(b_norm, 1e-20_fp);
                 fp_t b_dot_grad = B[ax] * (h2_at(T, c) - h2_at(T, cm)) * inv_dx;
                 for (int b = 0; b < ND; ++b) {
                     if (b == ax) {
@@ -554,6 +590,7 @@ void hybrid2_conduction_kernel(const Simulation& sim, const ThermalConductionCon
             q.deep_copy_to(q_n);
             Kokkos::fence();
             for (int stage = 0; stage < 3; ++stage) {
+                // (the cell quantities of the stage's starting state are already in scratch for the first one)
                 if (sub > 0 || stage > 0) {
                     hybrid2_cell_quantities<FTraits>(sim, ctx, s);
                 }
