@@ -5,6 +5,7 @@
 #include "SourceTerms.hpp"
 #include "DivBCleaning.hpp"
 #include "GlmMhd.hpp"
+#include "SourceTerms/Hybrid2Conduction.hpp"
 
 #include <map>
 
@@ -54,6 +55,38 @@ void integrate_flux(const std::string& step_name, const GridSize& sz, const Flux
     );
 }
 
+
+/// Auxiliary RK state (State::heat_face, the hybrid2 face fluxes): saved with Q at the start of the step...
+inline void aux_save(const Simulation& sim) {
+    if (sim.state.heat_face.initialized()) {
+        sim.state.heat_face.deep_copy_to(sim.ts_storage.heat_face_old);
+        Kokkos::fence();
+    }
+}
+
+/// ...and combined like Q in every stage: aux = c_old aux_old + c_cur aux + c_dt dt S_aux.
+template <typename FTraits>
+void aux_update(const Simulation& sim, fp_t c_old, fp_t c_cur, fp_t c_dt, fp_t dt) {
+    const auto& q = sim.state.heat_face;
+    if (!q.initialized()) {
+        return;
+    }
+    const auto& q_old = sim.ts_storage.heat_face_old;
+    const auto& S_face = sim.sources.S_face;
+    const auto& sz = sim.state.sz;
+    dex_parallel_for(
+        "Auxiliary RK update",
+        FlatLoop<4>(q.extent(0), sz.zc, sz.yc, sz.xc),
+        KOKKOS_LAMBDA (int a, int k, int j, int i) {
+            q(a, k, j, i) = c_old * q_old(a, k, j, i) + c_cur * q(a, k, j, i) + c_dt * dt * S_face(a, k, j, i);
+        }
+    );
+    Kokkos::fence();
+    if constexpr (FTraits::is_mhd) {
+        hybrid2_sync_periodic_faces<FTraits>(sim.state, q);
+    }
+}
+
 // NOTE(cmo): Due to C++ explicit specialisation rules, the time_step function
 // must be fully defined before the associated init.
 template <>
@@ -71,6 +104,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
     update_glm_ch(sim);
     zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
+    aux_save(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
     zero_hydro_fluxes_if_needed<FTraits>(sim);
@@ -88,6 +122,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += q_update + source;
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 0.0_fp, 1.0_fp, 1.0_fp, dt);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -109,6 +144,7 @@ void TimeStepper<TimeStepScheme::Rk2>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = 0.5_fp * (Q_old(var, k, j, i) + state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 0.5_fp, 0.5_fp, 0.5_fp, dt);
 
     fill_bcs(sim);
 
@@ -156,6 +192,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
     update_glm_ch(sim);
     zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
+    aux_save(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
     zero_hydro_fluxes_if_needed<FTraits>(sim);
@@ -173,6 +210,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += q_update + source;
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 0.0_fp, 1.0_fp, 1.0_fp, dt);
 
     sim.dt_sub = 0.25_fp * dt;
     zero_source_terms(sim);
@@ -194,6 +232,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = 0.75_fp * Q_old(var, k, j, i) + 0.25_fp * (state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 0.75_fp, 0.25_fp, 0.25_fp, dt);
 
     sim.dt_sub = (2.0_fp / 3.0_fp) * dt;
     zero_source_terms(sim);
@@ -215,6 +254,7 @@ void TimeStepper<TimeStepScheme::SspRk3>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = (1.0_fp / 3.0_fp) * Q_old(var, k, j, i) + (2.0_fp / 3.0_fp) * (state.Q(var, k, j, i) + q_update + source);
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 1.0_fp / 3.0_fp, 2.0_fp / 3.0_fp, 2.0_fp / 3.0_fp, dt);
 
     fill_bcs(sim);
     clean_divb(sim);
@@ -261,6 +301,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
     update_glm_ch(sim);
     zero_source_terms(sim);
     Q.deep_copy_to(Q_old);
+    aux_save(sim);
     compute_hydro_fluxes(sim);
     compute_source_terms(sim);
     zero_hydro_fluxes_if_needed<FTraits>(sim);
@@ -278,6 +319,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 0.0_fp, 1.0_fp, 0.5_fp, dt);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -299,6 +341,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 0.0_fp, 1.0_fp, 0.5_fp, dt);
 
     sim.dt_sub = (1.0_fp / 6.0_fp) * dt;
     zero_source_terms(sim);
@@ -320,6 +363,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) = (2.0_fp / 3.0_fp) * Q_old(var, k, j, i) + (1.0_fp / 3.0_fp) * state.Q(var, k, j, i) + (1.0_fp / 6.0_fp) * (q_update + source);
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 2.0_fp / 3.0_fp, 1.0_fp / 3.0_fp, 1.0_fp / 6.0_fp, dt);
 
     sim.dt_sub = 0.5_fp * dt;
     zero_source_terms(sim);
@@ -341,6 +385,7 @@ void TimeStepper<TimeStepScheme::SspRk4>::time_step(Simulation& sim, fp_t dt) {
             state.Q(var, k, j, i) += 0.5_fp * (q_update + source);
     });
     Kokkos::fence();
+    aux_update<FTraits>(sim, 0.0_fp, 1.0_fp, 0.5_fp, dt);
 
     fill_bcs(sim);
     clean_divb(sim);

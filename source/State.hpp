@@ -470,6 +470,7 @@ struct State {
     Boundaries boundaries; /// Boundary handling specifications
     Fp4d Q; // Conserved State
     Fp4d W; /// Primitive State
+    Fp4d heat_face; /// hybrid2 conduction: energy flux through each cell's lower face, (num_dim, z, y, x); allocated only when used
     i32 num_tracers;
 
     KOKKOS_INLINE_FUNCTION vec3 get_pos(int i, int j=0, int k=0) const {
@@ -511,6 +512,7 @@ struct Fluxes {
 
 struct Sources {
     Fp4d S;
+    Fp4d S_face; /// rate of change of State::heat_face (hybrid2 conduction), allocated with it
 };
 
 }

@@ -21,6 +21,7 @@ constexpr int NumTimeStepType = sizeof(TimeStepName) / sizeof(TimeStepName[0]);
 
 struct TimeStepperStorage {
     std::vector<Fp4d> Q_old;
+    Fp4d heat_face_old; /// start-of-step copy of State::heat_face (auxiliary RK state)
 };
 
 template <TimeStepScheme scheme>

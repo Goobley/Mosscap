@@ -2,6 +2,8 @@
 #include "../Simulation.hpp"
 #include "../MosscapConfig.hpp"
 #include "../SourceTerms.hpp"
+#include "ConductionCommon.hpp"
+#include "Hybrid2Conduction.hpp"
 
 
 namespace Mosscap {
@@ -33,14 +35,6 @@ KOKKOS_INLINE_FUNCTION QtyView shift_along(const QtyView& from, int how_much) {
     CellIndex result(from.idx);
     result.along<Axis>() += how_much;
     return QtyView(from.q, result);
-}
-
-KOKKOS_INLINE_FUNCTION fp_t ion_frac(const Eos& eos, const CellIndex& idx) {
-    fp_t y = eos.y;
-    if (!eos.is_constant) {
-        y = eos.y_space(idx.k, idx.j, idx.i);
-    }
-    return y;
 }
 
 template <typename FTraits, int Axis>
@@ -346,104 +340,6 @@ fp_t estimate_thermal_conduction_timestep(const Simulation& sim, const ThermalCo
     return cfl_fac * dt_max;
 }
 
-template <typename FTraits, typename W>
-KOKKOS_INLINE_FUNCTION fp_t prim_to_eint(const fp_t gamma, const W& w) {
-    using Prim = FTraits::prim;
-
-    return w(I(Prim::Pres)) / (gamma - 1.0_fp);
-}
-
-/// Refresh the ghost-cell pressure in W from the current STS stage so the
-/// boundary faces see the stage temperature (cf. temperature_bcs in Lare2d).
-/// Ghosts follow the hydro BC type, except: Constant keeps its start-of-step
-/// value (fixed temperature), and UserFn mirrors the temperature (insulating),
-/// so user code is never run inside the STS loop.
-template <int Axis, typename FTraits>
-void fill_sts_pressure_ghosts_axis(const Simulation& sim) {
-    static_assert(Axis < 3, "What are you doing?");
-    JasUnpack(sim, state, eos);
-    JasUnpack(state, W, sz);
-    const auto& bdry = state.boundaries;
-    const int ng = sz.ng;
-    const fp_t m_p = state.p_mass;
-    int dims[3] = {sz.xc, sz.yc, sz.zc};
-    int launch_dims[3] = {sz.xc, sz.yc, sz.zc};
-    launch_dims[Axis] = 2 * ng;
-
-    dex_parallel_for(
-        "STS pressure ghosts",
-        FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
-        KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Prim = typename FTraits::prim;
-            constexpr int IP = I(Prim::Pres);
-            int coord[3] = {ii, ji, ki};
-            const int pencil_idx = coord[Axis];
-            const bool start = (pencil_idx < ng);
-            int cflip = (2 * ng - 1) - pencil_idx;
-            int cedge = ng;
-            if (!start) {
-                coord[Axis] = (dims[Axis] - 1) - (pencil_idx - ng);
-                cflip = (dims[Axis] - 1) - (2 * ng - 1) + (pencil_idx - ng);
-                cedge = (dims[Axis] - 1) - ng;
-            }
-            CellIndex idx{.i = coord[0], .j = coord[1], .k = coord[2]};
-            CellIndex i_flip(idx);
-            i_flip.along<Axis>() = cflip;
-            CellIndex i_edge(idx);
-            i_edge.along<Axis>() = cedge;
-            CellIndex i_periodic(idx);
-            i_periodic.along<Axis>() += (start ? 1 : -1) * (dims[Axis] - 2 * ng);
-
-            BoundaryType bound;
-            JasUse(bdry);
-            if constexpr (Axis == 0) {
-                bound = start ? bdry.xs : bdry.xe;
-            } else if constexpr (Axis == 1) {
-                bound = start ? bdry.ys : bdry.ye;
-            } else {
-                bound = start ? bdry.zs : bdry.ze;
-            }
-
-            QtyView w(W, idx);
-            if (bound == BoundaryType::Periodic) {
-                w(IP) = QtyView(W, i_periodic)(IP);
-            } else if (
-                bound == BoundaryType::Wall
-                || bound == BoundaryType::Symmetric
-                || bound == BoundaryType::SymmetricOutflowDiode
-            ) {
-                w(IP) = QtyView(W, i_flip)(IP);
-            } else if (bound == BoundaryType::ZeroGrad) {
-                w(IP) = QtyView(W, i_edge)(IP);
-            } else if (bound == BoundaryType::UserFn) {
-                // NOTE(claude): Mirror T rather than p, as a user BC may have
-                // left a different density in the ghosts.
-                QtyView w_flip(W, i_flip);
-                const fp_t temperature = temperature_si(
-                    w_flip(IP),
-                    w_flip(I(Prim::Rho)) / (eos.mass_per_h * m_p),
-                    eos.total_abund,
-                    ion_frac(eos, i_flip)
-                );
-                const fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
-                w(IP) = temperature * nh_tot * (eos.total_abund + ion_frac(eos, idx)) * ConstantsF64::k_B;
-            }
-        }
-    );
-    Kokkos::fence();
-}
-
-template <typename FTraits>
-void fill_sts_pressure_ghosts(const Simulation& sim) {
-    fill_sts_pressure_ghosts_axis<0, FTraits>(sim);
-    if constexpr (FTraits::num_dim > 1) {
-        fill_sts_pressure_ghosts_axis<1, FTraits>(sim);
-    }
-    if constexpr (FTraits::num_dim > 2) {
-        fill_sts_pressure_ghosts_axis<2, FTraits>(sim);
-    }
-}
-
 template <typename FTraits>
 void thermal_conduction_kernel(const Simulation& sim, const ThermalConductionContext& ctx) {
     JasUnpack(sim, state, eos, sources, dt_sub);
@@ -452,6 +348,9 @@ void thermal_conduction_kernel(const Simulation& sim, const ThermalConductionCon
     using Prim = FTraits::prim;
     if constexpr (FTraits::has_hypertc) {
         throw std::runtime_error("Cannot use classic thermal conduction on a fluid with hypertc");
+    }
+    if (ctx.method == ConductionMethod::Hybrid2) {
+        return hybrid2_conduction_kernel<FTraits>(sim, ctx);
     }
 
     if (!ctx.use_sts) {
@@ -658,6 +557,36 @@ void setup_thermal_conduction(Simulation& sim, YAML::Node& config) {
         .saturation_phi = get_or<fp_t>(config, "sources.thermal_conduction.saturation_phi", 1.1_fp),
         .kappa0 = get_or<fp_t>(config, "sources.thermal_conduction.kappa0", 8e-12_fp),
     });
+    // method: sts | explicit | hybrid2 (default from use_sts, for older configs)
+    const std::string method = get_or<std::string>(config, "sources.thermal_conduction.method", ctx->use_sts ? "sts" : "explicit");
+    if (method == "sts") {
+        ctx->method = ConductionMethod::Sts;
+    } else if (method == "explicit") {
+        ctx->method = ConductionMethod::Explicit;
+        ctx->use_sts = false;
+    } else if (method == "hybrid2") {
+        ctx->method = ConductionMethod::Hybrid2;
+        ctx->h2_s_max = get_or<fp_t>(config, "sources.thermal_conduction.hybrid2.s_max", ctx->h2_s_max);
+        ctx->h2_alpha = get_or<fp_t>(config, "sources.thermal_conduction.hybrid2.alpha", ctx->h2_alpha);
+        ctx->h2_f_wave = get_or<fp_t>(config, "sources.thermal_conduction.hybrid2.f_wave", ctx->h2_f_wave);
+        ctx->h2_r0 = get_or<fp_t>(config, "sources.thermal_conduction.hybrid2.r0", ctx->h2_r0);
+        ctx->h2_r1 = get_or<fp_t>(config, "sources.thermal_conduction.hybrid2.r1", ctx->h2_r1);
+        const FluidTraitsRt traits(sim.num_dim, sim.fluid_type);
+        if (!traits.is_mhd || traits.has_hypertc) {
+            throw std::runtime_error("thermal_conduction.method: hybrid2 needs fluid_type mhd or glmmhd");
+        }
+        if (!ctx->anisotropic) {
+            throw std::runtime_error("thermal_conduction.method: hybrid2 is field-aligned only (anisotropic: true)");
+        }
+        const auto& sz = sim.state.sz;
+        sim.state.heat_face = Fp4d("heat_face", sim.num_dim, sz.zc, sz.yc, sz.xc);
+        sim.state.heat_face = 0.0_fp;
+        sim.sources.S_face = Fp4d("S_face", sim.num_dim, sz.zc, sz.yc, sz.xc);
+        sim.sources.S_face = 0.0_fp;
+        sim.ts_storage.heat_face_old = Fp4d("heat_face_old", sim.num_dim, sz.zc, sz.yc, sz.xc);
+    } else {
+        throw std::runtime_error(fmt::format("Unknown thermal_conduction.method \"{}\" (sts | explicit | hybrid2)", method));
+    }
 
     if (source_term_index(sim, "thermal_conduction") != sim.compute_source_terms.size()) {
         throw std::runtime_error("Source \"thermal_conduction\" already registered.");

@@ -401,6 +401,10 @@ bool write_output(Simulation& sim) {
                 nc.write(eos.T_space, "T", {"z", "y", "x"});
             }
         }
+        // NOTE(claude): hybrid2 face fluxes are RK state (memory ~ tau), needed for an exact restart.
+        if (sim.state.heat_face.initialized()) {
+            nc.write(sim.state.heat_face, "heat_face", {"face_axis", "z", "y", "x"});
+        }
     } else {
         std::string time_name("time");
         int time_idx = cfg.output_count;
@@ -429,6 +433,9 @@ bool write_output(Simulation& sim) {
             if (eos.T_space.initialized()) {
                 nc.write1(eos.T_space, "T", {"z", "y", "x"}, time_idx, time_name);
             }
+        }
+        if (sim.state.heat_face.initialized()) {
+            nc.write1(sim.state.heat_face, "heat_face", {"face_axis", "z", "y", "x"}, time_idx, time_name);
         }
     }
 
@@ -518,6 +525,13 @@ bool load_restart(Simulation& sim, i64 restart_from) {
             restart_from = nc.getDimSize("time") - 1;
         }
         nc.read1(sim.state.Q, "Q", restart_from, "time");
+        if (sim.state.heat_face.initialized()) {
+            if (nc.varExists("heat_face")) {
+                nc.read1(sim.state.heat_face, "heat_face", restart_from, "time");
+            } else {
+                fmt::println("Restart: no heat_face in the file; hybrid2 face fluxes start from zero.");
+            }
+        }
         auto& eos = sim.eos;
         if (!eos.is_constant) {
             nc.read1(eos.y_space, "ion_frac", restart_from, "time");
@@ -530,6 +544,13 @@ bool load_restart(Simulation& sim, i64 restart_from) {
         current_time = time(restart_from);
     } else {
         nc.read(sim.state.Q, "Q");
+        if (sim.state.heat_face.initialized()) {
+            if (nc.varExists("heat_face")) {
+                nc.read(sim.state.heat_face, "heat_face");
+            } else {
+                fmt::println("Restart: no heat_face in the file; hybrid2 face fluxes start from zero.");
+            }
+        }
         auto& eos = sim.eos;
         if (!eos.is_constant) {
             nc.read(eos.y_space, "ion_frac");
