@@ -4,6 +4,7 @@
 #include "../SourceTerms.hpp"
 #include "ConductionCommon.hpp"
 #include "Hybrid2Conduction.hpp"
+#include "YeConduction.hpp"
 
 
 namespace Mosscap {
@@ -352,6 +353,9 @@ void thermal_conduction_kernel(const Simulation& sim, const ThermalConductionCon
     if (ctx.method == ConductionMethod::Hybrid2) {
         return hybrid2_conduction_kernel<FTraits>(sim, ctx);
     }
+    if (ctx.method == ConductionMethod::Ye) {
+        return ye_conduction_kernel<FTraits>(sim, ctx);
+    }
 
     if (!ctx.use_sts) {
         return explicit_thermal_cond<FTraits>(
@@ -586,8 +590,27 @@ void setup_thermal_conduction(Simulation& sim, YAML::Node& config) {
         sim.sources.S_face = Fp4d("S_face", sim.num_dim, sz.zc, sz.yc, sz.xc);
         sim.sources.S_face = 0.0_fp;
         sim.ts_storage.heat_face_old = Fp4d("heat_face_old", sim.num_dim, sz.zc, sz.yc, sz.xc);
+    } else if (method == "ye") {
+        ctx->method = ConductionMethod::Ye;
+        const std::string cross = get_or<std::string>(config, "sources.thermal_conduction.ye.cross", "amrvac");
+        if (cross == "amrvac") {
+            ctx->ye_cross = YeCross::Amrvac;
+        } else if (cross == "mean") {
+            ctx->ye_cross = YeCross::Mean;
+        } else {
+            throw std::runtime_error(fmt::format("Unknown thermal_conduction.ye.cross \"{}\" (amrvac | mean)", cross));
+        }
+        ctx->ye_s_max = get_or<fp_t>(config, "sources.thermal_conduction.ye.s_max", ctx->ye_s_max);
+        ctx->ye_q = get_or<int>(config, "sources.thermal_conduction.ye.q", ctx->ye_q);
+        const FluidTraitsRt traits(sim.num_dim, sim.fluid_type);
+        if (!traits.is_mhd || traits.has_hypertc || sim.num_dim != 2) {
+            throw std::runtime_error("thermal_conduction.method: ye needs a 2D fluid_type mhd or glmmhd");
+        }
+        if (!ctx->anisotropic) {
+            throw std::runtime_error("thermal_conduction.method: ye is field-aligned only (anisotropic: true)");
+        }
     } else {
-        throw std::runtime_error(fmt::format("Unknown thermal_conduction.method \"{}\" (sts | explicit | hybrid2)", method));
+        throw std::runtime_error(fmt::format("Unknown thermal_conduction.method \"{}\" (sts | explicit | hybrid2 | ye)", method));
     }
 
     if (source_term_index(sim, "thermal_conduction") != sim.compute_source_terms.size()) {
