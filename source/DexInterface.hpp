@@ -7,10 +7,6 @@
 #include "../DexRT/source/State.hpp"
 #include "../DexRT/source/CascadeState.hpp"
 
-#ifdef DEXRT_USE_MAGMA
-#error "MAGMA not supported for Dex in the Mosscap integration"
-#endif
-
 namespace YAML { struct Node; }
 
 namespace Mosscap {
@@ -31,6 +27,10 @@ struct DexMosscapConfig {
     i32 max_mip_level = 0;
     i32 field_start_idx = 0;
     fp_t theta = 1.0_fp;
+    /// Under-relaxation of the temperature update in the energy-conserving SE
+    /// iteration. At 1.0 the coupled pops/temperature iteration can stall above
+    /// tolerance in thick cool cells and then slowly diverge.
+    fp_t energy_relaxation = 0.5_fp;
     fp_t temperature_floor = 2e3_fp;
     // NOTE(claude): When set, only couple a bounding box around the active
     // (cool) tiles to DexRT rather than the whole inner grid, so rays escape and

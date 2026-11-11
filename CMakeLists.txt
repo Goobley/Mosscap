@@ -90,6 +90,8 @@ list(APPEND DEX_SOURCE_FILES
     "DexRT/source/ChargeConservation.cpp"
     "DexRT/source/Populations.cpp"
     "DexRT/source/InitialPops.cpp"
+    "DexRT/source/StateSetup.cpp"
+    "DexRT/source/BlockMap.cpp"
 )
 # NOTE(claude): PostProcessingCore.hpp declares GIT_HASH at global scope
 # (DexRT/source/GitVersion.hpp), distinct from Mosscap's own namespaced
@@ -131,6 +133,20 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if ("${MOSSCAP_ARCH}" STREQUAL "CUDA")
     set(CMAKE_CXX_STANDARD 20)
+endif()
+
+option(MOSSCAP_DEX_FORCE_DOUBLE_PREC "Compile DexRT with fp_t = double" OFF)
+option(MOSSCAP_DEX_HALF_RADIATION_STORAGE "Store DexRT radiation arrays (J, wphi) in 16 bits" ON)
+# Default to f64 precon_R to minimise accumulation error
+option(MOSSCAP_DEX_GAMMA_F64 "Accumulate the DexRT Gamma matrix (precon_R) in f64" ON)
+if (${MOSSCAP_DEX_FORCE_DOUBLE_PREC})
+    set(MOSSCAP_CXX_FLAGS "${MOSSCAP_CXX_FLAGS} -DDEXRT_FORCE_DOUBLE_PREC")
+endif()
+if (${MOSSCAP_DEX_GAMMA_F64})
+    set(MOSSCAP_CXX_FLAGS "${MOSSCAP_CXX_FLAGS} -DDEXRT_GAMMA_F64")
+endif()
+if (${MOSSCAP_DEX_HALF_RADIATION_STORAGE})
+    set(MOSSCAP_CXX_FLAGS "${MOSSCAP_CXX_FLAGS} -DDEXRT_HALF_RADIATION_STORAGE")
 endif()
 
 if ("${MOSSCAP_SINGLE_PRECISION}")

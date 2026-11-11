@@ -1,6 +1,7 @@
 #include "TimeDepPopulations.hpp"
 #include "../DexRT/source/State.hpp"
 #include "../DexRT/source/Collisions.hpp"
+#include "../DexRT/source/GammaMatrix.hpp"
 #include "KokkosBatched_Gesv.hpp"
 #include "KokkosBatched_LU_Decl.hpp"
 #include "KokkosBatched_SolveLU_Decl.hpp"
@@ -20,14 +21,18 @@ fp_t time_dep_impl(State& state, const Fp2d& prev_pops, const KineticEqOptions& 
         }
         JasUnpack(state, pops);
         JasUnpack(args, theta, predicted_pops);
-        const auto& Gamma = state.Gamma[ia];
+        const auto precon_R = atom_precon_R(state.precon_R, state.adata_host, ia);
+        const auto atom = extract_atom(state.adata, state.adata_host, ia);
+        const auto& atmos = state.atmos;
+        const auto& nh_lte = state.nh_lte;
+        const auto& adata = state.adata;
         const fp_t abundance = state.adata_host.abundance(ia);
         const auto nh_tot = state.atmos.nh_tot;
 
         constexpr bool iterative_improvement = true;
         constexpr int num_refinement_passes = 2;
 
-        const i64 Nspace = Gamma.extent(2);
+        const i64 Nspace = pops.extent(1);
         const int pops_start = state.adata_host.level_start(ia);
         const int num_level = state.adata_host.num_level(ia);
 
@@ -42,42 +47,31 @@ fp_t time_dep_impl(State& state, const Fp2d& prev_pops, const KineticEqOptions& 
             // alias, so keep the old populations and Gamma_old * n_old in
             // separate scratch views.
             scratch_size += 2 * ScratchView<T*>::shmem_size(num_level);
+            scratch_size += ScratchView<fp_t*>::shmem_size(num_level); // n_star
 
             Kokkos::parallel_for(
                 "Compute old population derivative",
-                TeamPolicy(Nspace, std::min(square(num_level), 128)).set_scratch_size(0, Kokkos::PerTeam(scratch_size)),
+                TeamPolicy(Nspace, dex_team_size(std::min(square(num_level), 128))).set_scratch_size(0, Kokkos::PerTeam(scratch_size)),
                 KOKKOS_LAMBDA (const KTeam& team) {
                     const i64 ks = team.league_rank();
 
                     ScratchView<T**> Gammak(team.team_scratch(0), num_level, num_level);
                     ScratchView<T*> old_popsk(team.team_scratch(0), num_level);
                     ScratchView<T*> old_deriv(team.team_scratch(0), num_level);
+                    ScratchView<fp_t*> n_star(team.team_scratch(0), num_level);
 
-                    // Copy over Gamma chunk
+                    // Assemble Gamma from the collisions and precon_R
                     Kokkos::parallel_for(
                         Kokkos::TeamVectorRange(team, nxn_loop.num_iter),
                         [&] (const int x) {
                             const auto args = nxn_loop.unpack(x);
-                            const int i = args[0];
-                            const int j = args[1];
-
-                            Gammak(i, j) = Gamma(i, j, ks);
+                            Gammak(args[0], args[1]) = T(FP(0.0));
                         }
                     );
                     team.team_barrier();
-
-                    // Fixup gamma
-                    Kokkos::parallel_for(
-                        Kokkos::TeamVectorRange(team, num_level),
-                        [&] (const int i) {
-                            T diag = T(FP(0.0));
-                            Gammak(i, i) = diag;
-                            for (int j = 0; j < num_level; ++j) {
-                                diag += Gammak(j, i);
-                            }
-                            Gammak(i, i) = -diag;
-                        }
-                    );
+                    scatter_add_collisions(team, atom, collision_atmos(atmos, ks), nh_lte, n_star.data(), Gammak);
+                    scatter_add_precon_R(team, adata, ia, precon_R, ks, Gammak);
+                    fixup_gamma(team, Gammak);
 
                     Kokkos::parallel_for(
                         Kokkos::TeamVectorRange(team, num_level),
@@ -121,42 +115,38 @@ fp_t time_dep_impl(State& state, const Fp2d& prev_pops, const KineticEqOptions& 
             scratch_size *= 2;
             scratch_size += 2 * ScratchView<T*>::shmem_size(num_level);
         }
+        scratch_size += ScratchView<fp_t*>::shmem_size(num_level); // n_star
 
 
         Kokkos::parallel_for(
             "Kinetic Eq",
-            TeamPolicy(Nspace, std::min(square(num_level), 128)).set_scratch_size(0, Kokkos::PerTeam(scratch_size)),
+            TeamPolicy(Nspace, dex_team_size(std::min(square(num_level), 128))).set_scratch_size(0, Kokkos::PerTeam(scratch_size)),
             KOKKOS_LAMBDA (const KTeam& team) {
                 const i64 ks = team.league_rank();
 
                 ScratchView<T**> Gammak(team.team_scratch(0), num_level, num_level);
                 KView<T*> new_popsk(&new_pops(ks, 0), new_pops.extent(1));
 
-                // Copy over Gamma chunk
+                // Assemble Gamma from the collisions and precon_R
                 Kokkos::parallel_for(
                     Kokkos::TeamVectorRange(team, nxn_loop.num_iter),
                     [&] (const int x) {
                         const auto args = nxn_loop.unpack(x);
-                        const int i = args[0];
-                        const int j = args[1];
-
-                        Gammak(i, j) = Gamma(i, j, ks);
+                        Gammak(args[0], args[1]) = T(FP(0.0));
                     }
                 );
                 team.team_barrier();
+                ScratchView<fp_t*> n_star(team.team_scratch(0), num_level);
+                scatter_add_collisions(team, atom, collision_atmos(atmos, ks), nh_lte, n_star.data(), Gammak);
+                scatter_add_precon_R(team, adata, ia, precon_R, ks, Gammak);
+                fixup_gamma(team, Gammak);
 
-                // Fixup gamma
+                // NOTE(cmo): For stat eq the diagonal is -diag, but for
+                // time_dep it's 1 - Gamma*dt, so 1 + diag * dt
                 Kokkos::parallel_for(
                     Kokkos::TeamVectorRange(team, num_level),
                     [&] (const int i) {
-                        T diag = T(FP(0.0));
-                        Gammak(i, i) = diag;
-                        for (int j = 0; j < num_level; ++j) {
-                            diag += Gammak(j, i);
-                        }
-                        // NOTE(cmo): For stat eq we would set to -diag, but for
-                        // time_dep it's 1 - Gamma*dt, so 1 + diag * dt
-                        Gammak(i, i) = FP(1.0) + theta * diag * dt;
+                        Gammak(i, i) = FP(1.0) - theta * Gammak(i, i) * dt;
                     }
                 );
 
@@ -360,13 +350,12 @@ fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const Tim
     // TODO(cmo): He contribution?
     assert(state.have_h && "Need to have H active for non-lte EOS");
     const auto& pops = state.pops;
-    const auto& GammaH = state.Gamma[0];
-    const int num_level = GammaH.extent(0);
-    const int num_eqn = GammaH.extent(0) + 1;
-    const int num_space = GammaH.extent(2);
+    const int num_level = state.adata_host.num_level(0);
+    const int num_eqn = num_level + 1;
+    const i64 num_space = pops.extent(1);
     JasUnpack(state.atmos, ne, nh_tot);
-    // NOTE(cmo): GammaH_flat is how we access Gamma/C in the following
-    const auto& GammaH_flat = state.Gamma[0];
+    const auto precon_R_H = atom_precon_R(state.precon_R, state.adata_host, 0);
+    const auto& adata = state.adata;
 
     constexpr fp_t ne_pert_size = FP(1e-2);
     constexpr bool iterative_improvement = true;
@@ -376,8 +365,8 @@ fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const Tim
 
     size_t scratch_size = ScratchView<T**>::shmem_size(num_level, num_level); // Gammak
     scratch_size += ScratchView<fp_t**>::shmem_size(num_level, num_level); // C
-    // scratch_size += ScratchView<fp_t**>::shmem_size(num_level, num_level); // C_ne_pert
     scratch_size += ScratchView<fp_t**>::shmem_size(num_level, num_level); // dC
+    scratch_size += ScratchView<fp_t*>::shmem_size(num_level); // n_star
     scratch_size += ScratchView<T**>::shmem_size(num_eqn, num_eqn); // dF
     scratch_size += ScratchView<T*>::shmem_size(num_eqn); // F
     scratch_size += ScratchView<T*>::shmem_size(num_level); // new_popsk
@@ -387,86 +376,23 @@ fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const Tim
         scratch_size += 2 * ScratchView<T*>::shmem_size(num_eqn); // lhs_copy/residuals
     }
     yakl::Array<T, 2, yakl::memDevice> new_F("new_F", num_space, num_eqn);
-    Fp3d C("C", num_level, num_level, num_space);
-    Fp3d dC("dC", num_level, num_level, num_space);
-    C = FP(0.0);
-    dC = FP(0.0);
     FlatLoop<2> nlxnl_loop(num_level, num_level);
     FlatLoop<2> nexne_loop(num_eqn, num_eqn);
 
-    Fp2d n_star = state.pops.createDeviceObject();
-    compute_lte_pops(&state, n_star);
-    Kokkos::fence();
-    const auto n_star_slice = slice_pops(
-        n_star,
-        state.adata_host,
-        state.atoms_with_gamma_mapping[0]
-    );
-
-    // NOTE(cmo): These terms can be computed in shared memory (see the
-    // commented blocks), but it's much slower because we're only doing one set
-    // of rates per thread team.
-    dex_parallel_for(
-        "Compute C, dC",
-        FlatLoop<1>(num_space),
-        KOKKOS_LAMBDA (i64 ks) {
-            for (int i = 0; i < num_level; ++i) {
-                for (int j = 0; j < num_level; ++j) {
-                    C(i, j, ks) = FP(0.0);
-                    dC(i, j, ks) = FP(0.0);
-                }
-            }
-
-            compute_C_ne_pert(
-                atmos,
-                H_atom,
-                n_star_slice,
-                nh_lte,
-                ks,
-                C,
-                dC, // This contains C_ne_pert
-                ne_pert_size
-            );
-
-            const fp_t ne_k = atmos.ne(ks);
-            const fp_t recip_dNe = FP(1.0) / (ne_pert_size * ne_k);
-            for (int i = 0; i < num_level; ++i) {
-                for (int j = 0; j < num_level; ++j) {
-                    fp_t dCdNe = (dC(i, j, ks) - C(i, j, ks)) * recip_dNe;
-                    dC(i, j, ks) = dCdNe;
-                }
-            }
-
-            for (int i = 0; i < num_level; ++i) {
-                fp_t diag = FP(0.0);
-                fp_t diag_dC = FP(0.0);
-                C(i, i, ks) = diag;
-                dC(i, i, ks) = diag_dC;
-                for (int j = 0; j < num_level; ++j) {
-                    diag += C(j, i, ks);
-                    diag_dC += dC(j, i, ks);
-                }
-                C(i, i, ks) = -diag;
-                dC(i, i, ks) = -diag_dC;
-            }
-        }
-    );
-    Kokkos::fence();
-
     Kokkos::parallel_for(
         "Charge Conservation",
-        TeamPolicy(num_space, std::min(square(num_eqn), 128)).set_scratch_size(0, Kokkos::PerTeam(scratch_size)),
+        TeamPolicy(num_space, dex_team_size(std::min(square(num_eqn), 128))).set_scratch_size(0, Kokkos::PerTeam(scratch_size)),
         KOKKOS_LAMBDA (const KTeam& team) {
             const i64 ks = team.league_rank();
 
             ScratchView<fp_t**> Ck(team.team_scratch(0), num_level, num_level);
             ScratchView<fp_t**> dCk(team.team_scratch(0), num_level, num_level);
+            ScratchView<fp_t*> n_star(team.team_scratch(0), num_level);
             const fp_t ne_k = atmos.ne(ks);
 
             ScratchView<T**> Gammak(team.team_scratch(0), num_level, num_level);
             ScratchView<T*> new_popsk(team.team_scratch(0), num_level);
             ScratchView<T*> prev_popsk(team.team_scratch(0), num_level);
-            // Copy over Gamma and new_pops chunks
             Kokkos::parallel_for(
                 Kokkos::TeamVectorRange(team, nlxnl_loop.num_iter),
                 [&] (const int x) {
@@ -474,14 +400,35 @@ fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const Tim
                     const int i = args[0];
                     const int j = args[1];
 
-                    Gammak(i, j) = GammaH_flat(i, j, ks);
-                    Ck(i, j) = C(i, j, ks);
-                    dCk(i, j) = dC(i, j, ks);
+                    Ck(i, j) = FP(0.0);
+                    dCk(i, j) = FP(0.0);
                     if (i == 0) {
                         new_popsk(j) = pops(j, ks);
                     }
                 }
             );
+            team.team_barrier();
+
+            // NOTE(cmo): C and dC/dne by forward differences (Evaluate perturbed into dCk, then difference)
+            AtmosPointParams local_atmos = collision_atmos(atmos, ks);
+            scatter_add_collisions(team, H_atom, local_atmos, nh_lte, n_star.data(), Ck);
+            local_atmos.ne += ne_pert_size * ne_k;
+            scatter_add_collisions(team, H_atom, local_atmos, nh_lte, n_star.data(), dCk);
+            const fp_t recip_dNe = FP(1.0) / (ne_pert_size * ne_k);
+            Kokkos::parallel_for(
+                Kokkos::TeamVectorRange(team, nlxnl_loop.num_iter),
+                [&] (const int x) {
+                    const auto args = nlxnl_loop.unpack(x);
+                    const int i = args[0];
+                    const int j = args[1];
+                    dCk(i, j) = (dCk(i, j) - Ck(i, j)) * recip_dNe;
+                    Gammak(i, j) = Ck(i, j);
+                }
+            );
+            team.team_barrier();
+            fixup_gamma(team, dCk);
+            scatter_add_precon_R(team, adata, 0, precon_R_H, ks, Gammak);
+            fixup_gamma(team, Gammak);
 
             if (theta < FP(1.0)) {
                 Kokkos::parallel_for(
@@ -498,20 +445,6 @@ fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const Tim
                     }
                 );
             }
-            team.team_barrier();
-
-            // Fixup gamma
-            Kokkos::parallel_for(
-                Kokkos::TeamVectorRange(team, num_level),
-                [&] (const int i) {
-                    T diag = T(FP(0.0));
-                    Gammak(i, i) = diag;
-                    for (int j = 0; j < num_level; ++j) {
-                        diag += Gammak(j, i);
-                    }
-                    Gammak(i, i) = -diag;
-                }
-            );
             team.team_barrier();
 
             ScratchView<T**> dF(team.team_scratch(0), num_eqn, num_eqn);
@@ -574,7 +507,7 @@ fp_t time_dep_nr_post_update_impl(State& state, const Fp2d& prev_pops, const Tim
                     if (x < num_cont) {
                         const int kr = x;
                         const auto& cont = H_atom.continua(kr);
-                        const T precon_Rji = Gammak(cont.i, cont.j) - Ck(cont.i, cont.j);
+                        const T precon_Rji = precon_R_H(H_atom.lines.extent(0) + kr, PRECON_R_DOWN, ks);
                         T entry = -(precon_Rji / ne_k) * new_popsk(cont.j);
                         entry *= -theta * dt;
                         Kokkos::atomic_add(&dF(cont.i, num_eqn-1), entry);

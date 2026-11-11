@@ -21,6 +21,9 @@
 #include "../DexRT/source/DynamicFormalSolution.hpp"
 #include "../DexRT/source/MiscSparse.hpp"
 #include "../DexRT/source/InitialPops.hpp"
+#include "../DexRT/source/StateSetup.hpp"
+#include "../DexRT/source/GammaMatrix.hpp"
+#include "../DexRT/source/Rad16Output.hpp"
 
 // TODO(cmo): Figure out how to deal with 3D down the line.
 int get_dexrt_dimensionality() {
@@ -373,71 +376,17 @@ static auto invoke_fluid_traits_2d(
     return invoke_dim.template operator()<FluidType::Hydro>(FluidType::Hydro);
 }
 
-// NOTE(cmo): Direct transplant from dexrt
-static void allocate_J(DexState& state) {
-    JasUnpack(state, config, mr_block_map, c0_size, adata);
-    const auto& block_map = mr_block_map.block_map;
-    const bool sparse = config.sparse_calculation;
-    i64 num_cells = mr_block_map.block_map.get_num_active_cells();
-    i32 wave_dim = adata.wavelength.extent(0);
-
-    if (!sparse) {
-        num_cells = i64(block_map.num_x_tiles()) * block_map.num_z_tiles() * square(BLOCK_SIZE);
-    }
-
-    if (config.store_J_on_cpu) {
-        state.J = decltype(state.J)("J", yakl::DimsT<i64>(c0_size.wave_batch, num_cells));
-        state.J_cpu = decltype(state.J_cpu)("JHost", yakl::DimsT<i64>(wave_dim, num_cells));
-    } else {
-        state.J = decltype(state.J)("J", yakl::DimsT<i64>(wave_dim, num_cells));
-    }
-    state.J = 0;
-    // TODO(cmo): If we have scattering terms and are updating J, the old
-    // contents should probably be moved first, but we don't have these terms yet.
-}
-
-void allocate_rad_loss(DexState& state) {
-    JasUnpack(state, config, mr_block_map, c0_size, adata);
-    if (config.rad_loss == RadLossType::None) {
-        return;
-    }
-    i64 num_cells = mr_block_map.block_map.get_num_active_cells();
-    i32 wave_dim = adata.wavelength.extent(0);
-
-    int rad_loss_leading_dim = wave_dim;
-    if (config.store_J_on_cpu) {
-        rad_loss_leading_dim = c0_size.wave_batch;
-    }
-    int rad_loss_cpu_leading_dim = wave_dim;
-    if (config.rad_loss == RadLossType::Integrated) {
-        rad_loss_leading_dim = 1;
-        rad_loss_cpu_leading_dim = 1;
-    }
-
-    state.rad_loss = decltype(state.rad_loss)("L", yakl::DimsT<i64>(rad_loss_leading_dim, num_cells));
-    if (config.store_J_on_cpu) {
-        state.rad_loss_cpu = decltype(state.rad_loss_cpu)("LHost", yakl::DimsT<i64>(rad_loss_cpu_leading_dim, num_cells));
-        state.rad_loss_cpu = FP(0.0);
-    }
-    state.rad_loss = FP(0.0);
-}
-
 static void allocate_cell_count_based_terms(DexState& state, i64 num_active_cells) {
     const int n_level_total = state.adata.energy.extent(0);
     state.pops = decltype(state.pops)("pops", n_level_total, num_active_cells);
-    state.Gamma.clear();
-    for (int ia = 0; ia < state.adata_host.num_level.extent(0); ++ia) {
-        const int n_level = state.adata_host.num_level(ia);
-        state.Gamma.emplace_back(
-            decltype(state.Gamma)::value_type("Gamma", n_level, n_level, num_active_cells)
-        );
-    }
+    state.precon_R = PreconRMat("precon_R", num_transitions(state.adata_host), 2, num_active_cells);
+    state.precon_R = GammaFp(0.0);
     state.rate_diag.allocate(state.adata_host, state.config.output, num_active_cells);
-    state.wphi = decltype(state.wphi)("wphi", state.adata.lines.extent(0), num_active_cells);
+    state.wphi = Rad16Array("wphi", state.adata.lines.extent(0), num_active_cells);
 
     // TODO(cmo): Maybe no J unless requested.
-    allocate_J(state);
-    allocate_rad_loss(state);
+    allocate_J(&state);
+    allocate_rad_loss(&state);
 }
 
 DexInterface::~DexInterface() {
@@ -1492,12 +1441,7 @@ bool DexInterface::init_config(Simulation& sim, YAML::Node& cfg, const std::stri
         const auto& model_config = config.atom_configs[i];
         crtaf_models.emplace_back(parse_crtaf_model<f64>(p, model_config));
     }
-    AtomicDataHostDevice<dfp_t> atomic_data = to_atomic_data<dfp_t, f64>(
-        crtaf_models,
-        ToAtomicDataOptions{
-            .limit_line_edge_bins=state.config.limit_line_edge_bins
-        }
-    );
+    AtomicDataHostDevice<dfp_t> atomic_data = to_atomic_data<dfp_t, f64>(crtaf_models);
     state.adata = atomic_data.device;
     state.adata_host = atomic_data.host;
     state.have_h = atomic_data.have_h_model;
@@ -1603,58 +1547,16 @@ bool DexInterface::init(Simulation& sim, YAML::Node& cfg) {
 }
 
 static void setup_wavelength_batch(const DexState& state, int la_start, int la_end) {
-    if (state.config.store_J_on_cpu) {
-        state.J = FP(0.0);
-        if (state.rad_loss.initialized() && state.config.rad_loss != RadLossType::Integrated) {
-            state.rad_loss = FP(0.0);
-        }
-        Kokkos::fence();
+    state.J = FP(0.0);
+    if (state.rad_loss.initialized()) {
+        state.rad_loss = FP(0.0);
     }
-}
-
-/// Called to copy J from GPU to plane of host array if config.store_J_on_cpu
-static void copy_J_plane_to_host(const DexState& state, int la_start, int la_end) {
-    int wave_batch = la_end - la_start;
-    const auto J_copy = state.J.createHostCopy();
-    // TODO(cmo): Replace with a memcpy?
-    for (int wave = 0; wave < wave_batch; ++wave) {
-        for (i64 ks = 0; ks < J_copy.extent(1); ++ks) {
-            state.J_cpu(la_start + wave, ks) = J_copy(wave, ks);
-        }
-    }
-}
-
-/// Called to copy rad_loss from GPU to plane of host array if config.store_J_on_cpu
-static void copy_rad_loss_plane_to_host(const DexState& state, int la_start, int la_end) {
-    if (!state.rad_loss.initialized()) {
-        return;
-    }
-
-    // TODO(cmo): This whole function is silly if we're in integrated.
-    int wave_batch = la_end - la_start;
-    const auto rad_loss_copy = state.rad_loss.createHostCopy();
-    if (state.config.rad_loss == RadLossType::PerWavelength) {
-        // TODO(cmo): Replace with a memcpy?
-        for (int wave = 0; wave < wave_batch; ++wave) {
-            for (i64 ks = 0; ks < rad_loss_copy.extent(1); ++ks) {
-                state.rad_loss_cpu(la_start + wave, ks) = rad_loss_copy(wave, ks);
-            }
-        }
-    } else {
-        KOKKOS_ASSERT(rad_loss_copy.extent(0) == 1);
-        for (i64 ks = 0; ks < rad_loss_copy.extent(1); ++ks) {
-            state.rad_loss_cpu(0, ks) = rad_loss_copy(0, ks);
-        }
-    }
+    Kokkos::fence();
 }
 
 static void finalise_wavelength_batch(const DexState& state, int la_start, int la_end) {
-    if (state.config.store_J_on_cpu) {
-        copy_J_plane_to_host(state, la_start, la_end);
-        if (state.rad_loss.initialized()) {
-            copy_rad_loss_plane_to_host(state, la_start, la_end);
-        }
-    }
+    copy_J_plane_to_host(state, la_start, la_end);
+    finalise_rad_loss_batch(state, la_start, la_end);
 
     const i32 wave_batch_idx = la_start / state.c0_size.wave_batch;
     JasUnpack(state, max_block_mip, mr_block_map);
@@ -1736,12 +1638,14 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
     if ((args.first_iter || !interface_config.advect) && actually_conserve_charge && !time_dependent) {
         // TODO(cmo): Make all of these parameters configurable
         state.println("-- Iterating LTE n_e/pressure --");
+        // NOTE(cmo): the call to stat eq (which adds the collisions) will use
+        // the radiative rates from here, so zero them.
+        zero_precon_R(state.precon_R);
         fp_t lte_max_change = FP(1.0);
         int lte_i = 0;
         while ((lte_max_change > FP(1e-5) || lte_i < 6) && lte_i < max_iters) {
             lte_i += 1;
             compute_nh0(state);
-            compute_collisions_to_gamma(&state);
             lte_max_change = stat_eq(&state, StatEqOptions{
                 .ignore_change_below_ntot_frac=FP(1e-7)
             });
@@ -1797,30 +1701,14 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         state.println("==== FS {} ====", i);
         compute_nh0(state);
 
-        if (false) {
-            // NOTE(cmo): This is done after reducing Gamma now in case it
-            // reduced the precision in the accumulation of the radiative terms
-            compute_collisions_to_gamma(&state);
-        } else {
-            for (int ia = 0; ia < state.Gamma.size(); ++ia) {
-                state.Gamma[ia] = FP(0.0);
-            }
-            yakl::fence();
-        }
+        zero_precon_R(state.precon_R);
         state.rate_diag.zero();
 
         bool print_worst_wphi = first_inner_iter;
         compute_profile_normalisation(state, casc_state, print_worst_wphi);
         state.J = FP(0.0);
-        if (config.store_J_on_cpu) {
-            state.J_cpu = FP(0.0);
-        }
-        if (state.rad_loss.initialized()) {
-            state.rad_loss = FP(0.0);
-            if (config.store_J_on_cpu) {
-                state.rad_loss_cpu = FP(0.0);
-            }
-        }
+        state.J_cpu.fill(FP(0.0));
+        zero_rad_loss(state);
         yakl::fence();
         WavelengthBatch wave_batch;
         wave_dist.reset();
@@ -1845,15 +1733,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
 
         if (time_dependent) {
             state.println("  == Pops update ==");
-            wave_dist.reduce_Gamma(&state);
-            if (state.mpi_state.rank == 0) {
-                compute_collisions_to_gamma(
-                    &state,
-                    ComputeCollisionsOptions{
-                        .zero_gamma = false
-                    }
-                );
-            }
+            wave_dist.reduce_precon_R(&state);
             max_change = time_dep_update(
                 state,
                 prev_pops,
@@ -1881,15 +1761,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
             }
         } else {
             state.println("  == Statistical equilibrium ==");
-            wave_dist.reduce_Gamma(&state);
-            if (state.mpi_state.rank == 0) {
-                compute_collisions_to_gamma(
-                    &state,
-                    ComputeCollisionsOptions{
-                        .zero_gamma = false
-                    }
-                );
-            }
+            wave_dist.reduce_precon_R(&state);
             max_change = stat_eq(
                 &state,
                 StatEqOptions{
@@ -1914,7 +1786,9 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
                 // the fixed-density material-energy solve. Keep the two
                 // mutually exclusive, as in DexRT's standalone driver.
                 if (!actually_conserve_pressure) {
-                    fp_t temp_update = simple_conserve_energy(&state);
+                    fp_t temp_update = simple_conserve_energy(&state, ConserveEnergyOptions{
+                        .relaxation = Dex::fp_t(interface_config.energy_relaxation)
+                    });
                     wave_dist.update_temperature(&state);
                     max_change = std::max(temp_update, max_change);
                 }
@@ -1931,6 +1805,7 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         first_inner_iter = false;
     }
     // NOTE(cmo): We only need to do this after the final iteration.
+    copy_rad_loss_to_host(state);
     wave_dist.reduce_rad_loss(&state);
     wave_dist.reduce_J(&state);
     wave_dist.reduce_rate_diagnostics(&state);
@@ -1940,8 +1815,6 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
     return max_change <= tol.convergence;
 }
 
-/// NOTE(claude): Takes a mutable state because collisional_rates output is
-/// computed into the (by now dead) Gamma buffer.
 void save_results(
     DexState& state,
     yakl::SimpleNetCDF& nc,
@@ -1963,7 +1836,7 @@ void save_results(
         nc.write(num_iter, "dex_num_iter");
     }
 
-    bool sparse_J = state.config.sparse_calculation && (state.J.extent(1) == state.atmos.temperature.extent(0));
+    bool sparse_J = state.config.sparse_calculation && (state.J_cpu.extent(1) == state.atmos.temperature.extent(0));
     auto convert_name = [&](const std::string& name) {
         if (single_file) {
             return fmt::format("{}_{}", name, time_idx);
@@ -1988,26 +1861,25 @@ void save_results(
     };
 
     if (out_cfg.J) {
-        if (config.store_J_on_cpu) {
-            if (sparse_J) {
-                maybe_rehydrate_and_write(state.J_cpu, convert_name("J"), {"wavelength"});
-            } else {
-                auto J_full = state.J_cpu.reshape(state.J_cpu.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
-                nc.write(J_full, convert_name("J"), {"wavelength", "z_dex", "x_dex"});
-            }
+        if (sparse_J && out_cfg.sparse) {
+            write_rad16_chunked(nc, state.J_cpu, convert_name("J"), {"wavelength", convert_name("ks")}, [](const ::Fp2dHost& planes) {
+                return planes;
+            });
+        } else if (sparse_J) {
+            write_rad16_chunked(nc, state.J_cpu, convert_name("J"), {"wavelength", "z_dex", "x_dex"}, [&](const ::Fp2dHost& planes) {
+                return rehydrate_sparse_quantity(block_map, planes);
+            });
         } else {
-            if (sparse_J) {
-                maybe_rehydrate_and_write(state.J, convert_name("J"), {"wavelength"});
-            } else {
-                auto J_full = state.J.reshape(state.J.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
-                nc.write(J_full, convert_name("J"), {"wavelength", "z_dex", "x_dex"});
-            }
+            write_rad16_chunked(nc, state.J_cpu, convert_name("J"), {"wavelength", "z_dex", "x_dex"}, [&](const ::Fp2dHost& planes) {
+                return planes.reshape(planes.extent(0), block_map.num_z_tiles() * BLOCK_SIZE, block_map.num_x_tiles() * BLOCK_SIZE);
+            });
         }
         nc.write(state.max_block_mip, convert_name("max_mip_block"), {"wavelength_batch", "tile_z", "tile_x"});
     }
 
     if (out_cfg.wavelength && state.adata.wavelength.initialized()) {
         nc.write(state.adata.wavelength, "wavelength", {"wavelength"});
+        nc.write(state.adata_host.wavelength_bin, "wavelength_bin", {"wavelength"});
     }
     if (out_cfg.pops && state.pops.initialized()) {
         maybe_rehydrate_and_write(state.pops, convert_name("pops"), {"level"});
@@ -2026,8 +1898,9 @@ void save_results(
         maybe_rehydrate_and_write(state.atmos.temperature, convert_name("temperature"), {});
         maybe_rehydrate_and_write(state.atmos.ne, convert_name("ne"), {});
     }
-    // if (out_cfg.psi_star && casc_state.psi_star.initialized()) {
-    //     nc.write(casc_state.psi_star, convert_name("psi_star"), {"casc_shape"});
+    // if (out_cfg.psi_star && casc_state.I_ext.initialized()) {
+    //     nc.write(casc_state.I_ext, convert_name("I_ext"), {"casc_shape"});
+    //     nc.write(casc_state.one_minus_alo, convert_name("one_minus_alo"), {"casc_shape"});
     // }
     if (out_cfg.active) {
         // NOTE(cmo): Currently active is always written dense
@@ -2050,41 +1923,22 @@ void save_results(
 
     if (out_cfg.rad_loss) {
         std::string leading_dim = config.rad_loss == RadLossType::Integrated ? "wavelength_integrated" : "wavelength";
-        // NOTE(claude): rad_loss is held in kW/m3 (and applied as such), but is
-        // output in W/m3 to match the other rates. Scale a copy -- the live
-        // array is still read by min_characteristic_cooling_time and
-        // update_temperature_rad_eq.
-        if (config.store_J_on_cpu) {
-            const auto& src = state.rad_loss_cpu;
-            auto scaled = src.createHostObject();
-            for (i32 la = 0; la < src.extent(0); ++la) {
-                for (i64 ks = 0; ks < src.extent(1); ++ks) {
-                    scaled(la, ks) = src(la, ks) * 1e3_fp;
-                }
+        // NOTE(cmo): Scale rad_loss to SI before writing
+        const auto& src = state.rad_loss_cpu;
+        auto scaled = src.createHostObject();
+        for (i32 la = 0; la < src.extent(0); ++la) {
+            for (i64 ks = 0; ks < src.extent(1); ++ks) {
+                scaled(la, ks) = src(la, ks) * 1e3_fp;
             }
-            maybe_rehydrate_and_write(scaled, convert_name("rad_loss"), {leading_dim});
-        } else {
-            const auto& src = state.rad_loss;
-            auto scaled = src.createDeviceObject();
-            dex_parallel_for(
-                "rad_loss -> W m-3",
-                FlatLoop<2>(src.extent(0), src.extent(1)),
-                KOKKOS_LAMBDA (i32 la, i64 ks) {
-                    scaled(la, ks) = src(la, ks) * 1e3_fp;
-                }
-            );
-            Kokkos::fence();
-            maybe_rehydrate_and_write(scaled, convert_name("rad_loss"), {leading_dim});
         }
+        maybe_rehydrate_and_write(scaled, convert_name("rad_loss"), {leading_dim});
     }
 
-    const std::vector<GammaMat>* collisional = nullptr;
+    CollisionalRatesOutput collisional_store;
+    const CollisionalRatesOutput* collisional = nullptr;
     if (out_cfg.collisional_rates) {
-        // NOTE(claude): Refills Gamma with the raw collisional rates (no
-        // fixup_gamma, so the diagonal stays zero). Gamma is dead here: it is
-        // re-zeroed at the top of the next iterate.
-        compute_collisions_to_gamma(&state);
-        collisional = &state.Gamma;
+        collisional_store = compute_collisional_rates_output(state);
+        collisional = &collisional_store;
     }
     write_rate_diagnostics(
         state,
@@ -2094,7 +1948,7 @@ void save_results(
             .suffix = single_file ? fmt::format("_{}", time_idx) : std::string(""),
             .z_dim = "z_dex",
             .x_dim = "x_dex",
-            // NOTE(claude): kW m-3 -> W m-3, to match the other rates here.
+            // kW m-3 -> W m-3, to match the other rates here.
             .energy_scale = RadLossFp(1e3)
         },
         collisional
@@ -2437,49 +2291,8 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
     const auto& gamma = eos.gamma;
     const auto& mu0 = sim.state.mu0;
 
-    yakl::Array<RadLossFp, 1, yakl::memDevice> rad_loss;
-    if (state.config.rad_loss == RadLossType::Integrated) {
-        if (state.config.store_J_on_cpu) {
-            // NOTE(cmo): In an MPI case, the rad_loss from the workers is
-            // reduced into rad_loss_cpu, _not_ rad_loss, so ensure we're using
-            // the right array here.
-            rad_loss = state.rad_loss_cpu.createDeviceCopy().reshape(state.rad_loss.extent(1));
-        } else {
-            rad_loss = yakl::Array<RadLossFp, 1, yakl::memDevice>("rad loss sum", state.rad_loss.data(), state.rad_loss.extent(1));
-        }
-    } else {
-        if (state.config.store_J_on_cpu) {
-            yakl::Array<RadLossFp, 1, yakl::memHost> rad_loss_h("rad loss sum", state.rad_loss.extent(1));
-            rad_loss_h = FP(0.0);
-            JasUnpack(state, rad_loss_cpu);
-
-            dex_parallel_for<Kokkos::DefaultHostExecutionSpace>(
-                "Sum rad loss over wavelength",
-                FlatLoop<1>(rad_loss_h.extent(0)),
-                KOKKOS_LAMBDA (i64 ks) {
-                    for (int la = 0; la < rad_loss_cpu.extent(0); ++la) {
-                        rad_loss_h(ks) += rad_loss_cpu(la, ks);
-                    }
-                }
-            );
-            Kokkos::fence();
-            rad_loss = rad_loss_h.createDeviceCopy();
-        } else {
-            rad_loss = yakl::Array<RadLossFp, 1, yakl::memDevice>("rad loss sum", state.rad_loss.extent(1));
-            const auto rad_loss_w = state.rad_loss;
-            rad_loss = FP(0.0);
-            dex_parallel_for(
-                "Sum rad loss over wavelength",
-                FlatLoop<1>(rad_loss.extent(0)),
-                KOKKOS_LAMBDA (i64 ks) {
-                    for (int la = 0; la < rad_loss_w.extent(0); ++la) {
-                        rad_loss(ks) += rad_loss_w(la, ks);
-                    }
-                }
-            );
-            Kokkos::fence();
-        }
-    }
+    // NOTE(cmo): Summed over all wavelengths (and reduced to rank 0 under MPI).
+    const auto rad_loss = state.rad_loss_integrated;
 
     const bool update_ion_e = interface_config.update_ion_e;
     allocate_reservoir_terms(state.pops.extent(1));
@@ -2790,7 +2603,7 @@ fp_t DexInterface::mean_temperature() {
 }
 
 fp_t DexInterface::min_characteristic_cooling_time() {
-    JasUnpack(state, atmos, pops, adata, rad_loss);
+    JasUnpack(state, atmos, pops, adata, rad_loss_integrated);
 
     constexpr fp_t gamma = (FP(5.0) / FP(3.0));
     constexpr fp_t igm1 = FP(1.0) / (gamma - FP(1.0));
@@ -2809,7 +2622,7 @@ fp_t DexInterface::min_characteristic_cooling_time() {
             for (int i = 0; i < adata.energy.extent(0); ++i) {
                 e_int += pops(i, ks) * adata.energy(i) * eV;
             }
-            fp_t cooling_time = e_int / std::abs(rad_loss(0, ks) * 1e3_fp);
+            fp_t cooling_time = e_int / std::abs(rad_loss_integrated(ks) * 1e3_fp);
             running_min = std::min(running_min, cooling_time);
         },
         Kokkos::Min<fp_t>(result)
@@ -2825,17 +2638,14 @@ void DexInterface::update_temperature_rad_eq(fp_t delta_t) {
         throw std::runtime_error("Currently only supporting Integrated rad loss.");
     }
 
-    decltype(state.rad_loss) rad_loss = state.rad_loss;
-    if (state.config.store_J_on_cpu) {
-        rad_loss = state.rad_loss_cpu.createDeviceCopy();
-    }
+    const auto rad_loss = state.rad_loss_integrated;
 
     fp_t max_temp_change;
     dex_parallel_reduce(
         "Update temperature (rad loss)",
-        FlatLoop<1>(rad_loss.extent(1)),
+        FlatLoop<1>(rad_loss.extent(0)),
         KOKKOS_LAMBDA (i64 ks, fp_t& running_max) {
-            const fp_t L = rad_loss(0, ks) * 1e3_fp; // Calculated in kW/m3
+            const fp_t L = rad_loss(ks) * 1e3_fp; // Calculated in kW/m3
             const fp_t T = atmos.temperature(ks);
 
             const fp_t temperature_update = (FP(2.0) / FP(5.0)) * L * T / atmos.pressure(ks) * delta_t;
