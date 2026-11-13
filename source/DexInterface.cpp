@@ -691,8 +691,79 @@ void DexInterface::run_worker_loop() {
 #endif
 }
 
+/// Fill the state of the current dex active cells from the MHD state.
 template <typename FTraits>
-bool DexInterface::update_atmosphere(Simulation& sim) {
+void DexInterface::fill_atmosphere_from_mhd(const Simulation& sim) {
+    constexpr fp_t m_p = ConstantsF64::u;
+    const auto& block_map = state.mr_block_map.block_map;
+    const auto& sz = sim.state.sz;
+    const auto& Q = sim.state.Q;
+    const auto& eos = sim.eos;
+    const fp_t mu0 = sim.state.mu0;
+    const bool ignore_rt_velocities = interface_config.ignore_rt_velocities;
+    const auto& atmos = state.atmos;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
+    dex_parallel_for(
+        "Copy atmos qtys",
+        block_map.loop_bounds(),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(block_map);
+            i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+
+            constexpr i32 n_hydro = FTraits::num_vars;
+            const CellIndex idx = dex_to_mhd(coord);
+            yakl::SArray<fp_t, 1, n_hydro> w;
+            QtyView q(Q, idx);
+            cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
+            using Prim = typename FTraits::prim;
+            using Cons = typename FTraits::cons;
+
+            atmos.pressure(ks) = w(I(Prim::Pres));
+            // Fixed-density material energy target for forced SE: thermal plus
+            // the modeled atomic reservoir carried by IonE.
+            atmos.e_int(ks) = (
+                atmos.pressure(ks) / (eos.gamma - 1.0_fp)
+                + q(I(Cons::IonE)) * w(I(Prim::Rho))
+            );
+            const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
+            atmos.nh_tot(ks) = nh;
+            fp_t y = eos.y;
+            if (!eos.is_constant) {
+                y = eos.y_space(idx.k, idx.j, idx.i);
+            }
+            atmos.ne(ks) = atmos.nh_tot(ks) * y;
+            const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, eos.total_abund, y);
+            atmos.temperature(ks) = temperature;
+            atmos.nh0(ks) = FP(0.0);
+            atmos.vturb(ks) = vturb_fn(temperature, nh, y * nh);
+            if (ignore_rt_velocities) {
+                atmos.vx(ks) = FP(0.0);
+                atmos.vy(ks) = FP(0.0);
+                atmos.vz(ks) = FP(0.0);
+            } else {
+                atmos.vx(ks) = w(I(Prim::Vx));
+                atmos.vy(ks) = FP(0.0);
+                atmos.vz(ks) = w(I(Prim::Vy));
+            }
+        }
+    );
+    Kokkos::fence();
+}
+
+template <typename FTraits>
+bool DexInterface::update_atmosphere(Simulation& sim, bool rebuild) {
+    if (!rebuild) {
+        // NOTE(claude): Same active cells as the last update, refresh their state.
+        fill_atmosphere_from_mhd<FTraits>(sim);
+        if (interface_config.advect) {
+            copy_pops_from_aux_fields(sim);
+        }
+        if (interface_config.time_dependent_updates) {
+            prev_pops = state.pops.createDeviceCopy();
+        }
+        return true;
+    }
     if (interface_config.bbox_crop) {
         // NOTE(claude): Moving bbox -> recompute the box and rebuild the whole
         // solve geometry (block map, atmosphere, cascade storage) each update,
@@ -812,56 +883,7 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
         .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells),
         .e_int = yakl::Array<dfp_t, 1, yakl::memDevice>("e_int", num_active_cells)
     };
-    const bool ignore_rt_velocities = interface_config.ignore_rt_velocities;
-    const auto& atmos = state.atmos;
-    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
-    dex_parallel_for(
-        "Copy atmos qtys",
-        block_map.loop_bounds(),
-        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
-            IdxGen idx_gen(block_map);
-            i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
-            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
-
-            constexpr i32 n_hydro = FTraits::num_vars;
-            const CellIndex idx = dex_to_mhd(coord);
-            yakl::SArray<fp_t, 1, n_hydro> w;
-            QtyView q(Q, idx);
-            cons_to_prim<FTraits>(eos.gamma, mu0, q, w);
-            using Prim = typename FTraits::prim;
-            using Cons = typename FTraits::cons;
-
-            atmos.pressure(ks) = w(I(Prim::Pres));
-            // Fixed-density material energy target for forced SE: thermal plus
-            // the modeled atomic reservoir carried by IonE.
-            atmos.e_int(ks) = (
-                atmos.pressure(ks) / (eos.gamma - 1.0_fp)
-                + q(I(Cons::IonE)) * w(I(Prim::Rho))
-            );
-            const fp_t nh = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
-            atmos.nh_tot(ks) = nh;
-            fp_t y = eos.y;
-            if (!eos.is_constant) {
-                y = eos.y_space(idx.k, idx.j, idx.i);
-            }
-            atmos.ne(ks) = atmos.nh_tot(ks) * y;
-            const fp_t temperature = temperature_si(w(I(Prim::Pres)), nh, eos.total_abund, y);
-            atmos.temperature(ks) = temperature;
-            atmos.nh0(ks) = FP(0.0);
-            atmos.vturb(ks) = vturb_fn(temperature, nh, y * nh);
-            if (ignore_rt_velocities) {
-                atmos.vx(ks) = FP(0.0);
-                atmos.vy(ks) = FP(0.0);
-                atmos.vz(ks) = FP(0.0);
-            } else {
-                atmos.vx(ks) = w(I(Prim::Vx));
-                atmos.vy(ks) = FP(0.0);
-                atmos.vz(ks) = w(I(Prim::Vy));
-            }
-        }
-    );
-    Kokkos::fence();
-
+    fill_atmosphere_from_mhd<FTraits>(sim);
 
     allocate_cell_count_based_terms(state, num_active_cells);
     allocate_reservoir_terms(num_active_cells);
@@ -888,9 +910,9 @@ bool DexInterface::update_atmosphere(Simulation& sim) {
     return true;
 }
 
-bool DexInterface::update_atmosphere(Simulation& sim) {
+bool DexInterface::update_atmosphere(Simulation& sim, bool rebuild) {
     return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
-        return this->update_atmosphere<FTraits>(sim);
+        return this->update_atmosphere<FTraits>(sim, rebuild);
     });
 }
 
@@ -2270,6 +2292,45 @@ void DexInterface::evaluate_reservoir_rates(fp_t dt) {
         }
     );
     Kokkos::fence();
+}
+
+void DexInterface::hold_step(fp_t dt, fp_t theta) {
+    if (state.mr_block_map.get_num_active_cells() == 0) {
+        return;
+    }
+    // NOTE(claude): precon_R and rad_loss_integrated still hold the (reduced)
+    // results of the last full solve; only the collisions follow the new state.
+    ::Fp2d predicted_pops;
+    if (theta < FP(1.0)) {
+        predicted_pops = state.pops.createDeviceObject();
+    }
+    compute_nh0(state);
+    time_dep_update(
+        state,
+        prev_pops,
+        KineticEqOptions {
+            .dt = Dex::fp_t(dt),
+            .theta = Dex::fp_t(theta),
+            .initial_iter = true,
+            .predicted_pops = predicted_pops,
+            .ignore_change_below_ntot_frac = FP(1e-6),
+            .broadcast_change = false
+        }
+    );
+    if (state.have_h && state.config.conserve_charge) {
+        time_dep_nr_post_update(
+            state,
+            prev_pops,
+            TimeDepNrPostUpdateOptions {
+                .dt = Dex::fp_t(dt),
+                .theta = Dex::fp_t(theta),
+                .predicted_pops = predicted_pops,
+                .ignore_change_below_ntot_frac = FP(1e-6),
+                .broadcast_change = false
+            }
+        );
+    }
+    compute_nh0(state);
 }
 
 template <typename FTraits>

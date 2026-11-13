@@ -39,6 +39,10 @@ struct DexMosscapConfig {
     // to the grid). Output is still written as-if the full grid were coupled.
     bool bbox_crop = false;
     i32 bbox_halo_cells = 16;
+    /// MHD steps between full RT solves that hold the radiative rates and
+    /// loss of the last solve, doing only the TD population update. The solve
+    /// geometry (active tiles) is also held over these steps.
+    i32 hold_steps = 0;
 };
 
 struct DexConvergence {
@@ -87,6 +91,8 @@ struct DexInterface {
     DexCascState casc_state;
     i32 num_iter;
     DexFp2d prev_pops; /// Used for time dependent updates
+    /// Hold steps since the last full solve (starts high to force a solve)
+    i32 steps_since_solve = std::numeric_limits<i32>::max();
 
     /// Mapping from the (possibly cropped) solve block map back to the full
     /// inner grid, used only at output time to write results as-if the whole
@@ -135,9 +141,13 @@ struct DexInterface {
     template <typename FTraits>
     bool init_atmosphere(Simulation& sim, i32 max_mip_level);
 
-    bool update_atmosphere(Simulation& sim);
+    /// rebuild = false keeps the active cells (and everything indexed by them)
+    /// and only refreshes their state from the MHD.
+    bool update_atmosphere(Simulation& sim, bool rebuild = true);
     template <typename FTraits>
-    bool update_atmosphere(Simulation& sim);
+    bool update_atmosphere(Simulation& sim, bool rebuild = true);
+    template <typename FTraits>
+    void fill_atmosphere_from_mhd(const Simulation& sim);
 
     /// Compute the active-cell tile bounding box (in full-grid tile coords) for
     /// the bbox_crop mode, halo'd by bbox_halo_cells and clamped/snapped to the
@@ -207,6 +217,8 @@ struct DexInterface {
     void snapshot_reservoir_energies();
     /// Difference against the pre-solve sample to form g_ion/g_exc [W m-3]
     void evaluate_reservoir_rates(fp_t dt);
+    /// Rank 0 only: TD population update with the rates of the last full solve
+    void hold_step(fp_t dt, fp_t theta);
 
     void run_worker_loop();
     void initial_worker_atmos_setup();

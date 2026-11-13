@@ -15,6 +15,9 @@ struct KineticEqOptions {
     fp_t ignore_change_below_ntot_frac = FP(0.0);
     /// If only solving one atom, its index in adata. A negative number implies all atoms.
     int only_atom = -1;
+    /// Broadcast the change to the other ranks. Disable when only rank 0 is
+    /// here (hold steps), as the workers aren't listening.
+    bool broadcast_change = true;
 };
 
 struct TimeDepNrPostUpdateOptions {
@@ -22,6 +25,8 @@ struct TimeDepNrPostUpdateOptions {
     fp_t theta = FP(1.0); /// The fraction of the update to employ using the time-advanced rates. 1.0 => backwards euler, 0.0 forwards Euler
     const Fp2d& predicted_pops = Fp2d(); /// Frozen Gamma_old * n_old array filled by time_dep_update.
     fp_t ignore_change_below_ntot_frac = FP(0.0);
+    /// As KineticEqOptions::broadcast_change
+    bool broadcast_change = true;
 };
 
 template <typename State>

@@ -442,6 +442,10 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
     sim.dex.interface_config.ignore_rt_velocities = ignore_rt_velocities;
     sim.dex.interface_config.bbox_crop = get_or<bool>(config, "dex.bbox_crop", false);
     sim.dex.interface_config.bbox_halo_cells = get_or<i32>(config, "dex.bbox_halo_cells", 16);
+    sim.dex.interface_config.hold_steps = get_or<i32>(config, "dex.hold_steps", 0);
+    if (sim.dex.interface_config.hold_steps > 0 && !time_dependent) {
+        throw std::runtime_error("dex.hold_steps requires dex.time_dep_update.");
+    }
     sim.dex.init_config(sim, config, config_path);
 }
 
