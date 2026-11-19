@@ -438,10 +438,51 @@ struct GridLoc {
     fp_t z;
 };
 
+/// Lionello et al (2009) inspired floor. This behaves a bit like a very
+/// primitive TRAC, forcing higher conductivity below temperature. A lower
+/// cutoff is added to restore normal behaviour. This is because the losses also
+/// need to be scaled by (T / T_eff)^{5/2} = kappa_spitzer / kappa_eff, which is
+/// mostly fine for thin losses, but not sensible for thick ones! Width sets the
+/// with to smoothly return to regular conductive behaviour, avoiding a
+/// discontinuity at cutoff.
+struct ConductionKappaFloor {
+    fp_t temperature = 0.0_fp; /// [K]
+    fp_t cutoff = 0.0_fp; /// [K]
+    fp_t width = 0.05_fp; /// [dex]
+
+    /// T_eff^{5/2}
+    KOKKOS_INLINE_FUNCTION fp_t t52(fp_t T) const {
+        fp_t t_eff = T;
+        if (temperature > 0.0_fp && T < temperature) {
+            fp_t f = 1.0_fp;
+            if (cutoff > 0.0_fp) {
+                f = 0.5_fp * (1.0_fp + std::tanh(std::log10(std::max(T, 1e-30_fp) / cutoff) / width));
+            }
+            t_eff = std::max(T, temperature * f);
+        }
+        return square(t_eff) * std::sqrt(t_eff);
+    }
+
+    /// (T / T_eff)^{5/2}, 1 where the floor is inactive
+    KOKKOS_INLINE_FUNCTION fp_t loss_scale(fp_t T) const {
+        if (temperature <= 0.0_fp || T >= temperature) {
+            return 1.0_fp;
+        }
+        return square(T) * std::sqrt(T) / t52(T);
+    }
+};
+
+/// Conduction parameters shared by all schemes, not all of them work everywhere.
 struct Conduction {
-    fp_t hypertc_kappa = 8e-12; /// Hyperbolic conduction coefficient [W m-1 K-7/2]. Default value is Spitzer like (i.e. (8e-7 erg cm-1 s-1 K-7/2)).
-    bool spitzer = false; /// Whether kappa scales with temperature**5/2
-    bool limited = false; /// Whether to limit conduction to the saturation limit.
+    fp_t kappa0 = 8e-12_fp; /// Conductivity coefficient [W m-1 K-7/2].
+    bool spitzer = true; /// Whether kappa scales with T^5/2
+    bool saturate = false; /// Whether to limit the flux to the saturated value
+    fp_t saturation_phi = 1.1_fp; /// Saturated flux 5 phi sqrt(p / rho) p (Cowie & McKee)
+    /// Whether to include out of plane components of B in |B| for the direction in 1D/2D.
+    bool out_of_plane_field = true;
+    ConductionKappaFloor kappa_floor;
+    bool tau_flat = false; /// hyperbolic: tau = tau_alpha * dt (MAGEC) instead of the wave-speed form floored at tau_alpha * dt.
+    fp_t tau_alpha = 4.0_fp; /// hyperbolic: tau floor (or flat value) in units of dt.
 };
 
 /// Consistent MultiFluid Advection Parameters

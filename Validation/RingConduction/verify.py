@@ -30,6 +30,7 @@ CASES = {
     "STS": "output_ring_validate_sts",
     "Explicit": "output_ring_validate_explicit",
     "HyperTc": "output_ring_validate_hypertc",
+    "SemiImplicit": "output_ring_validate_semi_implicit",
 }
 
 # Matches the snapshot times shown in Zhou et al. 2025, ApJ 978, 72.

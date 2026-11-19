@@ -472,17 +472,20 @@ void thin_loss_kernel(const Simulation& sim, const Ctx& ctx) {
             fp_t ne = y * nh_tot;
 
             JasUse(ctx, dt_sub);
+            // Scaling Λ by s is integrating over s dt, so the exact integration
+            // (and its temperature floor) carries over.
+            const fp_t s = ctx.scale.loss_scale(temperature);
             fp_t rate;
             if constexpr (std::is_same_v<Ctx, FipThinLossContext>) {
                 const FipTownsendCurve curve{
                     .ctx = ctx,
                     .fip_bias = ctx.fip_bias(q, I(Cons::Rho))
                 };
-                rate = townsend_energy_rate(curve, temperature, nh_tot, ne, eos.gamma, dt_sub, ctx.min_temperature);
+                rate = townsend_energy_rate(curve, temperature, nh_tot, ne, eos.gamma, s * dt_sub, ctx.min_temperature);
             } else {
-                rate = townsend_energy_rate(ctx.curve, temperature, nh_tot, ne, eos.gamma, dt_sub, ctx.min_temperature);
+                rate = townsend_energy_rate(ctx.curve, temperature, nh_tot, ne, eos.gamma, s * dt_sub, ctx.min_temperature);
             }
-            S(I(Cons::Ene), cell_idx.k, cell_idx.j, cell_idx.i) += rate;
+            S(I(Cons::Ene), cell_idx.k, cell_idx.j, cell_idx.i) += s * rate;
         }
     );
     Kokkos::fence();
@@ -549,8 +552,12 @@ void setup_thin_loss(Simulation& sim, YAML::Node& config) {
             .lambdas = curve.lambdas.createDeviceCopy(),
             .alpha_k = curve.alpha_k.createDeviceCopy()
         },
-        .min_temperature = min_temperature
+        .min_temperature = min_temperature,
+        .scale = sim.state.cond.kappa_floor
     });
+    if (ctx->scale.temperature > 0.0_fp) {
+        fmt::println("thin_loss: scaled by (T / T_eff)^(5/2) below {:.2e} K to match the conduction kappa floor.", ctx->scale.temperature);
+    }
 
     register_thin_loss(sim, "thin_loss", ctx);
 }
@@ -659,8 +666,12 @@ void setup_thin_loss_fip(Simulation& sim, YAML::Node& config) {
         .min_fip_bias = min_fip_bias,
         .max_fip_bias = max_fip_bias,
         .min_temperature = min_temperature,
-        .tracer_idx = n_hydro + tracer_index
+        .tracer_idx = n_hydro + tracer_index,
+        .scale = sim.state.cond.kappa_floor
     });
+    if (ctx->scale.temperature > 0.0_fp) {
+        fmt::println("thin_loss_fip: scaled by (T / T_eff)^(5/2) below {:.2e} K to match the conduction kappa floor.", ctx->scale.temperature);
+    }
 
     register_thin_loss(sim, "thin_loss_fip", ctx);
 }

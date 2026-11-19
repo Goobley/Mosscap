@@ -1,10 +1,6 @@
 # Self-similar Gaussian conduction test -- see gss_sts.yaml for the full
 # description of the physical setup. HyperTc (hyperbolic/Cattaneo-relaxation)
-# conduction. NOTE: flux saturation is not currently implemented for HyperTc
-# (state.cond.limited is read from config but unused in
-# HyperbolicThermalConduction.cpp), so this is not directly comparable to the
-# saturate:true STS/Explicit runs or the saturate_flux=True python
-# reference -- expect some divergence from that alone.
+# conduction. Unsaturated, matching the other gss_* configs.
 #
 # CAUTION: real (SI-unit, Spitzer) HyperTc conduction has an unresolved CFL
 # timestep bug found during the coronal ring_conduction investigation (the
@@ -15,8 +11,10 @@
 simulation:
   num_dim: 2
   fluid_type: hypertconly
-  hypertc_kappa: 1.0e-11
-  hypertc_spitzer: true
+
+conduction:
+  kappa0: 1.0e-11
+  spitzer: true
 
 grid:
   num_ghost: 3

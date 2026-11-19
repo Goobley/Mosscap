@@ -196,6 +196,7 @@ void compute_flux_impl(const Simulation& sim) {
     const auto& eos = sim.eos;
     const fp_t glm_ch = sim.state.glm_ch;
     const fp_t mu0 = sim.state.mu0;
+    const bool out_of_plane_field = sim.state.cond.out_of_plane_field;
     int n_tracer = sim.state.num_tracers;
     int nx = sz.xc - 2 * sz.ng;
     int ny = std::max(sz.yc - 2 * sz.ng, 1);
@@ -220,6 +221,7 @@ void compute_flux_impl(const Simulation& sim) {
         kernel_name[Axis],
         FlatLoop<3>(nz, ny, nx),
         KOKKOS_LAMBDA (int ki, int ji, int ii) {
+            JasUse(out_of_plane_field);
             CellIndex idx {
                 .i = ii + xs,
                 .j = ji + ys,
@@ -237,7 +239,8 @@ void compute_flux_impl(const Simulation& sim) {
                 glm_ch,
                 rL_view,
                 rR_view,
-                flux_view
+                flux_view,
+                out_of_plane_field
             );
 
             using Cons = typename FTraits::cons;
@@ -309,6 +312,12 @@ KOKKOS_INLINE_FUNCTION void dt_reducer(const Eos& eos, const fp_t mu0, const WTy
             inv_dt += (cs + vel) / dx;
         }
     }
+    // NOTE(claude): Kokkos::Min drops NaN comparisons, so a NaN state used to give dt = dt_max and continue silently.
+    // Flag it with a negative dt instead; compute_dt_impl throws.
+    if (!std::isfinite(inv_dt)) {
+        running_dt = -1.0_fp;
+        return;
+    }
     running_dt = std::min(1.0_fp / inv_dt, running_dt);
 }
 
@@ -334,6 +343,9 @@ f64 compute_dt_impl(const Simulation& sim) {
         Kokkos::Min<fp_t>(dt_max)
     );
     Kokkos::fence();
+    if (!(dt_max > 0.0_fp)) {
+        throw std::runtime_error(fmt::format("Non-finite state detected in the CFL reduction at t = {} s", sim.time));
+    }
 
     f64 dt = dt_max * sim.max_cfl;
     const auto& out = sim.out_cfg;

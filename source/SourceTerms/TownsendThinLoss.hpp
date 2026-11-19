@@ -1,6 +1,7 @@
 #if !defined(MOSSCAP_TOWNSEND_THIN_LOSS_HPP)
 #define MOSSCAP_TOWNSEND_THIN_LOSS_HPP
 #include "../Simulation.hpp"
+#include "ThermalConduction.hpp"
 
 
 namespace YAML { class Node; };
@@ -136,6 +137,8 @@ struct TownsendCurve {
 struct ThinLossContext {
     TownsendCurve<Fp1d> curve;
     fp_t min_temperature;
+    /// Lionello-style scaling matching the conduction floor
+    ConductionKappaFloor scale;
 };
 
 struct FipThinLossContext {
@@ -152,6 +155,8 @@ struct FipThinLossContext {
     fp_t min_temperature;
     /// Index of the FIP bias tracer in Q (stored as rho * fip_bias)
     i32 tracer_idx;
+    /// Lionello-style scaling matching the conduction floor
+    ConductionKappaFloor scale;
 
     template <typename QType>
     KOKKOS_INLINE_FUNCTION fp_t fip_bias(const QType& q, int rho_idx) const {

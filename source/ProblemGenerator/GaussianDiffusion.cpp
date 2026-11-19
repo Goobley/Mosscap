@@ -38,7 +38,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
         const fp_t kappa0 = get_or<fp_t>(config, "problem.kappa0", 0.01_fp);
         const bool spitzer = get_or<bool>(config, "problem.spitzer", false);
         if constexpr (FTraits::has_hypertc) {
-            sim.state.cond.hypertc_kappa = kappa0;
+            sim.state.cond.kappa0 = kappa0;
             sim.state.cond.spitzer = spitzer;
         } else {
             int idx = source_term_index(sim, "thermal_conduction");

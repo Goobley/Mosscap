@@ -40,7 +40,7 @@ KOKKOS_INLINE_FUNCTION void fix_hypertconly_flux(const QtyView& flux) {
 }
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Rusanov, int> = 0>
-KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux, bool out_of_plane_field = false) {
     using Prim = typename FTraits::prim;
     using Cons = typename FTraits::cons;
     constexpr int n_hydro = FTraits::num_vars;
@@ -53,8 +53,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
     prim_to_cons<FTraits>(eos.gamma, mu0, wL, qL);
     prim_to_cons<FTraits>(eos.gamma, mu0, wR, qR);
 
-    prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wL, fL);
-    prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wR, fR);
+    prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wL, fL, out_of_plane_field);
+    prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wR, fR, out_of_plane_field);
 
     const fp_t cfL = fast_wave_speed<FTraits, Axis>(eos.gamma, mu0, wL);
     const fp_t cfR = fast_wave_speed<FTraits, Axis>(eos.gamma, mu0, wR);
@@ -68,7 +68,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
 }
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Hll, int> = 0>
-KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux, bool out_of_plane_field = false) {
     using Prim = typename FTraits::prim;
     using Cons = typename FTraits::cons;
     constexpr int n_hydro = FTraits::num_vars;
@@ -104,22 +104,8 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
     yakl::SArray<fp_t, 1, n_hydro> qL, qR, fL, fR;
     prim_to_cons<FTraits>(eos.gamma, mu0, wL, qL);
     prim_to_cons<FTraits>(eos.gamma, mu0, wR, qR);
-    prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wL, fL);
-    prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wR, fR);
-
-    // if (sR <= 0.0_fp) {
-    //     #pragma unroll
-    //     for (int i = 0; i < n_hydro; ++i) {
-    //         flux(i) = fR(i);
-    //     }
-    //     return;
-    // } else if (sL >= 0.0_fp) {
-    //     #pragma unroll
-    //     for (int i = 0; i < n_hydro; ++i) {
-    //         flux(i) = fL(i);
-    //     }
-    //     return;
-    // }
+    prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wL, fL, out_of_plane_field);
+    prim_to_flux<FTraits, Axis>(eos.gamma, mu0, c_h, wR, fR, out_of_plane_field);
 
     #pragma unroll
     for (int i = 0; i < n_hydro; ++i) {
@@ -129,7 +115,7 @@ KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const f
 }
 
 template <RiemannSolver rs, int Axis, typename FTraits, std::enable_if_t<rs == RiemannSolver::Hllc, int> = 0>
-KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux) {
+KOKKOS_INLINE_FUNCTION void riemann_flux(const Eos& eos, const fp_t mu0, const fp_t c_h, const QtyView& wL, const QtyView& wR, const QtyView& flux, bool out_of_plane_field = false) {
     // NOTE(cmo): Not currently valid for MHD. At all.
     using Prim = typename FTraits::prim;
     using Cons = typename FTraits::cons;

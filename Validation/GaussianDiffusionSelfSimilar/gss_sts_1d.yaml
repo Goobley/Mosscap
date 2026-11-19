@@ -24,13 +24,15 @@ eos:
   ion_frac: 1.0
   avg_mass: 1.0
 
+conduction:
+  kappa0: 1.0e-11
+  spitzer: true
+  saturate: false
+
 sources:
   thermal_conduction:
     enable: true
     anisotropic: true
-    spitzer: true
-    kappa0: 1.0e-11
-    saturate: false
     use_sts: true
 
 scheme:

@@ -58,14 +58,13 @@ namespace Mosscap {
                 const int i = ii + sz.ng;
 
                 const fp_t temp = temperature(k, j, i);
-                fp_t sigma_T_52 = cond.hypertc_kappa;
+                fp_t sigma_T_52 = cond.kappa0;
                 if (cond.spitzer) {
-                    sigma_T_52 *= square(temp) * std::sqrt(temp);
+                    sigma_T_52 *= cond.kappa_floor.t52(temp);
                 }
 
-                // NOTE(cmo): Use central 4th order differences to
-                // evaluate grad T. This is similar
-                // to MURaM's approach.
+                // NOTE(cmo): Use central 4th order differences to evaluate grad T.
+                // This is similar to MURaM's approach.
                 // In this case grad T_i = 8/(12dx) (T_{i+1} - T_{i-1}) - 1/(12dx) (T_{i+2} - T_{i-2})
 
                 constexpr fp_t w1 = 8.0_fp / 12.0_fp;
@@ -89,15 +88,33 @@ namespace Mosscap {
                     );
                     b2 += square(W(I(Prim::Bz), k, j, i));
                 }
+                if (cond.out_of_plane_field) {
+                    if constexpr (FTraits::num_dim < 2) {
+                        b2 += square(W(I(Prim::By), k, j, i));
+                    }
+                    if constexpr (FTraits::num_dim < 3) {
+                        b2 += square(W(I(Prim::Bz), k, j, i));
+                    }
+                }
                 const fp_t inv_b_norm = 1.0_fp / std::max(std::sqrt(b2), 1e-60_fp);
                 B_gradT *= inv_b_norm;
+                // NOTE(cmo): Saturation (free-streaming limit), same Cowie & McKee form as STS.
+                if (cond.saturate) {
+                    const fp_t pres = W(I(Prim::Pres), k, j, i);
+                    const fp_t q_sat = 5.0_fp * cond.saturation_phi * std::sqrt(pres / W(I(Prim::Rho), k, j, i)) * pres;
+                    sigma_T_52 *= q_sat / (q_sat + std::abs(sigma_T_52 * B_gradT));
+                }
                 const fp_t sigma_T_72 = temp * sigma_T_52;
-                fp_t tau = std::max(
-                    4.0_fp * dt,
-                    // NOTE(cmo): glm_ch _is_ the max wave propagation speed, which is what is needed here.
-                    // TODO(cmo): Limiting?
-                    sigma_T_72 * square(max_cfl) * (eos.gamma - 1.0_fp) / (W(I(Prim::Pres), k, j, i) * square(glm_ch))
-                );
+                fp_t tau;
+                if (cond.tau_flat) {
+                    tau = cond.tau_alpha * dt;
+                } else {
+                    tau = std::max(
+                        cond.tau_alpha * dt,
+                        // NOTE(cmo): glm_ch _is_ the max wave propagation speed, which is what is needed here.
+                        sigma_T_72 * square(max_cfl) * (eos.gamma - 1.0_fp) / (W(I(Prim::Pres), k, j, i) * square(glm_ch))
+                    );
+                }
                 S(I(Cons::HeatF), k, j, i) -= (sigma_T_52 * B_gradT + W(I(Cons::HeatF), k, j, i)) / tau;
                 if constexpr (!HYPERTC_IN_FLUX_VECTOR) {
                     // NOTE(cmo): Add energy term consistent with the 4th order

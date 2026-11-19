@@ -2,6 +2,8 @@
 #include "../Simulation.hpp"
 #include "../MosscapConfig.hpp"
 #include "../SourceTerms.hpp"
+#include "ConductionCommon.hpp"
+#include "SemiImplicitConduction.hpp"
 
 
 namespace Mosscap {
@@ -9,76 +11,20 @@ namespace Mosscap {
 // NOTE(cmo): This roughly follows athenapk, but I've tried to make the flow a little clearer
 // Thus, it essentially follows PLUTO (Mignone+ 2012)
 
-KOKKOS_INLINE_FUNCTION fp_t mc(const fp_t a, const fp_t b) {
-    // phi(r) = max(0, min(2r, 0.5 * (1 + r), 2)). The term in the min is
-    // multiplied through by up and sign terms implement the monotonicity
-    // (and the factor of 2 that needs to multiply the second term)
-    return (copysign(1.0_fp, a) + copysign(1.0_fp, b)) * std::min(std::abs(a), std::min(0.25_fp * std::abs(a + b), std::abs(b)));
-}
-
-KOKKOS_INLINE_FUNCTION fp_t mc4(const fp_t a, const fp_t b, const fp_t c, const fp_t d) {
-    // 4 way limiter for transverse gradients in conduction
-    return mc(mc(a, b), mc(c, d));
-}
-
-template <int Axis>
-KOKKOS_INLINE_FUNCTION CellIndex shift_along(const CellIndex& from, int how_much) {
-    CellIndex result(from);
-    result.along<Axis>() += how_much;
-    return result;
-}
-
-template <int Axis>
-KOKKOS_INLINE_FUNCTION QtyView shift_along(const QtyView& from, int how_much) {
-    CellIndex result(from.idx);
-    result.along<Axis>() += how_much;
-    return QtyView(from.q, result);
-}
-
-KOKKOS_INLINE_FUNCTION fp_t ion_frac(const Eos& eos, const CellIndex& idx) {
-    fp_t y = eos.y;
-    if (!eos.is_constant) {
-        y = eos.y_space(idx.k, idx.j, idx.i);
-    }
-    return y;
-}
-
 template <typename FTraits, int Axis>
 KOKKOS_INLINE_FUNCTION fp_t backwards_temperature_diff(const fp_t m_p, const Eos& eos, const Fp4d& W, const CellIndex& from) {
-    using Prim = typename FTraits::prim;
-
     QtyView w_i(W, from);
-    const fp_t Ti = temperature_si(
-        w_i(I(Prim::Pres)),
-        w_i(I(Prim::Rho)) / (eos.mass_per_h * m_p),
-        eos.total_abund,
-        ion_frac(eos, w_i.idx)
-    );
-    auto w_im1 = shift_along<Axis>(w_i, -1);
-    const fp_t Tim1 = temperature_si(
-        w_im1(I(Prim::Pres)),
-        w_im1(I(Prim::Rho)) / (eos.mass_per_h * m_p),
-        eos.total_abund,
-        ion_frac(eos, w_im1.idx)
-    );
-
+    const fp_t Ti = cell_temperature<FTraits>(m_p, eos, w_i);
+    const fp_t Tim1 = cell_temperature<FTraits>(m_p, eos, shift_along<Axis>(w_i, -1));
     return Ti - Tim1;
 }
 
 template <typename FTraits>
 KOKKOS_INLINE_FUNCTION fp_t compute_kappa(const fp_t m_p, const Eos& eos, const ThermalConductionContext& ctx, const QtyView& cell) {
-    fp_t kappa = ctx.kappa0;
-    if (ctx.spitzer) {
-        using Prim = typename FTraits::prim;
-        const fp_t temperature = temperature_si(
-            cell(I(Prim::Pres)),
-            cell(I(Prim::Rho)) / (eos.mass_per_h * m_p),
-            eos.total_abund,
-            ion_frac(eos, cell.idx)
-        );
-        kappa *= std::pow(temperature, 2.5_fp);
+    if (!ctx.spitzer) {
+        return ctx.kappa0;
     }
-    return kappa;
+    return conductivity(ctx, cell_temperature<FTraits>(m_p, eos, cell));
 }
 
 // TODO(cmo): This is only technically correct for the first evaluation, as the
@@ -149,13 +95,11 @@ void explicit_thermal_flux_for_axis(const Simulation& sim, const ThermalConducti
             fp_t full_flux = 0.0_fp;
             fp_t full_flux_norm = 0.0_fp;
             if (ctx.anisotropic) {
-                vec3 B(0.0_fp);
-                B(0) = 0.5_fp * (w_i(I(Prim::Bx)) + w_im1(I(Prim::Bx)));
-                if constexpr (FTraits::num_dim > 1) {
-                    B(1) = 0.5_fp * (w_i(I(Prim::By)) + w_im1(I(Prim::By)));
-                }
-                if constexpr (FTraits::num_dim > 2) {
-                    B(2) = 0.5_fp * (w_i(I(Prim::Bz)) + w_im1(I(Prim::Bz)));
+                const vec3 B_i = conduction_field<FTraits>(ctx, w_i);
+                const vec3 B_im1 = conduction_field<FTraits>(ctx, w_im1);
+                vec3 B;
+                for (int a = 0; a < 3; ++a) {
+                    B(a) = 0.5_fp * (B_i(a) + B_im1(a));
                 }
                 const fp_t B_norm = std::max(
                     std::sqrt(square(B(0)) + square(B(1)) + square(B(2))),
@@ -293,12 +237,7 @@ fp_t estimate_thermal_conduction_timestep(const Simulation& sim, const ThermalCo
             };
             QtyView w_i(W, idx);
             const fp_t kappa = compute_kappa<FTraits>(m_p, eos, ctx, w_i);
-            const fp_t Ti = temperature_si(
-                w_i(I(Prim::Pres)),
-                w_i(I(Prim::Rho)) / (eos.mass_per_h * m_p),
-                eos.total_abund,
-                ion_frac(eos, w_i.idx)
-            );
+            const fp_t Ti = cell_temperature<FTraits>(m_p, eos, w_i);
             // e_int = rho cv T = P / (gamma - 1)
             const fp_t rho_cv = w_i(I(Prim::Pres)) / ((eos.gamma - 1.0_fp) * Ti);
 
@@ -310,32 +249,27 @@ fp_t estimate_thermal_conduction_timestep(const Simulation& sim, const ThermalCo
                 return;
             }
 
-            const fp_t Bx = w_i(I(Prim::Bx));
-            const fp_t By = w_i(I(Prim::By));
-            const fp_t Bz = w_i(I(Prim::Bz));
-            const fp_t B_norm = std::sqrt(square(Bx) + square(By) + square(Bz));
+            const vec3 B = conduction_field<FTraits>(ctx, w_i);
+            const fp_t B_norm = std::sqrt(square(B(0)) + square(B(1)) + square(B(2)));
 
             if (B_norm == 0.0_fp) {
                 return;
             }
-            // NOTE(claude): The stiffness of the anisotropic operator doesn't depend on
-            // the current temperature gradient, so neither may this limit. Weighting by
-            // the angle between B and grad T (or skipping cells with grad T = 0) let
-            // uniform regions run under-staged and go unstable.
+            // NOTE(cmo): Do this for the limit per axis (different to athenapk)
             running_dt = std::min(
                 running_dt,
-                rho_cv * square(dx) / (kappa * std::abs(Bx) / B_norm + 1e-20_fp)
+                rho_cv * square(dx) / (kappa * std::abs(B(0)) / B_norm + 1e-20_fp)
             );
             if constexpr (FTraits::num_dim > 1) {
                 running_dt = std::min(
                     running_dt,
-                    rho_cv * square(dx) / (kappa * std::abs(By) / B_norm + 1e-20_fp)
+                    rho_cv * square(dx) / (kappa * std::abs(B(1)) / B_norm + 1e-20_fp)
                 );
             }
             if constexpr (FTraits::num_dim > 2) {
                 running_dt = std::min(
                     running_dt,
-                    rho_cv * square(dx) / (kappa * std::abs(Bz) / B_norm + 1e-20_fp)
+                    rho_cv * square(dx) / (kappa * std::abs(B(2)) / B_norm + 1e-20_fp)
                 );
             }
         },
@@ -346,112 +280,17 @@ fp_t estimate_thermal_conduction_timestep(const Simulation& sim, const ThermalCo
     return cfl_fac * dt_max;
 }
 
-template <typename FTraits, typename W>
-KOKKOS_INLINE_FUNCTION fp_t prim_to_eint(const fp_t gamma, const W& w) {
-    using Prim = FTraits::prim;
-
-    return w(I(Prim::Pres)) / (gamma - 1.0_fp);
-}
-
-/// Refresh the ghost-cell pressure in W from the current STS stage so the
-/// boundary faces see the stage temperature (cf. temperature_bcs in Lare2d).
-/// Ghosts follow the hydro BC type, except: Constant keeps its start-of-step
-/// value (fixed temperature), and UserFn mirrors the temperature (insulating),
-/// so user code is never run inside the STS loop.
-template <int Axis, typename FTraits>
-void fill_sts_pressure_ghosts_axis(const Simulation& sim) {
-    static_assert(Axis < 3, "What are you doing?");
-    JasUnpack(sim, state, eos);
-    JasUnpack(state, W, sz);
-    const auto& bdry = state.boundaries;
-    const int ng = sz.ng;
-    const fp_t m_p = state.p_mass;
-    int dims[3] = {sz.xc, sz.yc, sz.zc};
-    int launch_dims[3] = {sz.xc, sz.yc, sz.zc};
-    launch_dims[Axis] = 2 * ng;
-
-    dex_parallel_for(
-        "STS pressure ghosts",
-        FlatLoop<3>(launch_dims[2], launch_dims[1], launch_dims[0]),
-        KOKKOS_LAMBDA (int ki, int ji, int ii) {
-            using Prim = typename FTraits::prim;
-            constexpr int IP = I(Prim::Pres);
-            int coord[3] = {ii, ji, ki};
-            const int pencil_idx = coord[Axis];
-            const bool start = (pencil_idx < ng);
-            int cflip = (2 * ng - 1) - pencil_idx;
-            int cedge = ng;
-            if (!start) {
-                coord[Axis] = (dims[Axis] - 1) - (pencil_idx - ng);
-                cflip = (dims[Axis] - 1) - (2 * ng - 1) + (pencil_idx - ng);
-                cedge = (dims[Axis] - 1) - ng;
-            }
-            CellIndex idx{.i = coord[0], .j = coord[1], .k = coord[2]};
-            CellIndex i_flip(idx);
-            i_flip.along<Axis>() = cflip;
-            CellIndex i_edge(idx);
-            i_edge.along<Axis>() = cedge;
-            CellIndex i_periodic(idx);
-            i_periodic.along<Axis>() += (start ? 1 : -1) * (dims[Axis] - 2 * ng);
-
-            BoundaryType bound;
-            JasUse(bdry);
-            if constexpr (Axis == 0) {
-                bound = start ? bdry.xs : bdry.xe;
-            } else if constexpr (Axis == 1) {
-                bound = start ? bdry.ys : bdry.ye;
-            } else {
-                bound = start ? bdry.zs : bdry.ze;
-            }
-
-            QtyView w(W, idx);
-            if (bound == BoundaryType::Periodic) {
-                w(IP) = QtyView(W, i_periodic)(IP);
-            } else if (
-                bound == BoundaryType::Wall
-                || bound == BoundaryType::Symmetric
-                || bound == BoundaryType::SymmetricOutflowDiode
-            ) {
-                w(IP) = QtyView(W, i_flip)(IP);
-            } else if (bound == BoundaryType::ZeroGrad) {
-                w(IP) = QtyView(W, i_edge)(IP);
-            } else if (bound == BoundaryType::UserFn) {
-                // NOTE(claude): Mirror T rather than p, as a user BC may have
-                // left a different density in the ghosts.
-                QtyView w_flip(W, i_flip);
-                const fp_t temperature = temperature_si(
-                    w_flip(IP),
-                    w_flip(I(Prim::Rho)) / (eos.mass_per_h * m_p),
-                    eos.total_abund,
-                    ion_frac(eos, i_flip)
-                );
-                const fp_t nh_tot = w(I(Prim::Rho)) / (eos.mass_per_h * m_p);
-                w(IP) = temperature * nh_tot * (eos.total_abund + ion_frac(eos, idx)) * ConstantsF64::k_B;
-            }
-        }
-    );
-    Kokkos::fence();
-}
-
 template <typename FTraits>
-void fill_sts_pressure_ghosts(const Simulation& sim) {
-    fill_sts_pressure_ghosts_axis<0, FTraits>(sim);
-    if constexpr (FTraits::num_dim > 1) {
-        fill_sts_pressure_ghosts_axis<1, FTraits>(sim);
-    }
-    if constexpr (FTraits::num_dim > 2) {
-        fill_sts_pressure_ghosts_axis<2, FTraits>(sim);
-    }
-}
-
-template <typename FTraits>
-void thermal_conduction_kernel(const Simulation& sim, const ThermalConductionContext& ctx) {
+void thermal_conduction_kernel(const Simulation& sim, ThermalConductionContext& ctx) {
     JasUnpack(sim, state, eos, sources, dt_sub);
     JasUnpack(state, W, sz);
     using Cons = FTraits::cons;
     using Prim = FTraits::prim;
     if constexpr (FTraits::has_hypertc) {
         throw std::runtime_error("Cannot use classic thermal conduction on a fluid with hypertc");
+    }
+    if (ctx.method == ConductionMethod::SemiImp) {
+        return semi_imp_conduction_kernel<FTraits>(sim, ctx);
     }
 
     if (!ctx.use_sts) {
@@ -652,12 +491,58 @@ void setup_thermal_conduction(Simulation& sim, YAML::Node& config) {
     auto ctx = std::make_shared<ThermalConductionContext>(ThermalConductionContext{
         .enable = get_or<bool>(config, "sources.thermal_conduction.enable", false),
         .use_sts = get_or<bool>(config, "sources.thermal_conduction.use_sts", true),
-        .saturate = get_or<bool>(config, "sources.thermal_conduction.saturate", false),
-        .spitzer = get_or<bool>(config, "sources.thermal_conduction.spitzer", true),
         .anisotropic = get_or<bool>(config, "sources.thermal_conduction.anisotropic", is_instance(sim.fluid_type, FluidType::Mhd)),
-        .saturation_phi = get_or<fp_t>(config, "sources.thermal_conduction.saturation_phi", 1.1_fp),
-        .kappa0 = get_or<fp_t>(config, "sources.thermal_conduction.kappa0", 8e-12_fp),
     });
+    const auto& cond = sim.state.cond;
+    ctx->saturate = cond.saturate;
+    ctx->spitzer = cond.spitzer;
+    ctx->saturation_phi = cond.saturation_phi;
+    ctx->kappa0 = cond.kappa0;
+    ctx->out_of_plane_field = cond.out_of_plane_field;
+    ctx->kappa_floor = cond.kappa_floor;
+
+    // method: sts | explicit | semi_implicit (default from use_sts, for older configs)
+    const std::string method = get_or<std::string>(
+        config,
+        "sources.thermal_conduction.method",
+        ctx->use_sts ? "sts" : "explicit"
+    );
+
+    if (method == "sts") {
+        ctx->method = ConductionMethod::Sts;
+    } else if (method == "explicit") {
+        ctx->method = ConductionMethod::Explicit;
+        ctx->use_sts = false;
+    } else if (method == "ye") {
+        throw std::runtime_error("thermal_conduction.method: ye has been renamed to semi_implicit (with its options under sources.thermal_conduction.semi_implicit)");
+    } else if (method == "semi_implicit") {
+        ctx->method = ConductionMethod::SemiImp;
+        const std::string cross = get_or<std::string>(
+            config,
+            "sources.thermal_conduction.semi_implicit.cross",
+            "sharma_symmetric"
+        );
+        if (cross == "sharma_symmetric") {
+            ctx->semi_imp_cross = SemiImpCross::SharmaSymmetric;
+        } else if (cross == "mean") {
+            ctx->semi_imp_cross = SemiImpCross::Mean;
+        } else {
+            throw std::runtime_error(fmt::format("Unknown thermal_conduction.semi_implicit.cross \"{}\" (sharma_symmetric | mean)", cross));
+        }
+
+        ctx->semi_imp_s_max = get_or<fp_t>(config, "sources.thermal_conduction.semi_implicit.s_max", ctx->semi_imp_s_max);
+
+        const FluidTraitsRt traits(sim.num_dim, sim.fluid_type);
+        if (!traits.is_mhd || traits.has_hypertc || sim.num_dim != 2) {
+            throw std::runtime_error("thermal_conduction.method: semi_implicit needs a 2D fluid_type mhd or glmmhd");
+        }
+
+        if (!ctx->anisotropic) {
+            throw std::runtime_error("thermal_conduction.method: semi_implicit is field-aligned only (anisotropic: true)");
+        }
+    } else {
+        throw std::runtime_error(fmt::format("Unknown thermal_conduction.method \"{}\" (sts | explicit | semi_implicit)", method));
+    }
 
     if (source_term_index(sim, "thermal_conduction") != sim.compute_source_terms.size()) {
         throw std::runtime_error("Source \"thermal_conduction\" already registered.");

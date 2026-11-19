@@ -1,0 +1,67 @@
+# Self-similar Gaussian conduction test -- see gss_sts.yaml for the full
+# description of the physical setup. Semi-implicit (Ye et al. 2020) conduction.
+
+simulation:
+  num_dim: 2
+  fluid_type: mhd
+  zero_hydro_flux: true
+
+grid:
+  num_ghost: 3
+  x: 250
+  y: 16
+  x_dim: 2.0e6
+  x_start: -1.0e6
+  y_dim: 128000.0
+  y_start: -64000.0
+
+boundary:
+  xs: periodic
+  xe: periodic
+  ys: periodic
+  ye: periodic
+
+eos:
+  type: ideal
+  gamma: 1.6666667
+  ion_frac: 1.0
+  avg_mass: 1.0
+
+conduction:
+  kappa0: 1.0e-11
+  spitzer: true
+  saturate: false
+
+sources:
+  thermal_conduction:
+    enable: true
+    anisotropic: true
+    method: semi_implicit
+
+scheme:
+  riemann_solver: hll
+  reconstruction: muscl
+
+timestep:
+  scheme: ssprk3
+  max_cfl: 0.5
+  max_time: 3.2
+
+problem:
+  name: gaussian_diffusion
+  axis: 0
+  b0: 1.0e-8
+  base_density: 1.0e-12
+  base_temperature: 1.0e4
+  delta_temperature: 9.9e5
+  sigma0: 70710.67811865475
+
+output:
+  name: output_gss_semi_implicit
+  delta_t: 0.4
+  single_file: false
+  variables:
+    primitive: true
+
+system:
+  mem_pool_gb: 4.0

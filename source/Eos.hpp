@@ -188,9 +188,15 @@ KOKKOS_INLINE_FUNCTION void prim_to_cons(const fp_t gamma, const fp_t mu0, const
     q(I(Cons::Ene)) = e_int + e_kin + e_mag + e_ion;
 }
 
-constexpr bool HYPERTC_IN_FLUX_VECTOR = true;
+// -DMOSSCAP_HYPERTC_IN_FLUX_VECTOR=true | false
+#ifndef MOSSCAP_HYPERTC_IN_FLUX_VECTOR
+#define MOSSCAP_HYPERTC_IN_FLUX_VECTOR true
+#endif
+constexpr bool HYPERTC_IN_FLUX_VECTOR = MOSSCAP_HYPERTC_IN_FLUX_VECTOR;
+/// out_of_plane_field: 1D/2D, include the components of B off the simulated axes in |B| for the hyperbolic heat flux
+/// direction (as the conduction source terms).
 template <typename FTraits, int Axis, typename WType, typename FType>
-KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const fp_t c_h, const WType& w, const FType& f) {
+KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const fp_t c_h, const WType& w, const FType& f, bool out_of_plane_field = false) {
     using Prim = typename FTraits::prim;
     using Cons = typename FTraits::cons;
     constexpr int NumDim = FTraits::is_mhd ? 3 : FTraits::num_dim;
@@ -208,10 +214,10 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
         }
         if constexpr (HYPERTC_IN_FLUX_VECTOR) {
             fp_t b2_in_plane = square(w(I(Prim::Bx)));
-            if constexpr (FTraits::num_dim > 1) {
+            if (FTraits::num_dim > 1 || out_of_plane_field) {
                 b2_in_plane += square(w(I(Prim::By)));
             }
-            if constexpr (FTraits::num_dim > 2)  {
+            if (FTraits::num_dim > 2 || out_of_plane_field) {
                 b2_in_plane += square(w(I(Prim::Bz)));
             }
             f(I(Cons::Ene)) = w(I(Prim::HeatF)) * w(IB1) / std::max(std::sqrt(b2_in_plane), 1e-60_fp);
@@ -244,10 +250,10 @@ KOKKOS_INLINE_FUNCTION void prim_to_flux(const fp_t gamma, const fp_t mu0, const
     if constexpr (FTraits::is_mhd) {
         b2 = square(w(I(Prim::Bx))) + square(w(I(Prim::By))) + square(w(I(Prim::Bz)));
         b2_in_plane = square(w(I(Prim::Bx)));
-        if constexpr (FTraits::num_dim > 1) {
+        if (FTraits::num_dim > 1 || out_of_plane_field) {
             b2_in_plane += square(w(I(Prim::By)));
         }
-        if constexpr (FTraits::num_dim > 2)  {
+        if (FTraits::num_dim > 2 || out_of_plane_field) {
             b2_in_plane += square(w(I(Prim::Bz)));
         }
         e_mag = b2 * 0.5_fp * inv_mu0;

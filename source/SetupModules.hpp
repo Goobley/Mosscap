@@ -18,6 +18,44 @@ struct RestartArgs {
     i64 restart_from = -1;
 };
 
+void setup_conduction_params(Simulation& sim, const YAML::Node& config) {
+    // NOTE(claude): These used to be per method; refuse the old keys rather than silently ignore them.
+    constexpr const char* moved[][2] = {
+        {"sources.thermal_conduction.kappa0", "conduction.kappa0"},
+        {"sources.thermal_conduction.spitzer", "conduction.spitzer"},
+        {"sources.thermal_conduction.saturate", "conduction.saturate"},
+        {"sources.thermal_conduction.saturation_phi", "conduction.saturation_phi"},
+        {"sources.thermal_conduction.out_of_plane_field", "conduction.out_of_plane_field"},
+        {"sources.thermal_conduction.kappa_floor", "conduction.kappa_floor"},
+        {"simulation.hypertc_kappa", "conduction.kappa0"},
+        {"simulation.hypertc_spitzer", "conduction.spitzer"},
+        {"simulation.hypertc_limit", "conduction.saturate"},
+        {"simulation.hypertc_saturation_phi", "conduction.saturation_phi"},
+    };
+    for (const auto& [old_key, new_key] : moved) {
+        if (has_key(config, old_key)) {
+            throw std::runtime_error(fmt::format("Config key \"{}\" has moved to \"{}\".", old_key, new_key));
+        }
+    }
+
+    auto& cond = sim.state.cond;
+    cond.kappa0 = get_or<fp_t>(config, "conduction.kappa0", cond.kappa0);
+    cond.spitzer = get_or<bool>(config, "conduction.spitzer", cond.spitzer);
+    cond.saturate = get_or<bool>(config, "conduction.saturate", cond.saturate);
+    cond.saturation_phi = get_or<fp_t>(config, "conduction.saturation_phi", cond.saturation_phi);
+    cond.out_of_plane_field = get_or<bool>(config, "conduction.out_of_plane_field", cond.out_of_plane_field);
+    cond.kappa_floor = ConductionKappaFloor{
+        .temperature = get_or<fp_t>(config, "conduction.kappa_floor.temperature", 0.0_fp),
+        .cutoff = get_or<fp_t>(config, "conduction.kappa_floor.cutoff", 0.0_fp),
+        .width = get_or<fp_t>(config, "conduction.kappa_floor.width", 0.05_fp)
+    };
+    if (cond.kappa_floor.temperature > 0.0_fp && cond.kappa_floor.width <= 0.0_fp) {
+        throw std::runtime_error("conduction.kappa_floor.width must be positive.");
+    }
+    cond.tau_flat = get_or<std::string>(config, "simulation.hypertc_tau", "mosscap") == "flat";
+    cond.tau_alpha = get_or<fp_t>(config, "simulation.hypertc_tau_alpha", cond.tau_flat ? 10.0_fp : 4.0_fp);
+}
+
 void setup_grid(Simulation& sim, YAML::Node& config) {
     auto& sz = sim.state.sz;
     sz.ng = get_or<int>(config, "grid.num_ghost", 3);
@@ -82,9 +120,7 @@ void setup_grid(Simulation& sim, YAML::Node& config) {
     sim.state.mu0 = get_or<fp_t>(config, "simulation.mu0", sim.state.mu0);
     sim.state.p_mass = get_or<fp_t>(config, "simulation.p_mass", sim.state.p_mass);
 
-    sim.state.cond.hypertc_kappa = get_or<fp_t>(config, "simulation.hypertc_kappa", sim.state.cond.hypertc_kappa);
-    sim.state.cond.limited = get_or<bool>(config, "simulation.hypertc_limit", false);
-    sim.state.cond.spitzer = get_or<bool>(config, "simulation.hypertc_spitzer", true);
+    setup_conduction_params(sim, config);
 
     sim.state.cma.apply = get_or<bool>(config, "simulation.cma.apply", false);
     sim.state.cma.flatten = get_or<bool>(config, "simulation.cma.flatten", true);

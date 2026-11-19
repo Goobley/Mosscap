@@ -24,11 +24,13 @@ eos:
   avg_mass: 1.2727
 
 
+conduction:
+  saturate: false
+
 sources:
   thermal_conduction:
     enable: true
     anisotropic: true
-    saturate: false
 
 scheme:
   riemann_solver: hll

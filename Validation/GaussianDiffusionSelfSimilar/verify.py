@@ -43,17 +43,19 @@ CASES = {
     "STS (1D)": "output_gss_sts_1d",
     "Explicit (1D)": "output_gss_explicit_1d",
     "HyperTc": "output_gss_hypertc",
+    "SemiImplicit": "output_gss_semi_implicit",
 }
 COLORS = {
     "STS (2D)": "C0", "Explicit (2D)": "C1",
     "STS (1D)": "C2", "Explicit (1D)": "C3",
-    "HyperTc": "C4",
+    "HyperTc": "C4", "SemiImplicit": "C5",
     "1D reference": "k",
 }
 LINESTYLES = {
     "STS (2D)": "--", "Explicit (2D)": "--",
     "STS (1D)": ":", "Explicit (1D)": ":",
     "HyperTc": "-.",
+    "SemiImplicit": "-",
 }
 
 REF_DIR = "/workspaces/Mosscap/tmp/snapshots_sts"
