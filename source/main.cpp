@@ -80,20 +80,35 @@ int main(int argc, char** argv) {
             sim.time_step(sim, dt);
 
             if (sim.dex.interface_config.enable) {
-                sim.dex.update_atmosphere(sim);
-                // NOTE(claude): Bracket the NEQ solve only -- advection of the
-                // reservoir is transport, not a source.
+                const bool frozen = sim.dex.steps_since_solve < sim.dex.interface_config.frozen_rate_steps;
+                sim.dex.update_atmosphere(sim, !frozen);
+                // Bracket the NEQ solve only -- advection of the reservoir is
+                // transport, not a source.
                 sim.dex.snapshot_reservoir_energies();
-                sim.dex.iterate(
-                    DexConvergence {
-                        .convergence=7e-4_fp,
-                        .max_iter=50
-                    },
-                    IterateArgs {
-                        .dt = Mosscap::fp_t(dt),
-                        .theta = sim.dex.interface_config.theta,
-                    }
-                );
+                if (frozen) {
+                    fmt::println("Dex frozen-rate step {}", sim.dex.steps_since_solve + 1);
+                    sim.dex.frozen_rate_step(
+                        Mosscap::fp_t(dt),
+                        sim.dex.interface_config.theta,
+                        DexConvergence {
+                            .convergence=1e-5_fp,
+                            .max_iter=10
+                        }
+                    );
+                    sim.dex.steps_since_solve += 1;
+                } else {
+                    sim.dex.iterate(
+                        DexConvergence {
+                            .convergence=5e-5_fp,
+                            .max_iter=50
+                        },
+                        IterateArgs {
+                            .dt = Mosscap::fp_t(dt),
+                            .theta = sim.dex.interface_config.theta,
+                        }
+                    );
+                    sim.dex.steps_since_solve = 0;
+                }
                 sim.dex.evaluate_reservoir_rates(Mosscap::fp_t(dt));
                 sim.dex.copy_pops_to_aux_fields(sim);
                 sim.dex.copy_to_eos(sim);
