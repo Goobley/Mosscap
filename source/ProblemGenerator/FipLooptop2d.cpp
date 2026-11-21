@@ -178,7 +178,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config, const 
 
     const IonFrac ion_frac = get_ion_frac(sim);
     AnalyticLteH lte_eos;
-    lte_eos.init(get_or<bool>(config, "eos.include_ionisation_energy", false));
+    lte_eos.init(sim.state.p_mass, get_or<bool>(config, "eos.include_ionisation_energy", false));
 
     const fp_t y_bg = ion_frac(params.nh_bg, params.T0);
     const fp_t p_bg = (eos.total_abund + y_bg) * params.nh_bg * k_B * params.T0;
@@ -278,12 +278,11 @@ static FipLooptopHeating compute_heating(const Simulation& sim, const FipLooptop
 }
 
 template <typename FTraits>
-static void heating_kernel(const Simulation& sim, const FipLooptopHeating& heat) {
+static void heating_kernel(const Simulation& sim, const FipLooptopHeating& heat, const Fp4d& S) {
     using Cons = typename FTraits::cons;
     const auto& state = sim.state;
     const auto& sz = state.sz;
     const auto& Q = state.Q;
-    const auto& S = sim.sources.S;
     JasUnpack(heat, heating, rho0, density_exponent);
     const bool scale_with_density = density_exponent != 0.0_fp;
 
@@ -361,7 +360,7 @@ static FipLooptopSponge setup_looptop_sponge(const Simulation& sim, const YAML::
 /// through S. The sources can't act on tracers, so the FIP bias in the sponge
 /// is set directly to the reservoir value at the current density.
 template <typename FTraits>
-static void looptop_sponge_kernel(const Simulation& sim, const FipLooptopSponge& sponge, const FipLooptopParams& params, int tracer_idx) {
+static void looptop_sponge_kernel(const Simulation& sim, const FipLooptopSponge& sponge, const FipLooptopParams& params, int tracer_idx, const Fp4d& S) {
     using Prim = typename FTraits::prim;
     using Cons = typename FTraits::cons;
     constexpr int n_hydro = FTraits::num_vars;
@@ -369,7 +368,6 @@ static void looptop_sponge_kernel(const Simulation& sim, const FipLooptopSponge&
     const auto& sz = state.sz;
     const auto& eos = sim.eos;
     const auto& Q = state.Q;
-    const auto& S = sim.sources.S;
     const fp_t dt = sim.dt;
     const fp_t mu0 = state.mu0;
 
@@ -446,15 +444,16 @@ MOSSCAP_NEW_PROBLEM(fip_looptop_2d) {
     const FipLooptopHeating heat = compute_heating(sim, params, *loss_ctx);
     sim.compute_source_terms.push_back(SourceTerm{
         .name = "background_heating",
-        .fn = [=](const Simulation& sim) {
+        .fn = [=](const Simulation& sim, const Fp4d& out) {
             invoke_fluid_traits(
                 sim.num_dim,
                 sim.fluid_type,
                 [&]<typename FTraits>(FTraits) {
-                    heating_kernel<FTraits>(sim, heat);
+                    heating_kernel<FTraits>(sim, heat, source_target(sim, out));
                 }
             );
-        }
+        },
+        .trac_role = TracRole::EnergySourceSink
     });
 
     if (get_or<bool>(config, "sources.thermal_conduction.enable", false)) {
@@ -465,15 +464,16 @@ MOSSCAP_NEW_PROBLEM(fip_looptop_2d) {
         const FipLooptopSponge sponge = setup_looptop_sponge(sim, config, params);
         sim.compute_source_terms.push_back(SourceTerm{
             .name = "looptop_sponge",
-            .fn = [=](const Simulation& sim) {
+            .fn = [=](const Simulation& sim, const Fp4d& out) {
                 invoke_fluid_traits(
                     sim.num_dim,
                     sim.fluid_type,
                     [&]<typename FTraits>(FTraits) {
-                        looptop_sponge_kernel<FTraits>(sim, sponge, params, tracer_idx);
+                        looptop_sponge_kernel<FTraits>(sim, sponge, params, tracer_idx, source_target(sim, out));
                     }
                 );
-            }
+            },
+            .trac_role = TracRole::None
         });
     }
     setup_replace_small_values(sim, config);

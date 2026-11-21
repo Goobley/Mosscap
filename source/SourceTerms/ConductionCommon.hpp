@@ -67,12 +67,36 @@ KOKKOS_INLINE_FUNCTION fp_t cell_temperature(const fp_t m_p, const Eos& eos, con
     );
 }
 
-KOKKOS_INLINE_FUNCTION fp_t conductivity(const ThermalConductionContext& ctx, const fp_t T) {
-    fp_t kappa = ctx.kappa0;
-    if (ctx.spitzer) {
-        kappa *= ctx.kappa_floor.t52(T);
+/// The material conductivity at temperature T.
+KOKKOS_INLINE_FUNCTION fp_t spitzer_kappa(const fp_t kappa0, const bool spitzer, const fp_t T) {
+    return spitzer ? kappa0 * (square(T) * std::sqrt(T)) : kappa0;
+}
+
+/// The conductivity of a cell: TRAC's stored kappa_eff while TRAC is active, otherwise spitzer_kappa(T_cell).
+KOKKOS_INLINE_FUNCTION fp_t cell_kappa(const ThermalConductionContext& ctx, const fp_t T_cell, const CellIndex& idx) {
+    if (ctx.trac_kappa.initialized()) {
+        return ctx.trac_kappa(idx.k, idx.j, idx.i);
     }
-    return kappa;
+    return spitzer_kappa(ctx.kappa0, ctx.spitzer, T_cell);
+}
+
+/// cell_kappa for the cell w
+template <typename FTraits>
+KOKKOS_INLINE_FUNCTION fp_t cell_kappa_from_prim(
+    const fp_t m_p,
+    const Eos& eos,
+    const ThermalConductionContext& ctx,
+    const QtyView& w
+) {
+    if (!ctx.spitzer && !ctx.trac_kappa.initialized()) {
+        return ctx.kappa0;
+    }
+    return cell_kappa(ctx, cell_temperature<FTraits>(m_p, eos, w), w.idx);
+}
+
+/// The face conductivity from the two adjacent cells' conductivities. Currently arithmetic mean.
+KOKKOS_INLINE_FUNCTION fp_t face_kappa(const fp_t kappa_a, const fp_t kappa_b) {
+    return 0.5_fp * (kappa_a + kappa_b);
 }
 
 /// The magnetic field that sets the conduction direction

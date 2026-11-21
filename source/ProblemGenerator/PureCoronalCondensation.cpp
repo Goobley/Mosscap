@@ -66,7 +66,7 @@ static void initial_conditions(Simulation& sim, const YAML::Node& config) {
     if (eos.type == EosType::AnalyticLteH) {
         use_lte = true;
         bool include_ionisation_energy = get_or<bool>(config, "eos.include_ionisation_energy", false);
-        lte_eos.init(include_ionisation_energy);
+        lte_eos.init(sim.state.p_mass, include_ionisation_energy);
     }
     fp_t mass_per_h = sim.eos.mass_per_h;
 

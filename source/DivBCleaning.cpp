@@ -18,10 +18,9 @@ void clean_divb(const Simulation& sim) {
 }
 
 template <typename FTraits, bool extended>
-void glm_source(const Simulation& sim, fp_t glm_alpha) {
+void glm_source(const Simulation& sim, fp_t glm_alpha, const Fp4d& S) {
     const auto& state = sim.state;
     JasUnpack(state, sz, Q, mu0);
-    const auto& S = sim.sources.S;
     int nx = sz.xc - 2;
     int ny = std::max(sz.yc - 2, 1);
     int nz = std::max(sz.zc - 2, 1);
@@ -358,10 +357,9 @@ KOKKOS_INLINE_FUNCTION fp_t compute_divB_upwind(const Fp4d& Q, const Fluxes& flu
 }
 
 template <typename FTraits>
-void janhunen_cleaning(const Simulation& sim, fp_t divB_diff) {
+void janhunen_cleaning(const Simulation& sim, fp_t divB_diff, const Fp4d& S) {
     const auto& state = sim.state;
     JasUnpack(state, sz, Q, W);
-    const auto& S = sim.sources.S;
     const auto& fluxes = sim.fluxes;
     const fp_t inv_dx = 1.0_fp / state.dx;
 
@@ -405,10 +403,9 @@ void janhunen_cleaning(const Simulation& sim, fp_t divB_diff) {
 }
 
 template <typename FTraits>
-void powell_cleaning(const Simulation& sim, fp_t divB_diff) {
+void powell_cleaning(const Simulation& sim, fp_t divB_diff, const Fp4d& S) {
     const auto& state = sim.state;
     JasUnpack(state, sz, Q, W);
-    const auto& S = sim.sources.S;
     const auto& fluxes = sim.fluxes;
 
     fp_t inv_mu0 = 1.0_fp / state.mu0;
@@ -461,10 +458,9 @@ void powell_cleaning(const Simulation& sim, fp_t divB_diff) {
 
 
 template <typename FTraits>
-void linde_cleaning(const Simulation& sim, fp_t divB_diff) {
+void linde_cleaning(const Simulation& sim, fp_t divB_diff, const Fp4d& S) {
     const auto& state = sim.state;
     JasUnpack(state, sz, Q);
-    const auto& S = sim.sources.S;
     const auto& fluxes = sim.fluxes;
 
     constexpr bool divB_central = false;
@@ -536,15 +532,15 @@ void linde_cleaning(const Simulation& sim, fp_t divB_diff) {
 }
 
 template <typename FTraits>
-std::function<void(const Simulation&, fp_t)> select_scheme(DivBCleaningScheme scheme) {
+std::function<void(const Simulation&, fp_t, const Fp4d&)> select_scheme(DivBCleaningScheme scheme) {
     if (scheme == DivBCleaningScheme::Linde) {
         return linde_cleaning<FTraits>;
     } else if (scheme == DivBCleaningScheme::Janhunen) {
         return janhunen_cleaning<FTraits>;
     } else if (scheme == DivBCleaningScheme::LindeJanhunen) {
-        return [](const Simulation& sim, fp_t divB_diff) {
-            linde_cleaning<FTraits>(sim, divB_diff);
-            janhunen_cleaning<FTraits>(sim, divB_diff);
+        return [](const Simulation& sim, fp_t divB_diff, const Fp4d& S) {
+            linde_cleaning<FTraits>(sim, divB_diff, S);
+            janhunen_cleaning<FTraits>(sim, divB_diff, S);
         };
     } else if (scheme == DivBCleaningScheme::Powell8Wave) {
         return powell_cleaning<FTraits>;
@@ -592,9 +588,10 @@ void setup_base_field_divb_cleaning(Simulation& sim, YAML::Node& config) {
         );
         sim.compute_source_terms.push_back(SourceTerm{
             .name = cleaning_type,
-            .fn = [divb_diff, cleaning_source] (const Simulation& sim) {
-                cleaning_source(sim, divb_diff);
-            }
+            .fn = [divb_diff, cleaning_source] (const Simulation& sim, const Fp4d& out) {
+                cleaning_source(sim, divb_diff, source_target(sim, out));
+            },
+            .trac_role = TracRole::None
         });
     }
 }
@@ -611,18 +608,20 @@ void setup_glm_divb_cleaning(Simulation& sim, YAML::Node& config) {
         sim.num_dim,
         sim.fluid_type,
         [glm_alpha, glm_extended] <typename FTraits>
-        (FTraits) -> std::function<void(const Simulation&)> {
-            return [glm_alpha, glm_extended] (const Simulation& sim) {
+        (FTraits) -> SourceFn {
+            return [glm_alpha, glm_extended] (const Simulation& sim, const Fp4d& out) {
+                const Fp4d& S = source_target(sim, out);
                 if (glm_extended) {
-                    return glm_source<FTraits, true>(sim, glm_alpha);
+                    return glm_source<FTraits, true>(sim, glm_alpha, S);
                 }
-                return glm_source<FTraits, false>(sim, glm_alpha);
+                return glm_source<FTraits, false>(sim, glm_alpha, S);
             };
         }
     );
     sim.compute_source_terms.push_back(SourceTerm{
         .name = "GLM Source",
-        .fn = glm_source_fn
+        .fn = glm_source_fn,
+        .trac_role = TracRole::None
     });
 }
 

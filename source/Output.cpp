@@ -330,9 +330,7 @@ static void write_source_term_outputs(Simulation& sim, yakl::SimpleNetCDF& nc) {
             }
             const fp_t prev_dt_sub = sim.dt_sub;
             sim.dt_sub = sim.dt;
-            std::swap(sim.sources.S, scratch);
-            sim.compute_source_terms[idx].fn(sim);
-            std::swap(sim.sources.S, scratch);
+            sim.compute_source_terms[idx].fn(sim, scratch);
             sim.dt_sub = prev_dt_sub;
         }
 
@@ -401,6 +399,10 @@ bool write_output(Simulation& sim) {
                 nc.write(eos.T_space, "T", {"z", "y", "x"});
             }
         }
+        if (sim.trac.active()) {
+            nc.write(sim.trac.kappa, "trac_kappa", {"z", "y", "x"});
+            nc.write(sim.trac.scale, "trac_scale", {"z", "y", "x"});
+        }
     } else {
         std::string time_name("time");
         int time_idx = cfg.output_count;
@@ -429,6 +431,10 @@ bool write_output(Simulation& sim) {
             if (eos.T_space.initialized()) {
                 nc.write1(eos.T_space, "T", {"z", "y", "x"}, time_idx, time_name);
             }
+        }
+        if (sim.trac.active()) {
+            nc.write1(sim.trac.kappa, "trac_kappa", {"z", "y", "x"}, time_idx, time_name);
+            nc.write1(sim.trac.scale, "trac_scale", {"z", "y", "x"}, time_idx, time_name);
         }
     }
 

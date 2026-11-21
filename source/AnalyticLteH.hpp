@@ -29,27 +29,37 @@ KOKKOS_INLINE_FUNCTION T y_from_nhtot(T nhtot, T temp) {
 template <typename T>
 KOKKOS_INLINE_FUNCTION T y_from_ntot(T ntot, T temp) {
     T X = saha_rhs_H(temp);
-    T ne = T(0.5) * (-2 * X + std::sqrt(square(2 * X) + 4 * ntot * X));
-    return ne / (ntot - ne);
+    constexpr bool use_old_saha_ntot_root = false;
+    if constexpr (use_old_saha_ntot_root) {
+        T ne = T(0.5) * (-2 * X + std::sqrt(square(2 * X) + 4 * ntot * X));
+        return ne / (ntot - ne);
+    } else {
+        // The old root cancels catastrophically once X >> ntot
+        // (coronal T: X ~ 1e30, ntot ~ 1e15). y^2 n_H / (1 - y) = X with
+        // n_H = ntot / (1 + y) reduces exactly to y^2 = X / (X + ntot).
+        return std::sqrt(X / (X + ntot));
+    }
 }
 
 // NOTE(cmo): The actual solver equations derived with sympy are only really
 // valid for total_abund = 1 (i.e. pure H), but when refactoring we added the
 // terms throughout here, for when those are swapped out.
 struct AnalyticLteH {
-    static constexpr fp_t h_mass = 1.6737830080950003e-27_fp;
     static constexpr fp_t k_B = 1.380649e-23_fp;
     static constexpr fp_t chi_H = 2.178710282685096e-18_fp; // [J]
 
     bool include_ionisation_e;
+    fp_t p_mass; // [kg], state.p_mass
 
-    bool init(bool include_ionisation_e_=false) {
+    bool init(fp_t p_mass_, bool include_ionisation_e_=false) {
+        p_mass = p_mass_;
         include_ionisation_e = include_ionisation_e_;
         return true;
     }
 
     KOKKOS_INLINE_FUNCTION fp_t internal_energy(const Eos& eos, fp_t rho, fp_t y, fp_t T) const {
         const fp_t inv_mass_per_h = 1.0_fp / eos.mass_per_h;
+        const fp_t h_mass = p_mass;
         fp_t eint  = rho * (k_B / h_mass) * inv_mass_per_h * (eos.total_abund + y) * T;
         eint /= (eos.gamma - 1.0_fp);
         if (include_ionisation_e) {
@@ -62,6 +72,7 @@ struct AnalyticLteH {
         // NOTE(claude): No abundance term -- the y * chi_H term is already per
         // hydrogen atom.
         const fp_t inv_mass_per_h = 1.0_fp / eos.mass_per_h;
+        const fp_t h_mass = p_mass;
         fp_t e_ion = 0.0_fp;
         if (include_ionisation_e) {
             e_ion += y * rho * (chi_H / h_mass) * inv_mass_per_h;
@@ -79,6 +90,7 @@ struct AnalyticLteH {
         const fp_t inv_mass_per_h = 1.0_fp / eos.mass_per_h;
         const fp_t total_abund = eos.total_abund;
         const fp_t mu0 = state.mu0;
+        const fp_t h_mass = state.p_mass;
         using Cons = typename FTraits::cons;
 
         // NOTE(cmo): Scheme similar to lare

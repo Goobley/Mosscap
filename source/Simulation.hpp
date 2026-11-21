@@ -41,10 +41,43 @@ struct FluxFns {
     std::function<void(const Simulation&)> flux_z;
 };
 
+/// Tag for how a source term interacts with TRAC. EnergySourceSink terms (e.g.
+/// thin_losses/background heating), will be wrapped so they can be
+/// transparently scaled. Conduction is tagged to occur after these and receive
+/// the correct scaling. Everything else is ignored by TRAC.
+enum class TracRole {
+    None = 0,
+    Conduction,
+    EnergySourceSink
+};
+
+/// A TracRole with no default, so every SourceTerm has to state its role (omitting .trac_role doesn't compile).
+struct RequiredTracRole {
+    TracRole role;
+    constexpr RequiredTracRole(TracRole r) : role(r) {}
+};
+
+/// TRAC state, uninitialised unless conduction.trac.enable.
+struct TracFields {
+    Fp3d net; /// H - R this stage [W m-3], deposited by EnergySourceSink terms, applied and zeroed by the trac term
+    Fp3d kappa; /// kappa_eff [W m-1 K-1]
+    Fp3d scale; /// kappa_sp / kappa_eff, applied to the thin losses and heating
+    Fp4d source_scratch; /// [var, z, y, x] target of the wrapped EnergySourceSink terms in a step, zero between uses
+
+    bool active() const {
+        return kappa.initialized();
+    }
+};
+
+/// A source term adds its rates into `out` when that is initialised (the term evaluated on its own, e.g. for
+/// output), and otherwise into the shared accumulator sim.sources.S -- see source_target.
+using SourceFn = std::function<void(const Simulation& sim, const Fp4d& out)>;
+
 struct SourceTerm {
     std::string name;
-    std::function<void(const Simulation&)> fn;
+    SourceFn fn;
     std::function<void*()> get_context = [](){ return nullptr; };
+    RequiredTracRole trac_role;
 };
 
 struct Simulation {
@@ -62,6 +95,7 @@ struct Simulation {
     ReconScratch recon_scratch;
     Fluxes fluxes;
     Sources sources;
+    TracFields trac; /// TRAC conductivity and source scaling, see SourceTerms/Trac.hpp
     TimeStepperStorage ts_storage;
     std::function<void(Simulation&)> setup_ics;
     std::function<f64(const Simulation&)> compute_dt;
@@ -76,6 +110,12 @@ struct Simulation {
     OutputConfig out_cfg;
     DexInterface dex;
 };
+
+
+/// The array a source term writes into: `out` if initialised (evaluation of that term alone), else sim.sources.S.
+inline const Fp4d& source_target(const Simulation& sim, const Fp4d& out) {
+    return out.initialized() ? out : sim.sources.S;
+}
 
 }
 

@@ -71,7 +71,7 @@ bool Eos::init_analytic_lte_h(fp_t gamma_, Simulation& sim, bool include_ionisat
     T_space = Fp3d("T_space", sz.zc, sz.yc, sz.xc);
 
     AnalyticLteH lte_eos;
-    lte_eos.init(include_ionisation_energy);
+    lte_eos.init(sim.state.p_mass, include_ionisation_energy);
 
     sim.update_eos = [lte_eos](const Simulation& sim) {
         invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {

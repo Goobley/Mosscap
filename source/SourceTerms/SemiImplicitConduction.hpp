@@ -117,7 +117,7 @@ void semi_imp_step_cells(const Simulation& sim, const ThermalConductionContext& 
             const fp_t Tt = std::max(T, fp_t(SEMI_IMP_T_FLOOR));
             cell(I(SemiImpCell::T), k, j, i) = T;
             cell(I(SemiImpCell::TStep), k, j, i) = Tt;
-            cell(I(SemiImpCell::K), k, j, i) = conductivity(ctx, Tt);
+            cell(I(SemiImpCell::K), k, j, i) = cell_kappa(ctx, Tt, CellIndex{.i = i, .j = j, .k = k});
         }
     );
 }
@@ -256,7 +256,13 @@ void semi_imp_faces(const Simulation& sim, const ThermalConductionContext& ctx, 
                 b_norm = (b_norm > 0.0_fp) ? b_norm : 1.0_fp;
                 b_n /= b_norm;
                 b_t /= b_norm;
-                const fp_t K_sat = conductivity(ctx, std::max(T_step_face, fp_t(SEMI_IMP_T_FLOOR))) * sat_fac;
+                // With TRAC, kappa_eff is a cell quantity, so average for the
+                // face quantity. Otherwise evaluate at the face-mean T~ (Ye's
+                // form).
+                const fp_t K_face = ctx.trac_kappa.initialized()
+                    ? face_kappa(cL(I(SemiImpCell::K)), cR(I(SemiImpCell::K)))
+                    : spitzer_kappa(ctx.kappa0, ctx.spitzer, std::max(T_step_face, fp_t(SEMI_IMP_T_FLOOR)));
+                const fp_t K_sat = K_face * sat_fac;
                 // unlimited mean of the four one-sided transverse differences
                 const fp_t dT_t = 0.25_fp * (
                     (cRu(I(SemiImpCell::T)) - T_R) + (T_R - cRd(I(SemiImpCell::T)))
@@ -413,23 +419,22 @@ void semi_imp_sweep(const Simulation& sim, const ThermalConductionContext& ctx, 
 }
 
 template <typename FTraits>
-void semi_imp_conduction_kernel(const Simulation& sim, ThermalConductionContext& ctx) {
+void semi_imp_conduction_kernel(const Simulation& sim, ThermalConductionContext& ctx, const Fp4d& S) {
     using Prim = typename FTraits::prim;
     using Cons = typename FTraits::cons;
     if constexpr (!FTraits::is_mhd || FTraits::has_hypertc || FTraits::num_dim != 2) {
         throw std::runtime_error("semi_implicit conduction needs a 2D MHD fluid without HeatF (mhd / glmmhd)");
     } else {
-        JasUnpack(sim, state, eos, sources, dt_sub);
+        JasUnpack(sim, state, eos, dt_sub);
         JasUnpack(state, W, sz);
-        const auto& S = sources.S;
         const fp_t gm1 = eos.gamma - 1.0_fp;
 
         SemiImpScratch s = allocate_semi_imp_scratch(sz);
-        // NOTE(cmo): S = dt_sub / dt_diff is measured against the explicit (STS) conduction limit
-        const fp_t dt_diff = estimate_thermal_conduction_timestep<FTraits>(sim, ctx);
         semi_imp_stage_init<FTraits>(sim, ctx, s);
         int n_sub = 1;
         if (ctx.semi_imp_s_max > 0.0_fp) {
+            // NOTE(cmo): S = dt_sub / dt_diff is measured against the explicit (STS) conduction limit
+            const fp_t dt_diff = estimate_thermal_conduction_timestep<FTraits>(sim, ctx);
             n_sub = std::max(1, int(std::ceil(dt_sub / dt_diff / ctx.semi_imp_s_max)));
         }
         const fp_t h = dt_sub / fp_t(n_sub);

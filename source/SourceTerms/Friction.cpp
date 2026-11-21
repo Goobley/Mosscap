@@ -7,11 +7,10 @@
 namespace Mosscap {
 
 template <typename FTraits>
-void friction_kernel(const Simulation& sim, const FrictionVals& fric) {
+void friction_kernel(const Simulation& sim, const FrictionVals& fric, const Fp4d& S) {
     using Cons = typename FTraits::cons;
 
     const auto& Q = sim.state.Q;
-    const auto& S = sim.sources.S;
     const auto& sz = sim.state.sz;
     const fp_t gamma = fric.gamma;
 
@@ -50,9 +49,9 @@ void setup_friction(Simulation& sim, YAML::Node& config) {
     auto apply_friction = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
-            return [=] (const Simulation& sim) {
-                return friction_kernel<FTraits>(sim, *fric);
+        [=]<typename FTraits>(FTraits) -> SourceFn {
+            return [=] (const Simulation& sim, const Fp4d& out) {
+                return friction_kernel<FTraits>(sim, *fric, source_target(sim, out));
             };
         }
     );
@@ -64,7 +63,8 @@ void setup_friction(Simulation& sim, YAML::Node& config) {
     sim.compute_source_terms.push_back(SourceTerm{
         .name = "friction",
         .fn = apply_friction,
-        .get_context = [=]() { return fric.get(); }
+        .get_context = [=]() { return fric.get(); },
+        .trac_role = TracRole::None
     });
 }
 

@@ -6,11 +6,10 @@
 namespace Mosscap {
 
 template <typename FTraits>
-void gravity_kernel(const Simulation& sim, const GravityVals& grav) {
+void gravity_kernel(const Simulation& sim, const GravityVals& grav, const Fp4d& S) {
     using Cons = typename FTraits::cons;
 
     const auto& Q = sim.state.Q;
-    const auto& S = sim.sources.S;
     const auto& sz = sim.state.sz;
 
     dex_parallel_for(
@@ -45,9 +44,9 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
     auto apply_gravity = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
-            return [=] (const Simulation& sim) {
-                return gravity_kernel<FTraits>(sim, *grav);
+        [=]<typename FTraits>(FTraits) -> SourceFn {
+            return [=] (const Simulation& sim, const Fp4d& out) {
+                return gravity_kernel<FTraits>(sim, *grav, source_target(sim, out));
             };
         }
     );
@@ -59,7 +58,8 @@ void setup_gravity(Simulation& sim, YAML::Node& config) {
     sim.compute_source_terms.push_back(SourceTerm{
         .name = "gravity",
         .fn = apply_gravity,
-        .get_context = [=]() { return grav.get(); }
+        .get_context = [=]() { return grav.get(); },
+        .trac_role = TracRole::None
     });
 }
 

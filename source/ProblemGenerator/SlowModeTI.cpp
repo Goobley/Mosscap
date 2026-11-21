@@ -22,10 +22,9 @@ struct BackgroundParams {
 };
 
 template <typename FTraits>
-static void background_heating_kernel(const Simulation& sim, const BackgroundParams& bg) {
-    JasUnpack(sim, state, sources);
+static void background_heating_kernel(const Simulation& sim, const BackgroundParams& bg, const Fp4d& S) {
+    JasUnpack(sim, state);
     JasUnpack(state, sz);
-    const auto& S = sources.S;
     int nx = sz.xc - 2 * sz.ng;
     int ny = std::max(sz.yc - 2 * sz.ng, 1);
     int nz = std::max(sz.zc - 2 * sz.ng, 1);
@@ -211,15 +210,16 @@ MOSSCAP_NEW_PROBLEM(slow_mode_ti) {
         setup_thin_loss(sim, config);
         sim.compute_source_terms.push_back(SourceTerm{
             .name = "background_heating",
-            .fn = [=](const Simulation& sim) {
+            .fn = [=](const Simulation& sim, const Fp4d& out) {
                 invoke_fluid_traits(
                     sim.num_dim,
                     sim.fluid_type,
                     [&]<typename FTraits>(FTraits) {
-                        background_heating_kernel<FTraits>(sim, background);
+                        background_heating_kernel<FTraits>(sim, background, source_target(sim, out));
                     }
                 );
-            }
+            },
+            .trac_role = TracRole::EnergySourceSink
         });
     }
     // NOTE(claude): optional classic (STS/parabolic) thermal conduction. Gated on the

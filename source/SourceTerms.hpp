@@ -10,8 +10,9 @@ inline void zero_source_terms(const Simulation& sim) {
 }
 
 inline void compute_source_terms(const Simulation& sim) {
+    const Fp4d accumulate; // empty: every term adds into sim.sources.S
     for (const auto& fn : sim.compute_source_terms) {
-        fn.fn(sim);
+        fn.fn(sim, accumulate);
     }
 }
 

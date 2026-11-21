@@ -57,6 +57,7 @@ list (APPEND MOSSCAP_PROBLEMS
     "source/ProblemGenerator/LinearWaves.cpp"
     "source/ProblemGenerator/MhdRotor.cpp"
     "source/ProblemGenerator/OrszagTangVortex.cpp"
+    "source/ProblemGenerator/ProminenceMhs.cpp"
     "source/ProblemGenerator/ProminenceRti.cpp"
     "source/ProblemGenerator/PureCoronalCondensation.cpp"
     "source/ProblemGenerator/PureCoronalCondensationMhdRestart.cpp"
@@ -74,6 +75,7 @@ list (APPEND MOSSCAP_SOURCE_TERMS
     "source/SourceTerms/Sponge.cpp"
     "source/SourceTerms/ThermalConduction.cpp"
     "source/SourceTerms/TownsendThinLoss.cpp"
+    "source/SourceTerms/Trac.cpp"
 )
 list(APPEND DEX_SOURCE_FILES
     "DexRT/source/PromweaverBoundary.cpp"

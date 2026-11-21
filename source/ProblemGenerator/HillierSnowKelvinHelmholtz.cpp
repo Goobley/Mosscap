@@ -16,13 +16,12 @@ struct RadLossCoeffs {
 };
 
 template <typename FluidTraits>
-static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl) {
+static void rad_loss_kernel(const Simulation& sim, const RadLossCoeffs& rl, const Fp4d& S) {
     using Cons = typename Fluid::cons;
     using Prim = typename Fluid::prim;
 
     const auto& eos = sim.eos;
     const auto& W = sim.state.W;
-    const auto& S = sim.sources.S;
     const auto& sz = sim.state.sz;
     const fp_t inv_T_peak = 1.0_fp / rl.T_peak;
     const fp_t inv_timescale = 1.0_fp / rl.tau_rad;
@@ -135,16 +134,17 @@ MOSSCAP_NEW_PROBLEM(hillier_snow_kelvin_helmholtz) {
         // TODO(cmo): Setup sources
         sim.compute_source_terms.push_back(SourceTerm{
             .name = "thin_rad_loss",
-            .fn = [=](const Simulation& sim) {
+            .fn = [=](const Simulation& sim, const Fp4d& out) {
                 const int num_dim = sim.num_dim;
                 if (num_dim == 1) {
-                    rad_loss_kernel<FluidTraits<1, FluidType::Hydro>>(sim, rad_loss);
+                    rad_loss_kernel<FluidTraits<1, FluidType::Hydro>>(sim, rad_loss, source_target(sim, out));
                 } else if (num_dim == 2) {
-                    rad_loss_kernel<FluidTraits<2, FluidType::Hydro>>(sim, rad_loss);
+                    rad_loss_kernel<FluidTraits<2, FluidType::Hydro>>(sim, rad_loss, source_target(sim, out));
                 } else {
-                    rad_loss_kernel<FluidTraits<3, FluidType::Hydro>>(sim, rad_loss);
+                    rad_loss_kernel<FluidTraits<3, FluidType::Hydro>>(sim, rad_loss, source_target(sim, out));
                 }
-            }
+            },
+            .trac_role = TracRole::EnergySourceSink
         });
     }
     bool enable_gravity = get_or<bool>(config, "problem.enable_gravity", false);

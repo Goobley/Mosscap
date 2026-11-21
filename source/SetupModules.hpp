@@ -5,6 +5,7 @@
 #include "SourceTerms.hpp"
 #include "DivBCleaning.hpp"
 #include "HyperbolicThermalConduction.hpp"
+#include "SourceTerms/Trac.hpp"
 #include "Hydro.hpp"
 #include "yaml-cpp/yaml.h"
 
@@ -19,14 +20,15 @@ struct RestartArgs {
 };
 
 void setup_conduction_params(Simulation& sim, const YAML::Node& config) {
-    // NOTE(claude): These used to be per method; refuse the old keys rather than silently ignore them.
+    // These used to be per method: refuse the old keys rather than silently ignore them.
     constexpr const char* moved[][2] = {
         {"sources.thermal_conduction.kappa0", "conduction.kappa0"},
         {"sources.thermal_conduction.spitzer", "conduction.spitzer"},
         {"sources.thermal_conduction.saturate", "conduction.saturate"},
         {"sources.thermal_conduction.saturation_phi", "conduction.saturation_phi"},
         {"sources.thermal_conduction.out_of_plane_field", "conduction.out_of_plane_field"},
-        {"sources.thermal_conduction.kappa_floor", "conduction.kappa_floor"},
+        {"sources.thermal_conduction.kappa_floor", "conduction.trac (the kappa floor has been replaced by TRAC)"},
+        {"conduction.kappa_floor", "conduction.trac (the kappa floor has been replaced by TRAC)"},
         {"simulation.hypertc_kappa", "conduction.kappa0"},
         {"simulation.hypertc_spitzer", "conduction.spitzer"},
         {"simulation.hypertc_limit", "conduction.saturate"},
@@ -44,13 +46,13 @@ void setup_conduction_params(Simulation& sim, const YAML::Node& config) {
     cond.saturate = get_or<bool>(config, "conduction.saturate", cond.saturate);
     cond.saturation_phi = get_or<fp_t>(config, "conduction.saturation_phi", cond.saturation_phi);
     cond.out_of_plane_field = get_or<bool>(config, "conduction.out_of_plane_field", cond.out_of_plane_field);
-    cond.kappa_floor = ConductionKappaFloor{
-        .temperature = get_or<fp_t>(config, "conduction.kappa_floor.temperature", 0.0_fp),
-        .cutoff = get_or<fp_t>(config, "conduction.kappa_floor.cutoff", 0.0_fp),
-        .width = get_or<fp_t>(config, "conduction.kappa_floor.width", 0.05_fp)
+    cond.trac = ConductionTrac{
+        .enable = get_or<bool>(config, "conduction.trac.enable", false),
+        .delta = get_or<fp_t>(config, "conduction.trac.delta", 0.5_fp),
+        .t_min = get_or<fp_t>(config, "conduction.trac.t_min", 0.0_fp)
     };
-    if (cond.kappa_floor.temperature > 0.0_fp && cond.kappa_floor.width <= 0.0_fp) {
-        throw std::runtime_error("conduction.kappa_floor.width must be positive.");
+    if (cond.trac.enable && cond.trac.delta <= 0.0_fp) {
+        throw std::runtime_error("conduction.trac.delta must be positive.");
     }
     cond.tau_flat = get_or<std::string>(config, "simulation.hypertc_tau", "mosscap") == "flat";
     cond.tau_alpha = get_or<fp_t>(config, "simulation.hypertc_tau_alpha", cond.tau_flat ? 10.0_fp : 4.0_fp);
@@ -564,8 +566,9 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path, const R
     setup_eos(sim, config);
     setup_output(sim, config);
     setup_problem(sim, config);
-    // NOTE(claude): Source terms are registered by the problem generator, so the
-    // names requested for output can only be checked now.
+    // NOTE(cmo): TRAC noms up heating/loss/conduction source terms, registered
+    // in the problem generator, so it must be set up afterwards.
+    setup_trac(sim, config);
     validate_source_term_outputs(sim);
 
     if (restart.restart) {

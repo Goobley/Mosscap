@@ -5,12 +5,11 @@
 namespace Mosscap {
 
 template <typename FTraits>
-void replace_small_values_kernel(const Simulation& sim, const ReplaceSmallValuesContext& small_vals) {
+void replace_small_values_kernel(const Simulation& sim, const ReplaceSmallValuesContext& small_vals, const Fp4d& S) {
     using Cons = typename FTraits::cons;
     constexpr int NumDim = FTraits::is_mhd ? 3 : FTraits::num_dim;
 
     const auto& Q = sim.state.Q;
-    const auto& S = sim.sources.S;
     const auto& sz = sim.state.sz;
     const fp_t dt_sub = sim.dt_sub;
     const auto& eos = sim.eos;
@@ -94,13 +93,14 @@ void setup_replace_small_values(Simulation& sim, YAML::Node& config) {
         .fn = invoke_fluid_traits(
             sim.num_dim,
             sim.fluid_type,
-            [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
-                return [=] (const Simulation& sim) {
-                    return replace_small_values_kernel<FTraits>(sim, *ctx);
+            [=]<typename FTraits>(FTraits) -> SourceFn {
+                return [=] (const Simulation& sim, const Fp4d& out) {
+                    return replace_small_values_kernel<FTraits>(sim, *ctx, source_target(sim, out));
                 };
             }
         ),
-        .get_context = [=]() { return ctx.get(); }
+        .get_context = [=]() { return ctx.get(); },
+        .trac_role = TracRole::None
     });
 }
 

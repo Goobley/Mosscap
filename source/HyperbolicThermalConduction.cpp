@@ -3,15 +3,16 @@
 #include "MosscapConfig.hpp"
 #include "SourceTerms.hpp"
 #include "Boundaries.hpp"
+#include "SourceTerms/ConductionCommon.hpp"
 
 namespace Mosscap {
 
     template <typename FTraits>
-    void hypertc_update_heatf(const Simulation& sim) {
-        JasUnpack(sim, state, eos, sources, dt, max_cfl);
+    void hypertc_update_heatf(const Simulation& sim, const Fp4d& S) {
+        JasUnpack(sim, state, eos, dt, max_cfl);
         JasUnpack(state, sz, W, p_mass, cond, dx, glm_ch);
-        const auto& S = sources.S;
         const fp_t inv_dx = 1.0_fp / dx;
+        const Fp3d trac_kappa = sim.trac.kappa; // uninitialised unless TRAC is active
         Fp3d temperature;
         if (sim.eos.is_constant) {
             temperature = Fp3d("temperature", sz.zc, sz.yc, sz.xc);
@@ -58,10 +59,9 @@ namespace Mosscap {
                 const int i = ii + sz.ng;
 
                 const fp_t temp = temperature(k, j, i);
-                fp_t sigma_T_52 = cond.kappa0;
-                if (cond.spitzer) {
-                    sigma_T_52 *= cond.kappa_floor.t52(temp);
-                }
+                fp_t sigma_T_52 = trac_kappa.initialized()
+                    ? trac_kappa(k, j, i)
+                    : spitzer_kappa(cond.kappa0, cond.spitzer, temp);
 
                 // NOTE(cmo): Use central 4th order differences to evaluate grad T.
                 // This is similar to MURaM's approach.
@@ -145,15 +145,16 @@ namespace Mosscap {
         auto hypertc_source_fn = invoke_fluid_traits(
             sim.num_dim,
             sim.fluid_type,
-            [] <typename FTraits> (FTraits) -> std::function<void(const Simulation&)> {
-                return [] (const Simulation& sim) {
-                    return hypertc_update_heatf<FTraits>(sim);
+            [] <typename FTraits> (FTraits) -> SourceFn {
+                return [] (const Simulation& sim, const Fp4d& out) {
+                    return hypertc_update_heatf<FTraits>(sim, source_target(sim, out));
                 };
             }
         );
         sim.compute_source_terms.push_back(SourceTerm{
             .name = "Hyperbolic thermal conduction",
-            .fn = hypertc_source_fn
+            .fn = hypertc_source_fn,
+            .trac_role = TracRole::Conduction
         });
     }
 }

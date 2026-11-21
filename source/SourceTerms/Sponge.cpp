@@ -8,13 +8,12 @@
 namespace Mosscap {
 
 template <typename FTraits>
-void sponge_kernel(const Simulation& sim, const SpongeParams& sponge) {
+void sponge_kernel(const Simulation& sim, const SpongeParams& sponge, const Fp4d& S) {
     JasUnpack(sim, state);
 
     using Cons = typename FTraits::cons;
 
     const auto& Q = sim.state.Q;
-    const auto& S = sim.sources.S;
     const auto& sz = sim.state.sz;
     const auto& dt = sim.dt;
 
@@ -146,9 +145,9 @@ void setup_sponge(Simulation& sim, YAML::Node& config) {
     auto apply_sponge = invoke_fluid_traits(
         sim.num_dim,
         sim.fluid_type,
-        [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
-            return [=] (const Simulation& sim) {
-                return sponge_kernel<FTraits>(sim, *sponge);
+        [=]<typename FTraits>(FTraits) -> SourceFn {
+            return [=] (const Simulation& sim, const Fp4d& out) {
+                return sponge_kernel<FTraits>(sim, *sponge, source_target(sim, out));
             };
         }
     );
@@ -160,7 +159,8 @@ void setup_sponge(Simulation& sim, YAML::Node& config) {
     sim.compute_source_terms.push_back(SourceTerm{
         .name = "sponge",
         .fn = apply_sponge,
-        .get_context = [=]() { return sponge.get(); }
+        .get_context = [=]() { return sponge.get(); },
+        .trac_role = TracRole::None
     });
 }
 

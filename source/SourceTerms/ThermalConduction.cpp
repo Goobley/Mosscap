@@ -19,14 +19,6 @@ KOKKOS_INLINE_FUNCTION fp_t backwards_temperature_diff(const fp_t m_p, const Eos
     return Ti - Tim1;
 }
 
-template <typename FTraits>
-KOKKOS_INLINE_FUNCTION fp_t compute_kappa(const fp_t m_p, const Eos& eos, const ThermalConductionContext& ctx, const QtyView& cell) {
-    if (!ctx.spitzer) {
-        return ctx.kappa0;
-    }
-    return conductivity(ctx, cell_temperature<FTraits>(m_p, eos, cell));
-}
-
 // TODO(cmo): This is only technically correct for the first evaluation, as the
 // temperature is always computed from W, rather than Y. We could fix this by
 // shuffling the array contents back and forth (if a bit inefficient).
@@ -88,8 +80,9 @@ void explicit_thermal_flux_for_axis(const Simulation& sim, const ThermalConducti
             }
 
             const fp_t gradT_norm = std::sqrt(square(dTdax(0)) + square(dTdax(1)) + square(dTdax(2)));
-            const fp_t kappa = 0.5_fp * (
-                compute_kappa<FTraits>(m_p, eos, ctx, w_i) + compute_kappa<FTraits>(m_p, eos, ctx, w_im1)
+            const fp_t kappa = face_kappa(
+                cell_kappa_from_prim<FTraits>(m_p, eos, ctx, w_i),
+                cell_kappa_from_prim<FTraits>(m_p, eos, ctx, w_im1)
             );
 
             fp_t full_flux = 0.0_fp;
@@ -236,7 +229,7 @@ fp_t estimate_thermal_conduction_timestep(const Simulation& sim, const ThermalCo
                 .k=k
             };
             QtyView w_i(W, idx);
-            const fp_t kappa = compute_kappa<FTraits>(m_p, eos, ctx, w_i);
+            const fp_t kappa = cell_kappa_from_prim<FTraits>(m_p, eos, ctx, w_i);
             const fp_t Ti = cell_temperature<FTraits>(m_p, eos, w_i);
             // e_int = rho cv T = P / (gamma - 1)
             const fp_t rho_cv = w_i(I(Prim::Pres)) / ((eos.gamma - 1.0_fp) * Ti);
@@ -281,16 +274,17 @@ fp_t estimate_thermal_conduction_timestep(const Simulation& sim, const ThermalCo
 }
 
 template <typename FTraits>
-void thermal_conduction_kernel(const Simulation& sim, ThermalConductionContext& ctx) {
-    JasUnpack(sim, state, eos, sources, dt_sub);
+void thermal_conduction_kernel(const Simulation& sim, ThermalConductionContext& ctx, const Fp4d& S) {
+    JasUnpack(sim, state, eos, dt_sub);
     JasUnpack(state, W, sz);
     using Cons = FTraits::cons;
     using Prim = FTraits::prim;
     if constexpr (FTraits::has_hypertc) {
         throw std::runtime_error("Cannot use classic thermal conduction on a fluid with hypertc");
     }
+    ctx.trac_kappa = sim.trac.kappa;
     if (ctx.method == ConductionMethod::SemiImp) {
-        return semi_imp_conduction_kernel<FTraits>(sim, ctx);
+        return semi_imp_conduction_kernel<FTraits>(sim, ctx, S);
     }
 
     if (!ctx.use_sts) {
@@ -299,10 +293,10 @@ void thermal_conduction_kernel(const Simulation& sim, ThermalConductionContext& 
             ctx,
             Fp3d(
                 "Energy source",
-                &sources.S(I(Cons::Ene), 0, 0, 0),
-                sources.S.extent(1),
-                sources.S.extent(2),
-                sources.S.extent(3)
+                &S(I(Cons::Ene), 0, 0, 0),
+                S.extent(1),
+                S.extent(2),
+                S.extent(3)
             )
         );
     }
@@ -326,10 +320,10 @@ void thermal_conduction_kernel(const Simulation& sim, ThermalConductionContext& 
             ctx,
             Fp3d(
                 "Energy source",
-                &sources.S(I(Cons::Ene), 0, 0, 0),
-                sources.S.extent(1),
-                sources.S.extent(2),
-                sources.S.extent(3)
+                &S(I(Cons::Ene), 0, 0, 0),
+                S.extent(1),
+                S.extent(2),
+                S.extent(3)
             )
         );
     }
@@ -472,7 +466,7 @@ void thermal_conduction_kernel(const Simulation& sim, ThermalConductionContext& 
 
             const fp_t e_int = Y(0, k, j, i);
             const fp_t delta_E = (Y(3, k, j, i) - e_int);
-            sources.S(I(Cons::Ene), k, j, i) += delta_E / dt_sub;
+            S(I(Cons::Ene), k, j, i) += delta_E / dt_sub;
         }
     );
     // NOTE(cmo): Restore the pressure in W for other source terms to use.
@@ -499,7 +493,6 @@ void setup_thermal_conduction(Simulation& sim, YAML::Node& config) {
     ctx->saturation_phi = cond.saturation_phi;
     ctx->kappa0 = cond.kappa0;
     ctx->out_of_plane_field = cond.out_of_plane_field;
-    ctx->kappa_floor = cond.kappa_floor;
 
     // method: sts | explicit | semi_implicit (default from use_sts, for older configs)
     const std::string method = get_or<std::string>(
@@ -553,13 +546,14 @@ void setup_thermal_conduction(Simulation& sim, YAML::Node& config) {
         .fn = invoke_fluid_traits(
             sim.num_dim,
             sim.fluid_type,
-            [=]<typename FTraits>(FTraits) -> std::function<void(const Simulation&)> {
-                return [=] (const Simulation& sim) {
-                    return thermal_conduction_kernel<FTraits>(sim, *ctx);
+            [=]<typename FTraits>(FTraits) -> SourceFn {
+                return [=] (const Simulation& sim, const Fp4d& out) {
+                    return thermal_conduction_kernel<FTraits>(sim, *ctx, source_target(sim, out));
                 };
             }
         ),
-        .get_context = [=]() { return ctx.get(); }
+        .get_context = [=]() { return ctx.get(); },
+        .trac_role = TracRole::Conduction
     });
 }
 

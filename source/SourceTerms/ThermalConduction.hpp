@@ -28,7 +28,7 @@ struct ThermalConductionContext {
     fp_t saturation_phi = 1.1_fp;
     fp_t kappa0 = 8e-12_fp;
     bool out_of_plane_field = true;
-    ConductionKappaFloor kappa_floor;
+    Fp3d trac_kappa; /// sim.trac.kappa while TRAC is active (refreshed each call), else uninitialised
 
     // semi_implicit (sources.thermal_conduction.semi_implicit.*), see SemiImplicitConduction.hpp
     SemiImpCross semi_imp_cross = SemiImpCross::SharmaSymmetric; /// explicit part: Sharma & Hammett's limited symmetric residual | unlimited asymmetric mean
