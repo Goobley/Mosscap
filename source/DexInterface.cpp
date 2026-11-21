@@ -1,5 +1,7 @@
 #define JASNAH_NO_FIF
 #include "DexInterface.hpp"
+#include <algorithm>
+#include <limits>
 #include "Simulation.hpp"
 #include "JasPP.hpp"
 #include "TimeDepPopulations.hpp"
@@ -24,6 +26,7 @@
 #include "../DexRT/source/StateSetup.hpp"
 #include "../DexRT/source/GammaMatrix.hpp"
 #include "../DexRT/source/Rad16Output.hpp"
+#include "../DexRT/source/MpiWrapper.hpp"
 
 // TODO(cmo): Figure out how to deal with 3D down the line.
 int get_dexrt_dimensionality() {
@@ -686,6 +689,7 @@ void DexInterface::run_worker_loop() {
         time_idx += 1;
     }
     yakl::finalize();
+    finalise_mpi();
     Kokkos::finalize();
     exit(0);
 #endif
@@ -2299,10 +2303,10 @@ void DexInterface::frozen_rate_step(fp_t dt, fp_t theta, const DexConvergence& t
     if (state.mr_block_map.get_num_active_cells() == 0) {
         return;
     }
-    // NOTE(claude): precon_R and rad_loss_integrated still hold the (reduced)
-    // results of the last full solve; only the collisions follow the new state.
-    // With frozen precon_R the (pops, ne) system is closed, so iterate it to
-    // convergence. Only the first pass forms the theta-scheme old-time term.
+    // precon_R and rad_loss_integrated still hold the results of the last full
+    // solve while only the collisions come from the updated state.  With charge
+    // conservation the collisions still change and each step must still be
+    // iterated.
     ::Fp2d predicted_pops;
     if (theta < FP(1.0)) {
         predicted_pops = state.pops.createDeviceObject();
@@ -2339,8 +2343,8 @@ void DexInterface::frozen_rate_step(fp_t dt, fp_t theta, const DexConvergence& t
         }
         max_change = std::max(max_change, nr_change);
         state.println("  frozen-rate iter {}: pops change {:.3e}, ne change {:.3e}", i, max_change, nr_change);
-        // NOTE(claude): A single pass can't be judged converged -- its change
-        // is the physical evolution over dt, not the fixpoint residual.
+        // No need to iterate if charge conservation not active, otherwise need
+        // at least 2 iterations.
         if (!conserve_charge || (i > 0 && max_change < tol.convergence)) {
             break;
         }
@@ -2678,61 +2682,344 @@ fp_t DexInterface::mean_temperature() {
     return result / num_active;
 }
 
-fp_t DexInterface::min_characteristic_cooling_time() {
-    JasUnpack(state, atmos, pops, adata, rad_loss_integrated);
+template <typename FTraits>
+void DexInterface::set_energy_from_dex_pressure(const Simulation& sim) {
+    using Cons = typename FTraits::cons;
+    JasUnpack(state, mr_block_map, atmos);
+    const auto& block_map = mr_block_map.block_map;
+    const auto& Q = sim.state.Q;
+    const auto& eos = sim.eos;
+    const fp_t mu0 = sim.state.mu0;
 
-    constexpr fp_t gamma = (FP(5.0) / FP(3.0));
-    constexpr fp_t igm1 = FP(1.0) / (gamma - FP(1.0));
-    using namespace ConstantsFP;
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sim.state.sz.ng);
+    dex_parallel_for(
+        "Dex pressure -> Ene",
+        FlatLoop<2>(block_map.loop_bounds()),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(mr_block_map);
+            const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+            const CellIndex idx = dex_to_mhd(coord);
+            QtyView Qv(Q, idx);
 
-    if (state.config.rad_loss == RadLossType::PerWavelength) {
-        throw std::runtime_error("Currently only supporting Integrated rad loss.");
-    }
-
-    fp_t result;
-    dex_parallel_reduce(
-        "Max characteristic cooling",
-        FlatLoop<1>(pops.extent(1)),
-        KOKKOS_LAMBDA (i64 ks, fp_t& running_min) {
-            fp_t e_int = igm1 * atmos.pressure(ks);
-            for (int i = 0; i < adata.energy.extent(0); ++i) {
-                e_int += pops(i, ks) * adata.energy(i) * eV;
+            const fp_t rho = Qv(I(Cons::Rho));
+            fp_t mom2_sum = square(Qv(I(Cons::MomX)));
+            if constexpr (FTraits::is_mhd || FTraits::num_dim > 1) {
+                mom2_sum += square(Qv(I(Cons::MomY)));
             }
-            fp_t cooling_time = e_int / std::abs(rad_loss_integrated(ks) * 1e3_fp);
-            running_min = std::min(running_min, cooling_time);
-        },
-        Kokkos::Min<fp_t>(result)
+            if constexpr (FTraits::is_mhd || FTraits::num_dim > 2) {
+                mom2_sum += square(Qv(I(Cons::MomZ)));
+            }
+
+            JasUse(mu0);
+            fp_t e_mag = 0.0_fp;
+            if constexpr (FTraits::is_mhd) {
+                e_mag = (square(Qv(I(Cons::Bx))) + square(Qv(I(Cons::By))) + square(Qv(I(Cons::Bz)))) / (2.0_fp * mu0);
+            }
+            Qv(I(Cons::Ene)) = (
+                atmos.pressure(ks) / (eos.gamma - 1.0_fp)
+                + Qv(I(Cons::IonE)) * rho
+                + 0.5_fp * mom2_sum / rho
+                + e_mag
+            );
+        }
     );
-    return result;
+    Kokkos::fence();
 }
 
-void DexInterface::update_temperature_rad_eq(fp_t delta_t) {
-    JasUnpack(state, atmos);
-    const fp_t threshold = state.config.threshold_temperature;
+template <typename FTraits>
+void DexInterface::gather_energy_source(const Simulation& sim, const Fp4d& scratch, const Fp1d& out) {
+    using Cons = typename FTraits::cons;
+    JasUnpack(state, mr_block_map);
+    const auto& block_map = mr_block_map.block_map;
+    constexpr int ene = I(Cons::Ene);
 
-    if (state.config.rad_loss == RadLossType::PerWavelength) {
-        throw std::runtime_error("Currently only supporting Integrated rad loss.");
-    }
-
-    const auto rad_loss = state.rad_loss_integrated;
-
-    fp_t max_temp_change;
-    dex_parallel_reduce(
-        "Update temperature (rad loss)",
-        FlatLoop<1>(rad_loss.extent(0)),
-        KOKKOS_LAMBDA (i64 ks, fp_t& running_max) {
-            const fp_t L = rad_loss(ks) * 1e3_fp; // Calculated in kW/m3
-            const fp_t T = atmos.temperature(ks);
-
-            const fp_t temperature_update = (FP(2.0) / FP(5.0)) * L * T / atmos.pressure(ks) * delta_t;
-            if (threshold > FP(0.0) && T < threshold) {
-                atmos.temperature(ks) -= temperature_update;
-                running_max = std::max(running_max, std::abs(temperature_update));
-            }
-        },
-        Kokkos::Max<fp_t>(max_temp_change)
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sim.state.sz.ng);
+    dex_parallel_for(
+        "Gather MHD energy source",
+        FlatLoop<2>(block_map.loop_bounds()),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(mr_block_map);
+            const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            Coord2 coord = idx_gen.loop_coord(tile_idx, block_idx);
+            const CellIndex idx = dex_to_mhd(coord);
+            out(ks) = scratch(ene, idx.k, idx.j, idx.i);
+        }
     );
-    fmt::println("Max temperature change: {} K", max_temp_change);
+    Kokkos::fence();
+}
+
+void DexInterface::sync_mhd_from_dex(const Simulation& sim) {
+    copy_nhtot_to_rho(sim);
+    copy_pops_to_aux_fields(sim);
+    copy_to_eos(sim);
+    // NOTE(cmo): This is a bit janky, but the first update_eos sets y, whilst
+    // the second ensures temperature is consistent with Dex's state.
+    if (sim.update_eos) {
+        sim.update_eos(sim);
+    }
+    invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+        this->set_energy_from_dex_pressure<FTraits>(sim);
+    });
+    if (sim.update_eos) {
+        sim.update_eos(sim);
+    }
+}
+
+/// Radiative equilibrium stepping, as dexrt_rad_eq: Euler first step, then variable-step AB2 with its error
+/// estimate setting dt, bounded by growth, a cooling-time backstop and RAD_EQ_MAX_DT.
+constexpr i32 RAD_EQ_MAX_ITER = 50; /// iteration limit of each non-LTE solve
+constexpr fp_t RAD_EQ_EULER_CFL = 0.007_fp; /// first step, as a fraction of the cooling time
+constexpr fp_t RAD_EQ_CFL_BACKSTOP = 0.1_fp; /// bound on the AB2 steps, as a fraction of the cooling time
+constexpr fp_t RAD_EQ_MAX_DT = 50.0_fp; /// [s]
+constexpr fp_t RAD_EQ_RTOL = 1e-3_fp;
+constexpr fp_t RAD_EQ_ATOL_FRAC = 1e-3_fp; /// absolute tolerance, as a fraction of max(e_int)
+constexpr fp_t RAD_EQ_SAFETY = 0.9_fp;
+constexpr fp_t RAD_EQ_MAX_GROWTH = 1.5_fp;
+/// pop_tol = min(RAD_EQ_MAX_POP_TOL, RAD_EQ_POP_TOL_SCALE / (0.01 t_cv))
+constexpr fp_t RAD_EQ_MAX_POP_TOL = 5e-4_fp;
+constexpr fp_t RAD_EQ_POP_TOL_SCALE = 1e-2_fp;
+/// Cooling-time percentile that sets the step, so a handful of cells can't set it for the whole domain
+constexpr fp_t RAD_EQ_COOLING_TIME_PERCENTILE = 1e-3_fp;
+/// Cells with |net loss| below this [W m-3] don't constrain the step
+constexpr fp_t RAD_EQ_MIN_LOSS = 1e-12_fp;
+constexpr fp_t RAD_EQ_MIN_TEMPERATURE = 1e3_fp; /// [K]
+/// Integration window of the MHD energy sources before a step size exists [s] (the thin loss integrates exactly
+/// over dt_sub, and can't take 0)
+constexpr fp_t RAD_EQ_FIRST_EVAL_DT = 1.0_fp;
+
+void DexInterface::relax_rad_eq(Simulation& sim, const RadEqConfig& cfg) {
+    JasUnpack(state, atmos, pops, adata);
+    using namespace ConstantsFP;
+    if (state.config.rad_loss == RadLossType::PerWavelength) {
+        throw std::runtime_error("dex.initial_rad_eq needs dex.rad_loss: Integrated.");
+    }
+    const i64 num_cells = atmos.temperature.extent(0);
+    if (num_cells == 0) {
+        return;
+    }
+    constexpr fp_t igm1 = 1.5_fp; // 1 / (gamma - 1)
+    constexpr fp_t rad_loss_to_si = 1e3_fp; // Dex's losses are in kW m-3
+    constexpr fp_t quiescent = 1e30_fp; // Effectively infinite cooling time
+    const fp_t threshold = state.config.threshold_temperature;
+    const bool have_threshold = threshold > 0.0_fp;
+
+    Fp1d loss("rad_eq_loss", num_cells); /// L^n, the net loss [W m-3]
+    Fp1d loss_prev("rad_eq_loss_prev", num_cells); /// L^{n-1}
+    Fp1d loss_eff("rad_eq_loss_eff", num_cells); /// the AB2 combination applied
+    Fp1d mhd_source("rad_eq_mhd_source", num_cells);
+    Fp1d e_int("rad_eq_e_int", num_cells);
+    Fp1d cooling_time("rad_eq_t_cv", num_cells);
+    Fp4d scratch;
+    std::vector<const SourceTerm*> mhd_terms;
+    if (cfg.include_mhd_sources) {
+        for (const auto& term : sim.compute_source_terms) {
+            if (term.trac_role.role == TracRole::EnergySourceSink) {
+                mhd_terms.push_back(&term);
+            }
+        }
+        const auto& S = sim.sources.S;
+        scratch = Fp4d("rad_eq_scratch", S.extent(0), S.extent(1), S.extent(2), S.extent(3));
+    }
+    std::string term_names;
+    for (const auto* t : mhd_terms) {
+        term_names += (term_names.empty() ? "" : ", ") + t->name;
+    }
+    fmt::println(
+        "Radiative equilibrium relaxation (isobaric, T < {} K) to L_dex{} = 0",
+        threshold,
+        mhd_terms.empty() ? "" : fmt::format(" - S[{}]", term_names)
+    );
+
+    sync_mhd_from_dex(sim);
+    f64 dt_prev = 0.0;
+    bool have_history = false;
+    f64 current_time = 0.0;
+    for (int step = 0; step < cfg.max_steps; ++step) {
+        // L^n: Dex's loss, minus the MHD energy sources evaluated on the
+        // current state (integrated over the previous step's length because we
+        // need a pseudo-time)
+        const auto& rad_loss = state.rad_loss_integrated;
+        dex_parallel_for(
+            "rad_eq L_dex",
+            FlatLoop<1>(num_cells),
+            KOKKOS_LAMBDA (i64 ks) {
+                loss(ks) = fp_t(rad_loss(ks)) * rad_loss_to_si;
+            }
+        );
+        Kokkos::fence();
+        if (!mhd_terms.empty()) {
+            scratch = 0.0_fp;
+            const fp_t prev_dt_sub = sim.dt_sub;
+            sim.dt_sub = have_history ? fp_t(dt_prev) : RAD_EQ_FIRST_EVAL_DT;
+            for (const auto* t : mhd_terms) {
+                t->fn(sim, scratch);
+            }
+            sim.dt_sub = prev_dt_sub;
+            invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+                this->gather_energy_source<FTraits>(sim, scratch, mhd_source);
+            });
+            dex_parallel_for(
+                "rad_eq net loss",
+                FlatLoop<1>(num_cells),
+                KOKKOS_LAMBDA (i64 ks) {
+                    loss(ks) -= mhd_source(ks);
+                }
+            );
+            Kokkos::fence();
+        }
+
+        // Cooling times of the cells being relaxed -- others are effectively infinite
+        const fp_t min_loss = RAD_EQ_MIN_LOSS;
+        dex_parallel_for(
+            "rad_eq cooling time",
+            FlatLoop<1>(num_cells),
+            KOKKOS_LAMBDA (i64 ks) {
+                fp_t e = igm1 * fp_t(atmos.pressure(ks));
+                for (int i = 0; i < adata.energy.extent(0); ++i) {
+                    e += fp_t(pops(i, ks)) * fp_t(adata.energy(i)) * fp_t(eV);
+                }
+                e_int(ks) = e;
+                const bool relaxed = !have_threshold || fp_t(atmos.temperature(ks)) < threshold;
+                const fp_t L = std::abs(loss(ks));
+                cooling_time(ks) = (relaxed && L >= min_loss) ? e / L : quiescent;
+            }
+        );
+        Kokkos::fence();
+        auto t_cv_host = cooling_time.createHostCopy();
+        fp_t* begin = t_cv_host.data();
+        const i64 pidx = std::min(i64(RAD_EQ_COOLING_TIME_PERCENTILE * num_cells), num_cells - 1);
+        std::nth_element(begin, begin + pidx, begin + num_cells);
+        const fp_t t_cv = begin[pidx];
+        const fp_t t_cv_min = *std::min_element(begin, begin + pidx + 1);
+
+        fmt::println("\n~~~~~~~~~~~~ rad_eq step {}, t = {:.6g} s ~~~~~~~~~~~~~~", step, current_time);
+        fmt::println("t_cv = {:e} s (min over cells {:e} s), mean temperature = {:e} K", t_cv, t_cv_min, mean_temperature());
+        if (t_cv > cfg.stop_t_cv) {
+            fmt::println("t_cv > {} s: relaxed", cfg.stop_t_cv);
+            break;
+        }
+
+        f64 dt;
+        const char* limiter;
+        if (!have_history) {
+            dt = std::min(f64(RAD_EQ_EULER_CFL * t_cv), f64(RAD_EQ_MAX_DT));
+            limiter = "euler-cfl";
+            dex_parallel_for(
+                "rad_eq Euler",
+                FlatLoop<1>(num_cells),
+                KOKKOS_LAMBDA (i64 ks) {
+                    loss_eff(ks) = loss(ks);
+                }
+            );
+            Kokkos::fence();
+        } else {
+            // Largest dt whose AB2 error estimate, dt^2 |L^n - L^{n-1}| / (2 dt_prev), stays within atol + rtol e
+            fp_t max_e;
+            dex_parallel_reduce(
+                "rad_eq error scale",
+                FlatLoop<1>(num_cells),
+                KOKKOS_LAMBDA (i64 ks, fp_t& running_max) {
+                    running_max = std::max(running_max, std::abs(e_int(ks)));
+                },
+                Kokkos::Max<fp_t>(max_e)
+            );
+            const fp_t atol = RAD_EQ_ATOL_FRAC * max_e;
+            const fp_t rtol = RAD_EQ_RTOL;
+
+            f64 max_scaled_dl;
+            dex_parallel_reduce(
+                "rad_eq AB2 error",
+                FlatLoop<1>(num_cells),
+                KOKKOS_LAMBDA (i64 ks, f64& running_max) {
+                    if (cooling_time(ks) >= quiescent) {
+                        return;
+                    }
+                    const f64 dL = std::abs(loss(ks) - loss_prev(ks));
+                    running_max = std::max(running_max, dL / (atol + rtol * std::abs(e_int(ks))));
+                },
+                Kokkos::Max<f64>(max_scaled_dl)
+            );
+
+            const f64 dt_err = (max_scaled_dl > 0.0)
+                ? RAD_EQ_SAFETY * std::sqrt(2.0 * dt_prev / max_scaled_dl)
+                : std::numeric_limits<f64>::infinity();
+            const f64 dt_growth = RAD_EQ_MAX_GROWTH * dt_prev;
+            const f64 dt_cfl = RAD_EQ_CFL_BACKSTOP * t_cv;
+            dt = std::min(std::min(dt_err, dt_growth), std::min(dt_cfl, f64(RAD_EQ_MAX_DT)));
+            limiter = "error";
+            if (dt == dt_growth) {
+                limiter = "growth";
+            } else if (dt == dt_cfl) {
+                limiter = "t_cv";
+            } else if (dt == f64(RAD_EQ_MAX_DT)) {
+                limiter = "max";
+            }
+            fmt::println("dt limiters: error {:.4e}, growth {:.4e}, t_cv {:.4e}", dt_err, dt_growth, dt_cfl);
+            // Variable-step AB2, the textbook (3/2, -1/2) for ratio r = 1 (Caunt & Korpi 2001, A&A 375, 1073, Eq. B.2)
+            const f64 r = dt / dt_prev;
+            const fp_t w_cur = fp_t(1.0 + 0.5 * r);
+            const fp_t w_prev = fp_t(0.5 * r);
+
+            dex_parallel_for(
+                "rad_eq AB2 blend",
+                FlatLoop<1>(num_cells),
+                KOKKOS_LAMBDA (i64 ks) {
+                    loss_eff(ks) = w_cur * loss(ks) - w_prev * loss_prev(ks);
+                }
+            );
+            Kokkos::fence();
+        }
+        dex_parallel_for(
+            "rad_eq history",
+            FlatLoop<1>(num_cells),
+            KOKKOS_LAMBDA (i64 ks) {
+                loss_prev(ks) = loss(ks);
+            }
+        );
+        Kokkos::fence();
+
+        // Isobaric update of the relaxed cells (Dex's pressure conservation then sets nh_tot)
+        const fp_t min_temperature = RAD_EQ_MIN_TEMPERATURE;
+        const fp_t dtf = fp_t(dt);
+        fp_t max_temp_change;
+        dex_parallel_reduce(
+            "rad_eq update temperature",
+            FlatLoop<1>(num_cells),
+            KOKKOS_LAMBDA (i64 ks, fp_t& running_max) {
+                const fp_t T = atmos.temperature(ks);
+                if (have_threshold && T >= threshold) {
+                    return;
+                }
+                const fp_t new_T = std::max(
+                    T - 0.4_fp * loss_eff(ks) * T / fp_t(atmos.pressure(ks)) * dtf,
+                    min_temperature
+                );
+                atmos.temperature(ks) = new_T;
+                // May as well sneak this update through at the same time
+                atmos.vturb(ks) = vturb_fn(new_T, fp_t(atmos.nh_tot(ks)), fp_t(atmos.ne(ks)));
+                running_max = std::max(running_max, std::abs(new_T - T));
+            },
+            Kokkos::Max<fp_t>(max_temp_change)
+        );
+        dt_prev = dt;
+        have_history = true;
+        current_time += dt;
+
+        const fp_t pop_tol = std::min(RAD_EQ_MAX_POP_TOL, RAD_EQ_POP_TOL_SCALE / (0.01_fp * t_cv));
+        fmt::println("delta_t: {} ({}), max temperature change {} K, pop tol {:e}", dt, limiter, max_temp_change, pop_tol);
+        fmt::println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+        iterate(
+            DexConvergence {
+                .convergence = ::fp_t(pop_tol),
+                .max_iter = RAD_EQ_MAX_ITER,
+            },
+            IterateArgs {
+                .first_iter = false
+            }
+        );
+        sync_mhd_from_dex(sim);
+    }
 }
 
 }

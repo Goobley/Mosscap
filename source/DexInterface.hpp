@@ -86,6 +86,14 @@ struct IterateArgs {
 
 struct Simulation;
 
+/// Settings for the initial radiative equilibrium relaxation (dex.initial_rad_eq, dex.rad_eq.*). The stepping
+/// itself follows DexRT's dexrt_rad_eq, with its constants (see relax_rad_eq in DexInterface.cpp).
+struct RadEqConfig {
+    i32 max_steps = 400;
+    fp_t stop_t_cv = 2e3_fp; /// stop once the percentile cooling time exceeds this [s]
+    bool include_mhd_sources = true; /// relax to L_dex - (EnergySourceSink terms) = 0, rather than L_dex = 0
+};
+
 struct DexInterface {
     DexMosscapConfig interface_config;
     DexState state;
@@ -228,9 +236,21 @@ struct DexInterface {
     void initial_worker_atmos_setup();
     void broadcast_atmosphere();
 
-    fp_t min_characteristic_cooling_time();
     fp_t mean_temperature();
-    void update_temperature_rad_eq(fp_t delta_t);
+
+    // --- Below only used for initial radiative equilibrium stuff ---
+    /// Relax the Dex-active cells (below threshold_temperature) at constant pressure towards
+    /// L_dex - S_mhd = 0, with S_mhd the problem's EnergySourceSink terms (thin losses, background heating), and
+    /// leave the MHD state consistent with the result.
+    void relax_rad_eq(Simulation& sim, const RadEqConfig& cfg);
+    /// Push the Dex state into the MHD one: rho from nh_tot, the population tracers, y, and Ene rebuilt so the
+    /// MHD pressure is Dex's (the EOS otherwise derives p from the old Ene and the new rho IonE).
+    void sync_mhd_from_dex(const Simulation& sim);
+    template <typename FTraits>
+    void set_energy_from_dex_pressure(const Simulation& sim);
+    /// Energy component of `scratch` (an S-shaped array) at each active cell, into out [W m-3]
+    template <typename FTraits>
+    void gather_energy_source(const Simulation& sim, const Fp4d& scratch, const Fp1d& out);
 };
 
 template <typename T, typename U, int rank, int mem_space>

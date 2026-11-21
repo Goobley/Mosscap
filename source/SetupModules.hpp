@@ -506,40 +506,16 @@ void setup_dex(Simulation& sim, YAML::Node& config, bool is_restart) {
             }
         );
         if (initial_rad_eq) {
-            fp_t delta_t = 10.0_fp;
-            fp_t current_time = 0.0_fp;
-            for (int ii = 0; ii < 300; ++ii) {
-                fp_t tcv = sim.dex.min_characteristic_cooling_time();
-                if (tcv > 2e3) {
-                    break;
-                }
-                fp_t mean_temp = sim.dex.mean_temperature();
-                fmt::println("\n~~~~~~~~~~~~ Step {} ~~~~~~~~~~~~~~", ii);
-                fmt::println("t_cv = {:e} s", tcv);
-                fmt::println("mean temperature = {:e} K", mean_temp);
-                delta_t = std::min(0.1 * tcv, 50.0);
-                sim.dex.update_temperature_rad_eq(delta_t);
-                // fp_t pop_tol = std::min(FP(9e-4), fp_t(FP(5e-2) / (FP(0.01) * tcv)));
-                // fp_t pop_tol = std::min(FP(5e-4), fp_t(FP(1e-2) / (FP(0.01) * tcv)));
-                fmt::println("delta_t: {}", delta_t);
-                fmt::println("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-
-                sim.dex.iterate(
-                    DexConvergence {
-                        .convergence = 8e-4_fp,
-                        .max_iter = 300,
-                    },
-                    IterateArgs {
-                        .first_iter = false
-                    }
-                );
-
-                current_time += delta_t;
-            }
+            RadEqConfig re;
+            re.max_steps = get_or<i32>(config, "dex.rad_eq.max_steps", re.max_steps);
+            re.stop_t_cv = get_or<fp_t>(config, "dex.rad_eq.stop_t_cv", re.stop_t_cv);
+            re.include_mhd_sources = get_or<bool>(config, "dex.rad_eq.include_mhd_sources", re.include_mhd_sources);
+            sim.dex.relax_rad_eq(sim, re);
+        } else {
+            // NOTE(claude): The first solve converges the populations at the given temperature, so keep it (and
+            // Dex's pressure) rather than charging the change in ionisation energy to the gas.
+            sim.dex.sync_mhd_from_dex(sim);
         }
-        sim.dex.copy_nhtot_to_rho(sim);
-        sim.dex.copy_pops_to_aux_fields(sim);
-        sim.dex.copy_to_eos(sim);
     }
     // NOTE(cmo): The first step conserves pressure, but from then on, we simply
     // load nhtot from rho and conserve charge
