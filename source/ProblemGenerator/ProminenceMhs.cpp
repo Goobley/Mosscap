@@ -26,6 +26,8 @@ namespace Mosscap {
 // y in the heating law is 1, and the IC must carry the ionisation state the equilibrium was built with
 // (write_ic.py --ion-energy writes rho y chi_H / m_H into Ene); ProminenceBody/mhs/lte/ iterates the
 // equilibrium against the EOS's y.
+// Or TracerEos (Dex): the IC (e.g. an analyticlteh hold) may lack the Dex tracers, which setup_dex fills; y_space
+// starts from the IC's IonE (y = IonE m_H / chi_H), so the LTE tracers and Dex's first solve see its ionisation.
 //
 // Heating, by problem.heating:
 //   tanh (default), a function of the local state only, so it moves with the plasma:
@@ -247,6 +249,27 @@ static ProminenceMhsParams load_params(const YAML::Node& config) {
     return p;
 }
 
+/// y_space = IonE m_H / chi_H (clamped to [0, 1]) everywhere, for TracerEos: it starts at y = 1, and the LTE tracers
+/// and Dex's first solve take the ionisation from it.
+template <typename FTraits>
+static void set_y_from_ion_e(const Simulation& sim) {
+    using Cons = typename FTraits::cons;
+    const auto& sz = sim.state.sz;
+    const auto& Q = sim.state.Q;
+    const auto& y_space = sim.eos.y_space;
+    const fp_t m_per_h = sim.eos.mass_per_h * sim.state.p_mass;
+    constexpr fp_t chi_H = AnalyticLteH::chi_H;
+    dex_parallel_for(
+        "prominence_mhs_2d y from IonE",
+        FlatLoop<3>(sz.zc, sz.yc, sz.xc),
+        KOKKOS_LAMBDA (int k, int j, int i) {
+            const fp_t y = Q(I(Cons::IonE), k, j, i) * m_per_h / chi_H;
+            y_space(k, j, i) = std::min(std::max(y, 0.0_fp), 1.0_fp);
+        }
+    );
+    Kokkos::fence();
+}
+
 /// The loaded state, kept as the boundary and diagnostic reference.
 static Fp4d load_reference(const Simulation& sim, const std::string& path, f64& time) {
     const auto& sz = sim.state.sz;
@@ -255,9 +278,11 @@ static Fp4d load_reference(const Simulation& sim, const std::string& path, f64& 
     nc.open(path, yakl::NETCDF_MODE_READ);
     nc.read(Q0, "Q");
     nc.read(time, "time");
-    if (Q0.extent(0) != sim.state.Q.extent(0) || Q0.extent(2) != sz.yc || Q0.extent(3) != sz.xc) {
+    // NOTE(claude): Fewer variables than the state is allowed: the Dex tracers that follow the hydro ones are filled
+    // by setup_dex.
+    if (Q0.extent(0) > sim.state.Q.extent(0) || Q0.extent(2) != sz.yc || Q0.extent(3) != sz.xc) {
         throw std::runtime_error(fmt::format(
-            "prominence_mhs_2d: {} has shape ({}, {}, {}), expected ({}, {}, {}) including ghosts.",
+            "prominence_mhs_2d: {} has shape ({}, {}, {}), expected (<= {}, {}, {}) including ghosts.",
             path, Q0.extent(0), Q0.extent(2), Q0.extent(3), sim.state.Q.extent(0), sz.yc, sz.xc
         ));
     }
@@ -827,8 +852,10 @@ MOSSCAP_NEW_PROBLEM(prominence_mhs_2d) {
     if (!traits.is_mhd) {
         throw std::runtime_error(fmt::format("{} requires an MHD fluid.", PROBLEM_NAME));
     }
-    if (sim.eos.type != EosType::Ideal && sim.eos.type != EosType::AnalyticLteH) {
-        throw std::runtime_error(fmt::format("{} supports the ideal and analyticlteh equations of state.", PROBLEM_NAME));
+    if (sim.eos.type != EosType::Ideal && sim.eos.type != EosType::AnalyticLteH && sim.eos.type != EosType::TracerEos) {
+        throw std::runtime_error(fmt::format(
+            "{} supports the ideal, analyticlteh and TracerEos equations of state.", PROBLEM_NAME
+        ));
     }
     if (!get_or<bool>(config, "sources.thermal_conduction.enable", false)) {
         throw std::runtime_error(fmt::format("{} requires sources.thermal_conduction.enable.", PROBLEM_NAME));
@@ -887,7 +914,7 @@ MOSSCAP_NEW_PROBLEM(prominence_mhs_2d) {
         JasUnpack(sim.state, Q);
         sim.out_cfg.prev_output_time = ic_time;
         sim.time = ic_time;
-        const int n_vars = Q.extent(0);
+        const int n_vars = Q0.extent(0);
         dex_parallel_for(
             "prominence_mhs_2d IC",
             FlatLoop<3>(sz.zc, sz.yc, sz.xc),
@@ -898,6 +925,11 @@ MOSSCAP_NEW_PROBLEM(prominence_mhs_2d) {
             }
         );
         Kokkos::fence();
+        if (sim.eos.type == EosType::TracerEos) {
+            invoke_fluid_traits(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits) {
+                set_y_from_ion_e<FTraits>(sim);
+            });
+        }
         if (square(params.pulse_velocity(0)) + square(params.pulse_velocity(1)) + square(params.pulse_velocity(2)) == 0.0_fp) {
             return;
         }

@@ -49,7 +49,9 @@ void setup_conduction_params(Simulation& sim, const YAML::Node& config) {
     cond.trac = ConductionTrac{
         .enable = get_or<bool>(config, "conduction.trac.enable", false),
         .delta = get_or<fp_t>(config, "conduction.trac.delta", 0.5_fp),
-        .t_min = get_or<fp_t>(config, "conduction.trac.t_min", 0.0_fp)
+        .t_min = get_or<fp_t>(config, "conduction.trac.t_min", 0.0_fp),
+        .include_dex = get_or<bool>(config, "conduction.trac.include_dex", get_or<bool>(config, "dex.enable", false)),
+        .dex_min_scale = get_or<fp_t>(config, "conduction.trac.dex_min_scale", 1e-3_fp)
     };
     if (cond.trac.enable && cond.trac.delta <= 0.0_fp) {
         throw std::runtime_error("conduction.trac.delta must be positive.");
@@ -481,9 +483,6 @@ void setup_dex_config(Simulation& sim, YAML::Node& config, const std::string& co
     sim.dex.interface_config.bbox_crop = get_or<bool>(config, "dex.bbox_crop", false);
     sim.dex.interface_config.bbox_halo_cells = get_or<i32>(config, "dex.bbox_halo_cells", 16);
     sim.dex.interface_config.frozen_rate_steps = get_or<i32>(config, "dex.frozen_rate_steps", 0);
-    if (sim.dex.interface_config.frozen_rate_steps > 0 && !time_dependent) {
-        throw std::runtime_error("dex.frozen_rate_steps requires dex.time_dep_update.");
-    }
     sim.dex.init_config(sim, config, config_path);
 }
 
@@ -510,12 +509,25 @@ void setup_dex(Simulation& sim, YAML::Node& config, bool is_restart) {
             re.max_steps = get_or<i32>(config, "dex.rad_eq.max_steps", re.max_steps);
             re.stop_t_cv = get_or<fp_t>(config, "dex.rad_eq.stop_t_cv", re.stop_t_cv);
             re.include_mhd_sources = get_or<bool>(config, "dex.rad_eq.include_mhd_sources", re.include_mhd_sources);
+            re.max_temperature = get_or<fp_t>(config, "dex.rad_eq.max_temperature", re.max_temperature);
             sim.dex.relax_rad_eq(sim, re);
         } else {
-            // NOTE(claude): The first solve converges the populations at the given temperature, so keep it (and
-            // Dex's pressure) rather than charging the change in ionisation energy to the gas.
+            // The first solve converges the populations at the given
+            // temperature, so ensure temperature and pressure are conserved
+            // here.
             sim.dex.sync_mhd_from_dex(sim);
         }
+    } else {
+        // NOTE(cmo): Restore the losses etc for the restart pops, so e.g. TRAC net loss is correct.
+        sim.dex.iterate(
+            DexConvergence {
+                .convergence = 1e-3_fp,
+                .max_iter = 1,
+            },
+            IterateArgs {
+                .formal_solution_only = true
+            }
+        );
     }
     // NOTE(cmo): The first step conserves pressure, but from then on, we simply
     // load nhtot from rho and conserve charge
@@ -550,10 +562,12 @@ Simulation setup_sim(YAML::Node& config, const std::string& config_path, const R
     if (restart.restart) {
         load_restart(sim, restart.restart_from);
         setup_dex(sim, config, restart.restart);
+        sim.dex.update_trac_dex_net(sim);
     } else {
         sim.setup_ics(sim);
         // NOTE(cmo): Load the rest of dex, and the starting atmosphere
         setup_dex(sim, config, restart.restart);
+        sim.dex.update_trac_dex_net(sim);
         if (sim.update_eos) {
             sim.update_eos(sim);
         }

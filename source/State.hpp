@@ -445,6 +445,9 @@ struct ConductionTrac {
     bool enable = false;
     fp_t delta = 0.5_fp; /// target balance length is ds / delta (about 1 / delta cells)
     fp_t t_min = 0.0_fp; /// disable below this temperature
+    /// Include Dex's net radiative loss (lagged from previous solve, and scaled by the inverse of s -- already rolled in) in the TRAC net heat/cool, so it is properly configured.
+    bool include_dex = false; /// set to dex.enable or config value
+    fp_t dex_min_scale = 1e-3_fp; /// floor on the s passed to Dex
 };
 
 /// Conduction parameters shared by all schemes, not all of them work everywhere.

@@ -1,11 +1,16 @@
 #define JASNAH_NO_FIF
 #include "DexInterface.hpp"
 #include <algorithm>
+#include <array>
+#include <ranges>
 #include <limits>
 #include "Simulation.hpp"
 #include "JasPP.hpp"
 #include "TimeDepPopulations.hpp"
 #include "MosscapConfig.hpp"
+#include "Boundaries.hpp"
+#include "Hydro.hpp"
+#include "SourceTerms.hpp"
 // NOTE(cmo): The reason Kokkos sort was failing before was due to the (never
 // used If, Then, Else in JasPP)
 #include "Kokkos_Sort.hpp"
@@ -407,7 +412,7 @@ void DexInterface::broadcast_atmosphere() {
     constexpr int block_size = BLOCK_SIZE;
     using dfp_t = Dex::fp_t;
 
-    i64 dims[7];
+    i64 dims[8];
     dfp_t atmos_params[4];
     if (state.mpi_state.rank == 0) {
         dims[0] = state.mr_block_map.get_num_active_cells();
@@ -417,12 +422,13 @@ void DexInterface::broadcast_atmosphere() {
         dims[4] = state.mr_block_map.max_mip_level;
         dims[5] = state.config.conserve_charge;
         dims[6] = state.config.conserve_pressure;
+        dims[7] = state.atmos.trac_scale.initialized();
         atmos_params[0] = state.atmos.voxel_scale;
         atmos_params[1] = state.atmos.offset_x;
         atmos_params[2] = state.atmos.offset_y;
         atmos_params[3] = state.atmos.offset_z;
     }
-    MPI_Bcast(&dims, 7, MPI_INT64_T, 0, state.mpi_state.comm);
+    MPI_Bcast(&dims, 8, MPI_INT64_T, 0, state.mpi_state.comm);
     MPI_Bcast(&atmos_params, 4, get_FpMpi(), 0, state.mpi_state.comm);
     if (state.mpi_state.rank != 0) {
         state.config.conserve_charge = dims[5];
@@ -474,6 +480,9 @@ void DexInterface::broadcast_atmosphere() {
             .vz = yakl::Array<dfp_t, 1, yakl::memDevice>("vz", num_active_cells),
             .e_int = yakl::Array<dfp_t, 1, yakl::memDevice>("e_int", num_active_cells)
         };
+        if (dims[7]) {
+            state.atmos.trac_scale = yakl::Array<dfp_t, 1, yakl::memDevice>("trac_scale", num_active_cells);
+        }
         allocate_cell_count_based_terms(state, num_active_cells);
         Kokkos::fence();
     }
@@ -496,6 +505,9 @@ void DexInterface::broadcast_atmosphere() {
     MPI_Bcast(atmos.vy.data(), atmos.vy.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(atmos.vz.data(), atmos.vz.size(), get_FpMpi(), 0, comm);
     MPI_Bcast(atmos.e_int.data(), atmos.e_int.size(), get_FpMpi(), 0, comm);
+    if (dims[7]) {
+        MPI_Bcast(atmos.trac_scale.data(), atmos.trac_scale.size(), get_FpMpi(), 0, comm);
+    }
     MPI_Bcast(state.pops.data(), state.pops.size(), get_FpMpi(), 0, comm);
     Kokkos::fence();
 
@@ -673,8 +685,8 @@ void DexInterface::run_worker_loop() {
 
         broadcast_atmosphere();
         f64 float_args[3];
-        i32 int_args[2];
-        MPI_Bcast(int_args, 2, MPI_INT, 0, state.mpi_state.comm);
+        i32 int_args[3];
+        MPI_Bcast(int_args, 3, MPI_INT, 0, state.mpi_state.comm);
         MPI_Bcast(float_args, 3, MPI_DOUBLE, 0, state.mpi_state.comm);
         DexConvergence conv{
             .convergence = Dex::fp_t(float_args[0]),
@@ -683,7 +695,8 @@ void DexInterface::run_worker_loop() {
         IterateArgs args{
             .dt = float_args[1],
             .theta = float_args[2],
-            .first_iter = bool(int_args[1])
+            .first_iter = bool(int_args[1]),
+            .formal_solution_only = bool(int_args[2])
         };
         iterate(conv, args);
         time_idx += 1;
@@ -706,6 +719,16 @@ void DexInterface::fill_atmosphere_from_mhd(const Simulation& sim) {
     const auto& eos = sim.eos;
     const fp_t mu0 = sim.state.mu0;
     const bool ignore_rt_velocities = interface_config.ignore_rt_velocities;
+
+    const bool use_trac_scale = sim.state.cond.trac.include_dex && sim.trac.active();
+    if (use_trac_scale) {
+        const i64 n_active = state.atmos.temperature.extent(0);
+        if (!state.atmos.trac_scale.initialized() || state.atmos.trac_scale.extent(0) != n_active) {
+            state.atmos.trac_scale = decltype(state.atmos.trac_scale)("trac_scale", n_active);
+        }
+    }
+    const fp_t min_scale = sim.state.cond.trac.dex_min_scale;
+    const Fp3d trac_scale_mhd = sim.trac.scale;
     const auto& atmos = state.atmos;
     const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sz.ng);
     dex_parallel_for(
@@ -742,6 +765,9 @@ void DexInterface::fill_atmosphere_from_mhd(const Simulation& sim) {
             atmos.temperature(ks) = temperature;
             atmos.nh0(ks) = FP(0.0);
             atmos.vturb(ks) = vturb_fn(temperature, nh, y * nh);
+            if (use_trac_scale) {
+                atmos.trac_scale(ks) = std::max(trac_scale_mhd(idx.k, idx.j, idx.i), min_scale);
+            }
             if (ignore_rt_velocities) {
                 atmos.vx(ks) = FP(0.0);
                 atmos.vy(ks) = FP(0.0);
@@ -1611,14 +1637,15 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         broadcast_atmosphere();
 
         f64 float_args[3];
-        i32 int_args[2];
+        i32 int_args[3];
         float_args[0] = tol.convergence;
         float_args[1] = args.dt;
         float_args[2] = args.theta;
         int_args[0] = tol.max_iter;
         int_args[1] = args.first_iter;
+        int_args[2] = args.formal_solution_only;
 
-        MPI_Bcast(int_args, 2, MPI_INT, 0, state.mpi_state.comm);
+        MPI_Bcast(int_args, 3, MPI_INT, 0, state.mpi_state.comm);
         MPI_Bcast(float_args, 3, MPI_DOUBLE, 0, state.mpi_state.comm);
     }
 #endif
@@ -1757,6 +1784,11 @@ bool DexInterface::iterate(const DexConvergence& tol, const IterateArgs& args) {
         }
         yakl::fence();
         wave_dist.wait_for_all(state.mpi_state);
+        if (args.formal_solution_only) {
+            // NOTE(cmo): We only want to do one to fill the internal state.
+            max_change = 0.0_fp;
+            break;
+        }
 
         if (time_dependent) {
             state.println("  == Pops update ==");
@@ -2307,12 +2339,48 @@ void DexInterface::frozen_rate_step(fp_t dt, fp_t theta, const DexConvergence& t
     // solve while only the collisions come from the updated state.  With charge
     // conservation the collisions still change and each step must still be
     // iterated.
+    const bool conserve_charge = state.have_h && state.config.conserve_charge;
+    const Dex::fp_t ignore_frac = std::min(Dex::fp_t(1e-6), tol.convergence);
+    if (!interface_config.time_dependent_updates) {
+        // SE path
+        for (int i = 0; i < tol.max_iter; ++i) {
+            compute_nh0(state);
+            Dex::fp_t max_change = stat_eq(
+                &state,
+                StatEqOptions{
+                    .ignore_change_below_ntot_frac = ignore_frac
+                }
+            );
+            Dex::fp_t nr_change = FP(0.0);
+            Dex::fp_t temp_change = FP(0.0);
+            if (conserve_charge) {
+                nr_change = nr_post_update(
+                    &state,
+                    NrPostUpdateOptions{
+                        .ignore_change_below_ntot_frac = ignore_frac,
+                        .conserve_pressure = false
+                    }
+                );
+                temp_change = simple_conserve_energy(&state, ConserveEnergyOptions{
+                    .relaxation = Dex::fp_t(interface_config.energy_relaxation)
+                });
+            }
+            max_change = std::max(max_change, std::max(nr_change, temp_change));
+            state.println(
+                "  frozen-rate SE iter {}: pops change {:.3e}, ne change {:.3e}, T change {:.3e}",
+                i, max_change, nr_change, temp_change
+            );
+            if (!conserve_charge || (i > 0 && max_change < tol.convergence)) {
+                break;
+            }
+        }
+        compute_nh0(state);
+        return;
+    }
     ::Fp2d predicted_pops;
     if (theta < FP(1.0)) {
         predicted_pops = state.pops.createDeviceObject();
     }
-    const bool conserve_charge = state.have_h && state.config.conserve_charge;
-    const Dex::fp_t ignore_frac = std::min(Dex::fp_t(1e-6), tol.convergence);
     for (int i = 0; i < tol.max_iter; ++i) {
         compute_nh0(state);
         Dex::fp_t max_change = time_dep_update(
@@ -2397,6 +2465,8 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
 
             // Calculated in kW/m3;
             fp_t delta_E = 0.0_fp;
+            // NOTE(cmo): If TRAC is enabled for dex, then it is rolled into the
+            // losses during the tracing step -- don't apply it here too.
             delta_E = -rad_loss(ks) * 1e3_fp * dt;
             floor_heat(ks) = has_eos_floor_heat
                 ? eos_floor_heat(idx.k, idx.j, idx.i) * inv_dt
@@ -2459,12 +2529,51 @@ void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
 }
 
 void DexInterface::integrate_rad_loss_split(const Simulation& sim) {
-    if (state.mr_block_map.get_num_active_cells() == 0) {
+    if (state.mr_block_map.get_num_active_cells() != 0) {
+        invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits){
+            return this->integrate_rad_loss_split<FTraits>(sim);
+        });
+    }
+    update_trac_dex_net(sim);
+}
+
+void DexInterface::update_trac_dex_net(const Simulation& sim) {
+    const Fp3d dex_net = sim.trac.dex_net;
+    if (!dex_net.initialized()) {
         return;
     }
-    return invoke_fluid_traits_2d(sim.num_dim, sim.fluid_type, [&]<typename FTraits>(FTraits){
-        return this->integrate_rad_loss_split<FTraits>(sim);
-    });
+
+    dex_net = 0.0_fp;
+    if (
+        !interface_config.enable ||
+        !interface_config.rad_loss ||
+        state.mr_block_map.get_num_active_cells() == 0
+    ) {
+        return;
+    }
+
+    JasUnpack(state, mr_block_map);
+    const auto& block_map = mr_block_map.block_map;
+    const auto& rad_loss = state.rad_loss_integrated;
+    const auto& dex_scale = state.atmos.trac_scale;
+    const bool have_scale = sim.state.cond.trac.include_dex && dex_scale.initialized();
+    const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sim.state.sz.ng);
+
+    dex_parallel_for(
+        "TRAC Dex net",
+        FlatLoop<2>(block_map.loop_bounds()),
+        KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+            IdxGen idx_gen(mr_block_map);
+            const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+            const CellIndex idx = dex_to_mhd(idx_gen.loop_coord(tile_idx, block_idx));
+            // kW m-3 -> W m-3. _source_ rather than loss term (the minus).
+            // Dex's loss is diluted by TRAC s, so put the unscaled
+            // one back to avoid weird loops.
+            const fp_t sc = have_scale ? fp_t(dex_scale(ks)) : 1.0_fp;
+            dex_net(idx.k, idx.j, idx.i) = -fp_t(rad_loss(ks)) * 1e3_fp / sc;
+        }
+    );
+    Kokkos::fence();
 }
 
 template <typename FTraits>
@@ -2787,6 +2896,8 @@ constexpr fp_t RAD_EQ_MIN_TEMPERATURE = 1e3_fp; /// [K]
 /// Integration window of the MHD energy sources before a step size exists [s] (the thin loss integrates exactly
 /// over dt_sub, and can't take 0)
 constexpr fp_t RAD_EQ_FIRST_EVAL_DT = 1.0_fp;
+/// Window over which the MHD terms are evaluated to set TRAC's s in rad_eq, small enough to be instantaneous [s]
+constexpr fp_t RAD_EQ_RATE_DT = 1e-5_fp;
 
 void DexInterface::relax_rad_eq(Simulation& sim, const RadEqConfig& cfg) {
     JasUnpack(state, atmos, pops, adata);
@@ -2801,13 +2912,18 @@ void DexInterface::relax_rad_eq(Simulation& sim, const RadEqConfig& cfg) {
     constexpr fp_t igm1 = 1.5_fp; // 1 / (gamma - 1)
     constexpr fp_t rad_loss_to_si = 1e3_fp; // Dex's losses are in kW m-3
     constexpr fp_t quiescent = 1e30_fp; // Effectively infinite cooling time
-    const fp_t threshold = state.config.threshold_temperature;
+    const fp_t dex_threshold = state.config.threshold_temperature;
+    fp_t threshold = dex_threshold;
+    if (cfg.max_temperature > 0.0_fp) {
+        threshold = (dex_threshold > 0.0_fp) ? std::min(dex_threshold, cfg.max_temperature) : cfg.max_temperature;
+    }
     const bool have_threshold = threshold > 0.0_fp;
 
     Fp1d loss("rad_eq_loss", num_cells); /// L^n, the net loss [W m-3]
     Fp1d loss_prev("rad_eq_loss_prev", num_cells); /// L^{n-1}
     Fp1d loss_eff("rad_eq_loss_eff", num_cells); /// the AB2 combination applied
     Fp1d mhd_source("rad_eq_mhd_source", num_cells);
+    mhd_source = 0.0_fp;
     Fp1d e_int("rad_eq_e_int", num_cells);
     Fp1d cooling_time("rad_eq_t_cv", num_cells);
     Fp4d scratch;
@@ -2820,6 +2936,21 @@ void DexInterface::relax_rad_eq(Simulation& sim, const RadEqConfig& cfg) {
         }
         const auto& S = sim.sources.S;
         scratch = Fp4d("rad_eq_scratch", S.extent(0), S.extent(1), S.extent(2), S.extent(3));
+    }
+    // NOTE(cmo): When TRAC is included in Dex's terms too, it needs to be
+    // updated every step as it modifies the radiation structure of the
+    // atmosphere.
+    const bool refresh_trac_scale = sim.state.cond.trac.include_dex && sim.trac.active();
+    const SourceTerm* trac_term = nullptr;
+    if (refresh_trac_scale) {
+        for (const auto& term : sim.compute_source_terms) {
+            if (term.name == "trac") {
+                trac_term = &term;
+            }
+        }
+        if (!trac_term) {
+            throw std::runtime_error("rad_eq: conduction.trac.include_dex set, but no trac source term.");
+        }
     }
     std::string term_names;
     for (const auto* t : mhd_terms) {
@@ -2848,6 +2979,43 @@ void DexInterface::relax_rad_eq(Simulation& sim, const RadEqConfig& cfg) {
             }
         );
         Kokkos::fence();
+        if (refresh_trac_scale) {
+            fill_bcs(sim);
+            global_cons_to_prim(sim);
+            // NOTE(cmo): Ensure TRAC considers the Dex loss if needed
+            update_trac_dex_net(sim);
+            sim.sources.S = 0.0_fp;
+            const fp_t prev_dt_sub = sim.dt_sub;
+            sim.dt_sub = RAD_EQ_RATE_DT;
+            for (const auto& term : sim.compute_source_terms) {
+                if (term.trac_role.role == TracRole::EnergySourceSink) {
+                    term.fn(sim, Fp4d());
+                }
+            }
+            trac_term->fn(sim, Fp4d());
+            sim.dt_sub = prev_dt_sub;
+            sim.sources.S = 0.0_fp;
+            // The setup atmosphere is built without fill_atmosphere_from_mhd, so allocate here if needed.
+            if (!atmos.trac_scale.initialized() || atmos.trac_scale.extent(0) != num_cells) {
+                atmos.trac_scale = decltype(atmos.trac_scale)("trac_scale", num_cells);
+            }
+            const Fp3d trac_s = sim.trac.scale;
+            const fp_t min_scale = sim.state.cond.trac.dex_min_scale;
+            const auto& dex_s = atmos.trac_scale;
+            const auto& mr_block_map = state.mr_block_map;
+            const DexToMhdGrid dex_to_mhd = dex_to_mhd_grid(sim.state.sz.ng);
+            dex_parallel_for(
+                "rad_eq trac_scale -> Dex",
+                FlatLoop<2>(mr_block_map.block_map.loop_bounds()),
+                KOKKOS_LAMBDA (i64 tile_idx, i32 block_idx) {
+                    IdxGen idx_gen(mr_block_map);
+                    const i64 ks = idx_gen.loop_idx(tile_idx, block_idx);
+                    const CellIndex idx = dex_to_mhd(idx_gen.loop_coord(tile_idx, block_idx));
+                    dex_s(ks) = std::max(trac_s(idx.k, idx.j, idx.i), min_scale);
+                }
+            );
+            Kokkos::fence();
+        }
         if (!mhd_terms.empty()) {
             scratch = 0.0_fp;
             const fp_t prev_dt_sub = sim.dt_sub;
@@ -2869,6 +3037,23 @@ void DexInterface::relax_rad_eq(Simulation& sim, const RadEqConfig& cfg) {
             Kokkos::fence();
         }
 
+        {
+            // NOTE(cmo): Ensure NaN's acutally cause failure.
+            i64 bad = num_cells;
+            dex_parallel_reduce(
+                "rad_eq finite check",
+                FlatLoop<1>(num_cells),
+                KOKKOS_LAMBDA (i64 ks, i64& first_bad) {
+                    if (!std::isfinite(loss(ks)) || !std::isfinite(fp_t(atmos.temperature(ks)))) {
+                        first_bad = std::min(first_bad, ks);
+                    }
+                },
+                Kokkos::Min<i64>(bad)
+            );
+            if (bad < num_cells) {
+                throw std::runtime_error(fmt::format("rad_eq: non-finite loss or temperature at ks = {} (step {}).", bad, step));
+            }
+        }
         // Cooling times of the cells being relaxed -- others are effectively infinite
         const fp_t min_loss = RAD_EQ_MIN_LOSS;
         dex_parallel_for(
@@ -2887,6 +3072,7 @@ void DexInterface::relax_rad_eq(Simulation& sim, const RadEqConfig& cfg) {
         );
         Kokkos::fence();
         auto t_cv_host = cooling_time.createHostCopy();
+        const auto t_cv_cells = cooling_time.createHostCopy(); // unsorted, for the per-cell report
         fp_t* begin = t_cv_host.data();
         const i64 pidx = std::min(i64(RAD_EQ_COOLING_TIME_PERCENTILE * num_cells), num_cells - 1);
         std::nth_element(begin, begin + pidx, begin + num_cells);
@@ -2895,6 +3081,55 @@ void DexInterface::relax_rad_eq(Simulation& sim, const RadEqConfig& cfg) {
 
         fmt::println("\n~~~~~~~~~~~~ rad_eq step {}, t = {:.6g} s ~~~~~~~~~~~~~~", step, current_time);
         fmt::println("t_cv = {:e} s (min over cells {:e} s), mean temperature = {:e} K", t_cv, t_cv_min, mean_temperature());
+        {
+            // Report the stiffest cells, this is a mess, but it works
+            constexpr int n_report = 6;
+            std::array<i64, n_report> order;
+            const auto by_t_cv = [&](i64 ks) { return t_cv_cells(ks); };
+            const auto copied = std::ranges::partial_sort_copy(
+                std::views::iota(i64(0), num_cells), order, std::ranges::less{}, by_t_cv, by_t_cv
+            );
+            const int n_show = int(copied.out - order.begin());
+            const auto loss_host = loss.createHostCopy();
+            const auto mhd_host = mhd_source.createHostCopy();
+            const auto temp_host = atmos.temperature.createHostCopy();
+            const auto nh_host = atmos.nh_tot.createHostCopy();
+            const auto pressure_host = atmos.pressure.createHostCopy();
+            const bool have_dex_s = atmos.trac_scale.initialized();
+            const auto dex_s_host = have_dex_s ? atmos.trac_scale.createHostCopy() : decltype(atmos.trac_scale.createHostCopy())();
+            // Dex grid (x, z) of the reported cells: base index = tile_idx * BLOCK_SIZE^2 + block_idx
+            yakl::Array<i64, 1, yakl::memHost> shown_host("rad_eq_shown", std::max(n_show, 1));
+            for (int n = 0; n < n_show; ++n) {
+                shown_host(n) = order[n];
+            }
+            const auto shown = shown_host.createDeviceCopy();
+            yakl::Array<i32, 2, yakl::memDevice> shown_xz("rad_eq_shown_xz", std::max(n_show, 1), 2);
+            const auto& mr_block_map = state.mr_block_map;
+            dex_parallel_for(
+                "rad_eq report coords",
+                FlatLoop<1>(n_show),
+                KOKKOS_LAMBDA (i64 n) {
+                    IdxGen idx_gen(mr_block_map);
+                    constexpr i64 tile_cells = i64(BLOCK_SIZE) * BLOCK_SIZE;
+                    const i64 ks = shown(n);
+                    const Coord2 coord = idx_gen.loop_coord(ks / tile_cells, i32(ks % tile_cells));
+                    shown_xz(n, 0) = coord.x;
+                    shown_xz(n, 1) = coord.z;
+                }
+            );
+            Kokkos::fence();
+            const auto shown_xz_host = shown_xz.createHostCopy();
+            for (int n = 0; n < n_show; ++n) {
+                const i64 ks = order[n];
+                const fp_t s_mhd = mhd_terms.empty() ? 0.0_fp : mhd_host(ks);
+                fmt::println(
+                    "  t_cv {:.3e} s @ ks {} (x {}, z {}): T {:.1f} K, nH {:.3e}, p {:.3e} Pa, L_net {:.3e} = L_dex {:.3e} - S_mhd {:.3e} W/m3{}",
+                    t_cv_cells(ks), ks, shown_xz_host(n, 0), shown_xz_host(n, 1), fp_t(temp_host(ks)), fp_t(nh_host(ks)),
+                    fp_t(pressure_host(ks)), loss_host(ks), loss_host(ks) + s_mhd, s_mhd,
+                    have_dex_s ? fmt::format(", trac s {:.3e}", fp_t(dex_s_host(ks))) : std::string()
+                );
+            }
+        }
         if (t_cv > cfg.stop_t_cv) {
             fmt::println("t_cv > {} s: relaxed", cfg.stop_t_cv);
             break;

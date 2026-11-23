@@ -82,6 +82,8 @@ struct IterateArgs {
     fp_t dt = 0.0_fp; /// 0.0 implies stat eq
     fp_t theta = 1.0_fp; /// Theta in semi-implicit Euler method
     bool first_iter = false;
+    /// Run a formal solution to configure internal state on start up.
+    bool formal_solution_only = false;
 };
 
 struct Simulation;
@@ -92,6 +94,7 @@ struct RadEqConfig {
     i32 max_steps = 400;
     fp_t stop_t_cv = 2e3_fp; /// stop once the percentile cooling time exceeds this [s]
     bool include_mhd_sources = true; /// relax to L_dex - (EnergySourceSink terms) = 0, rather than L_dex = 0
+    fp_t max_temperature = 0.0_fp; // Only include cells below this
 };
 
 struct DexInterface {
@@ -210,6 +213,7 @@ struct DexInterface {
 
     void write_output(const Simulation&, yakl::SimpleNetCDF&);
 
+    void update_trac_dex_net(const Simulation& sim);
     void integrate_rad_loss_split(const Simulation& sim);
     template <typename FTraits>
     void integrate_rad_loss_split(const Simulation& sim);
@@ -226,10 +230,11 @@ struct DexInterface {
     void snapshot_reservoir_energies();
     /// Difference against the pre-solve sample to form g_ion/g_exc [W m-3]
     void evaluate_reservoir_rates(fp_t dt);
-    /// Rank 0 only: TD population update with the rates of the last full solve,
-    /// iterating the (pops, ne) charge-conservation fixpoint to tol.
-    /// Populations are broadcast with the atmosphere at the start of the next
-    /// RT step
+    /// Rank 0 only: population update with the rates of the last full solve,
+    /// iterating the (pops, ne) charge-conservation fixpoint to tol. TD when
+    /// dex.time_dep_update, otherwise statistical equilibrium with energy
+    /// conservation (as the full fixed-density SE solve). Populations are
+    /// broadcast with the atmosphere at the start of the next RT step
     void frozen_rate_step(fp_t dt, fp_t theta, const DexConvergence& tol);
 
     void run_worker_loop();

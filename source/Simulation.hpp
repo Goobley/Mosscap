@@ -61,7 +61,8 @@ struct RequiredTracRole {
 struct TracFields {
     Fp3d net; /// H - R this stage [W m-3], deposited by EnergySourceSink terms, applied and zeroed by the trac term
     Fp3d kappa; /// kappa_eff [W m-1 K-1]
-    Fp3d scale; /// kappa_sp / kappa_eff, applied to the thin losses and heating
+    Fp3d scale; /// kappa_sp / kappa_eff, applied to the thin losses and heating (and Dex's loss with include_dex)
+    Fp3d dex_net; /// -L_dex [W m-3] of the previous Dex solve if trac.include_dex
     Fp4d source_scratch; /// [var, z, y, x] target of the wrapped EnergySourceSink terms in a step, zero between uses
 
     bool active() const {

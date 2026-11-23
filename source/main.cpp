@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
                         Mosscap::fp_t(dt),
                         sim.dex.interface_config.theta,
                         DexConvergence {
-                            .convergence=1e-5_fp,
+                            .convergence=5e-5_fp,
                             .max_iter=10
                         }
                     );

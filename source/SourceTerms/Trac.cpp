@@ -18,6 +18,7 @@ static void trac_kernel(const Simulation& sim, bool field_aligned) {
     const bool spitzer = cond.spitzer;
     const fp_t inv_delta = 1.0_fp / cond.trac.delta;
     const fp_t t_min = cond.trac.t_min;
+    const bool include_dex = trac.dex_net.initialized();
 
     dex_parallel_for(
         "TRAC",
@@ -28,9 +29,11 @@ static void trac_kernel(const Simulation& sim, bool field_aligned) {
             const fp_t T = cell_temperature<FTraits>(m_p, eos, w);
             const fp_t kappa_sp = spitzer_kappa(kappa0, spitzer, T);
             const fp_t net = trac.net(k, j, i);
+            const fp_t net_tot = include_dex ? net + trac.dex_net(k, j, i) : net;
+
             fp_t kappa = kappa_sp;
             fp_t s = 1.0_fp;
-            if (T >= t_min && net != 0.0_fp) {
+            if (T >= t_min && net_tot != 0.0_fp) {
                 // NOTE(cmo): field-aligned grid spacing, from the simulated components of B only
                 fp_t ds = dx;
                 if constexpr (FTraits::is_mhd) {
@@ -50,7 +53,7 @@ static void trac_kernel(const Simulation& sim, bool field_aligned) {
                         }
                     }
                 }
-                const fp_t kappa_trac = ds * inv_delta * std::sqrt(kappa_sp * std::abs(net) / std::max(T, 1e-30_fp));
+                const fp_t kappa_trac = ds * inv_delta * std::sqrt(kappa_sp * std::abs(net_tot) / std::max(T, 1e-30_fp));
                 if (kappa_trac > kappa_sp) {
                     kappa = kappa_trac;
                     s = kappa_sp / kappa_trac;
@@ -160,6 +163,13 @@ void setup_trac(Simulation& sim, YAML::Node& config) {
     sim.trac.kappa = 0.0_fp;
     sim.trac.scale = 1.0_fp;
     sim.trac.source_scratch = 0.0_fp;
+    if (sim.state.cond.trac.include_dex) {
+        if (!sim.dex.interface_config.enable) {
+            throw std::runtime_error("conduction.trac.include_dex needs dex.enable.");
+        }
+        sim.trac.dex_net = Fp3d("trac_dex_net", sz.zc, sz.yc, sz.xc);
+        sim.trac.dex_net = 0.0_fp;
+    }
 
     SourceTerm trac_term{
         .name = "trac",
@@ -204,9 +214,12 @@ void setup_trac(Simulation& sim, YAML::Node& config) {
         order += (order.empty() ? "" : ", ") + t.name;
     }
     fmt::println(
-        "TRAC: delta = {}, t_min = {} K, {}; source terms: {}",
+        "TRAC: delta = {}, t_min = {} K, {}{}; source terms: {}",
         sim.state.cond.trac.delta,
         sim.state.cond.trac.t_min,
+        sim.state.cond.trac.include_dex
+            ? "Dex losses included (lagged), Dex path lengths scaled by s, "
+            : "",
         field_aligned ? "field-aligned ds" : "ds = dx",
         order
     );

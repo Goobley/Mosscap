@@ -20,7 +20,12 @@
 // 3. Conduction uses kappa_eff
 // The wrapping ensures that source terms are scaled as needed if requested for
 // output without them being explicitly aware of TRAC.
-// Caveat Emptor: This ignores DexRT losses -- TRAC doesn't make sense there anyway.
+// With Dex (DexRT) enabled, conduction.trac.include_dex (default: dex.enable)
+// adds the previous solve's Dex net (undiluted, L_dex / s) to the TRAC net
+// rate, and modifies each voxel's path length by s.  This causes dex to scale
+// its loses to be radiatively conserving (in keeping with s). This dilution is
+// isotropic within a voxel, regardless of field structure. If false, dex is
+// entirely ignored in TRAC and unscaled.
 
 #include "../Simulation.hpp"
 
