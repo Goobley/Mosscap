@@ -2348,7 +2348,9 @@ void DexInterface::frozen_rate_step(fp_t dt, fp_t theta, const DexConvergence& t
             Dex::fp_t max_change = stat_eq(
                 &state,
                 StatEqOptions{
-                    .ignore_change_below_ntot_frac = ignore_frac
+                    .ignore_change_below_ntot_frac = ignore_frac,
+                    // Rank 0 only
+                    .broadcast_change = false
                 }
             );
             Dex::fp_t nr_change = FP(0.0);
@@ -2358,11 +2360,13 @@ void DexInterface::frozen_rate_step(fp_t dt, fp_t theta, const DexConvergence& t
                     &state,
                     NrPostUpdateOptions{
                         .ignore_change_below_ntot_frac = ignore_frac,
-                        .conserve_pressure = false
+                        .conserve_pressure = false,
+                        .broadcast_change = false
                     }
                 );
                 temp_change = simple_conserve_energy(&state, ConserveEnergyOptions{
-                    .relaxation = Dex::fp_t(interface_config.energy_relaxation)
+                    .relaxation = Dex::fp_t(interface_config.energy_relaxation),
+                    .broadcast_change = false
                 });
             }
             max_change = std::max(max_change, std::max(nr_change, temp_change));
